@@ -1,6 +1,7 @@
 // NVIDIA backend: the CUDA driver API (nvcuda.dll / libcuda.so.1), loaded at run time.
 // Only the stable driver API is used, so no CUDA toolkit is needed on the mining rig.
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 
 #include "gpu/dynlib.hpp"
@@ -36,6 +37,7 @@ struct Cuda {
   CUresult (*cuDeviceTotalMem_v2)(size_t*, CUdevice) = nullptr;
   CUresult (*cuDeviceGetAttribute)(int*, int, CUdevice) = nullptr;
   CUresult (*cuDevicePrimaryCtxRetain)(CUcontext*, CUdevice) = nullptr;
+  CUresult (*cuDevicePrimaryCtxSetFlags)(CUdevice, unsigned) = nullptr;  // optional
   CUresult (*cuCtxSetCurrent)(CUcontext) = nullptr;
   CUresult (*cuMemAlloc_v2)(CUdeviceptr*, size_t) = nullptr;
   CUresult (*cuMemFree_v2)(CUdeviceptr) = nullptr;
@@ -76,6 +78,8 @@ struct Cuda {
                lib.sym("cuStreamCreate", cuStreamCreate) && lib.sym("cuStreamSynchronize", cuStreamSynchronize) &&
                lib.sym("cuGetErrorString", cuGetErrorString);
     lib.sym("cuFuncSetAttribute", cuFuncSetAttribute);
+    if (!lib.sym("cuDevicePrimaryCtxSetFlags_v2", cuDevicePrimaryCtxSetFlags))
+      lib.sym("cuDevicePrimaryCtxSetFlags", cuDevicePrimaryCtxSetFlags);
     lib.sym("cuEventCreate", cuEventCreate);
     lib.sym("cuEventRecord", cuEventRecord);
     lib.sym("cuEventSynchronize", cuEventSynchronize);
@@ -92,6 +96,9 @@ Cuda& cuda() {
 class CudaDevice : public Device {
  public:
   explicit CudaDevice(DeviceInfo info) : info_(std::move(info)) {
+    // Blocking sync: waits park the thread instead of spinning a CPU core (before the context is first used).
+    if (cuda().cuDevicePrimaryCtxSetFlags && !std::getenv("XM_SPIN_WAIT") && cuda().cuDeviceGet(&dev_, info_.ordinal) == 0)
+      cuda().cuDevicePrimaryCtxSetFlags(dev_, 0x4);  // CU_CTX_SCHED_BLOCKING_SYNC
     if (check(cuda().cuDeviceGet(&dev_, info_.ordinal)) && check(cuda().cuDevicePrimaryCtxRetain(&ctx_, dev_)) &&
         make_current())
       check(cuda().cuStreamCreate(&stream_, 0));
@@ -147,7 +154,8 @@ class CudaDevice : public Device {
     auto& C = cuda();
     if (!event_ && C.cuEventCreate && C.cuEventRecord && C.cuEventSynchronize)
       C.cuEventCreate(&event_, 0x1 | 0x2);  // CU_EVENT_BLOCKING_SYNC | CU_EVENT_DISABLE_TIMING
-    if (!event_) return sync();
+    static const bool spin = std::getenv("XM_SPIN_WAIT") != nullptr;  // developer A/B switch
+    if (!event_ || spin) return sync();
     return check(C.cuEventRecord(event_, stream_)) && check(C.cuEventSynchronize(event_));
   }
   std::string last_error() const override { return err_; }

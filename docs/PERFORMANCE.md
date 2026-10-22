@@ -43,6 +43,12 @@ NVIDIA findings (RTX 3060):
 - SRBMiner sustains ~97% of the int8 tensor peak per clock (48.7 TH/s at 1755 MHz = 28.7K MAC/clk x 0.97) and still
   holds 1755 MHz inside 127 W, so its energy per MAC is ~25% lower than ours. Our loop is already lean (128 IMMA vs
   ~200 other instructions per 128 k, most of them the fold's XORs); finding the rest needs a profiler (Nsight).
+- Windows vs Linux (same RTX 3060, same driver, same cubin, ~1750 MHz both): native Windows x-miner.exe runs the
+  GEMM ~10% slower (60 vs 55 ms per pass): Pearl 35.5 TH/s, Parano1d 8.7 MH/s on Windows against 39.1 / 9.6 under
+  WSL2 Linux. Not the wait mode (spin vs blocking identical), pass size or shared-memory carveout. SRBMiner reaches
+  48.7 natively on Windows. Open question.
+- CPU: blocking-sync waits work on native Windows (0.6 s CPU per 30 s); under WSL2 the GPU paravirtualisation
+  driver polls with ioctls (~one core of system time) whatever the flags.
 - Earlier: every variant sat at 35-36 TH/s and ~1600 MHz at the power cap, while SRBMiner holds 1760 MHz at the same
   power. Next to try: larger block tiles (128x256 / 256x128) with dynamic shared memory (needs
   cuFuncSetAttribute support in the CUDA backend) to cut L2 and shared-memory traffic per MAC.

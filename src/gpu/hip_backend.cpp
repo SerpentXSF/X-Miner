@@ -2,6 +2,7 @@
 // Windows: amdhip64_7.dll / amdhip64_6.dll (installed by Adrenalin). Linux: libamdhip64.so (ROCm / amdgpu-pro).
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <map>
 #include <mutex>
 
@@ -129,7 +130,8 @@ class HipDevice : public Device {
     auto& H = hip();
     if (!event_ && H.hipEventCreateWithFlags && H.hipEventRecord && H.hipEventSynchronize)
       H.hipEventCreateWithFlags(&event_, 0x1 | 0x2);  // hipEventBlockingSync | hipEventDisableTiming
-    if (!event_) return sync();
+    static const bool spin = std::getenv("XM_SPIN_WAIT") != nullptr;  // developer A/B switch
+    if (!event_ || spin) return sync();
     return check(H.hipEventRecord(event_, stream_)) && check(H.hipEventSynchronize(event_));
   }
   std::string last_error() const override { return err_; }
