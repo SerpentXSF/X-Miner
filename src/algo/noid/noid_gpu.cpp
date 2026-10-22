@@ -90,8 +90,13 @@ double Engine::iterate(uint32_t batch, std::vector<Share>& shares, std::string& 
   uint32_t start = lo32_, maxf = kMaxFound;
   void* args[] = {&a, &d_rc_, &d_cm_, &d_f2t_, &start, &d_found_, &maxf};
   std::vector<uint32_t> found(1 + kMaxFound);
-  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_noid_search", batch / (tpb_ * kLanes), 1, 1, tpb_, 1, 1, NOID_TBL_WORDS * 4, args) ||
-      !dev_.download(found.data(), d_found_, found.size() * 4)) {
+  if (!dev_.memset(d_found_, 0, 4) ||
+      !dev_.launch("xm_noid_search", batch / (tpb_ * kLanes), 1, 1, tpb_, 1, 1, NOID_TBL_WORDS * 4, args)) {
+    err = dev_.last_error();
+    return 0;
+  }
+  // Blocking wait first: the download alone would let the runtime spin a CPU core for the whole batch.
+  if (!dev_.wait() || !dev_.download(found.data(), d_found_, found.size() * 4)) {
     err = dev_.last_error();
     return 0;
   }

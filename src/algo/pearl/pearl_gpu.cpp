@@ -192,8 +192,12 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   // AMD: 128x128 blocks of 4 waves. NVIDIA: 128x256 blocks of 8 warps with 72 KB of dynamic shared memory.
   const bool nv = dev_.info().vendor == gpu::Vendor::Nvidia;
   const unsigned bn = nv ? 256 : 128, threads = nv ? 256 : 128, shared = nv ? kNvStages * (128 + 256) * 64 : 0;
-  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_pearl_gemm", n_ / bn, m_ / 128, 1, threads, 1, 1, shared, g) ||
-      !dev_.download(found.data(), d_found_, found.size() * 4)) {  // the download waits for the stream
+  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_pearl_gemm", n_ / bn, m_ / 128, 1, threads, 1, 1, shared, g)) {
+    err = dev_.last_error();
+    return 0;
+  }
+  // Blocking wait first: the download alone would let the runtime spin a CPU core for the whole pass.
+  if (!dev_.wait() || !dev_.download(found.data(), d_found_, found.size() * 4)) {
     err = dev_.last_error();
     return 0;
   }

@@ -17,6 +17,7 @@ using hipError_t = int;
 using hipModule_t = void*;
 using hipFunction_t = void*;
 using hipStream_t = void*;
+using hipEvent_t = void*;
 
 struct Hip {
   DynLib lib;
@@ -24,6 +25,7 @@ struct Hip {
   hipError_t (*hipGetDeviceCount)(int*) = nullptr;
   hipError_t (*hipGetDevicePropertiesR0600)(hipDeviceProp_t*, int) = nullptr;
   hipError_t (*hipSetDevice)(int) = nullptr;
+  hipError_t (*hipSetDeviceFlags)(unsigned) = nullptr;  // optional
   hipError_t (*hipMalloc)(void**, size_t) = nullptr;
   hipError_t (*hipFree)(void*) = nullptr;
   hipError_t (*hipMemcpyHtoD)(void*, const void*, size_t) = nullptr;
@@ -35,6 +37,9 @@ struct Hip {
                                       unsigned, hipStream_t, void**, void**) = nullptr;
   hipError_t (*hipStreamCreate)(hipStream_t*) = nullptr;
   hipError_t (*hipStreamSynchronize)(hipStream_t) = nullptr;
+  hipError_t (*hipEventCreateWithFlags)(hipEvent_t*, unsigned) = nullptr;  // optional: blocking waits
+  hipError_t (*hipEventRecord)(hipEvent_t, hipStream_t) = nullptr;
+  hipError_t (*hipEventSynchronize)(hipEvent_t) = nullptr;
   const char* (*hipGetErrorString)(hipError_t) = nullptr;
   bool ready = false;
 
@@ -60,6 +65,7 @@ struct Hip {
                lib.sym("hipStreamCreate", hipStreamCreate) &&
                lib.sym("hipStreamSynchronize", hipStreamSynchronize) &&
                lib.sym("hipGetErrorString", hipGetErrorString);
+    lib.sym("hipSetDeviceFlags", hipSetDeviceFlags);
     ready = all && hipInit(0) == 0;
   }
 };
@@ -79,6 +85,8 @@ class HipDevice : public Device {
  public:
   explicit HipDevice(DeviceInfo info) : info_(std::move(info)) {
     make_current();
+    // Blocking sync: waits park the thread instead of spinning a CPU core (must precede the first stream).
+    if (hip().hipSetDeviceFlags) hip().hipSetDeviceFlags(0x4);  // hipDeviceScheduleBlockingSync
     if (hip().hipStreamCreate(&stream_) != 0) stream_ = nullptr;
   }
   const DeviceInfo& info() const override { return info_; }
@@ -117,6 +125,13 @@ class HipDevice : public Device {
     return check(hip().hipModuleLaunchKernel(f, gx, gy, gz, bx, by, bz, shared, stream_, args, nullptr));
   }
   bool sync() override { return check(hip().hipStreamSynchronize(stream_)); }
+  bool wait() override {
+    auto& H = hip();
+    if (!event_ && H.hipEventCreateWithFlags && H.hipEventRecord && H.hipEventSynchronize)
+      H.hipEventCreateWithFlags(&event_, 0x1 | 0x2);  // hipEventBlockingSync | hipEventDisableTiming
+    if (!event_) return sync();
+    return check(H.hipEventRecord(event_, stream_)) && check(H.hipEventSynchronize(event_));
+  }
   std::string last_error() const override { return err_; }
 
  private:
@@ -127,6 +142,7 @@ class HipDevice : public Device {
   }
   DeviceInfo info_;
   hipStream_t stream_ = nullptr;
+  hipEvent_t event_ = nullptr;
   hipModule_t module_ = nullptr;
   std::map<std::string, hipFunction_t> funcs_;
   std::string err_;

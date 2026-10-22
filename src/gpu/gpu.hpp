@@ -50,6 +50,9 @@ class Device {
   virtual bool launch(const char* kernel, unsigned gx, unsigned gy, unsigned gz, unsigned bx, unsigned by,
                       unsigned bz, unsigned shared_bytes, void** args) = 0;
   virtual bool sync() = 0;
+  // Waits for queued work like sync(), but parks the thread on a blocking-sync event instead of letting the
+  // runtime spin a CPU core (falls back to sync() if events are unavailable).
+  virtual bool wait() = 0;
   virtual std::string last_error() const = 0;
 };
 

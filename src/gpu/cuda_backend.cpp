@@ -16,6 +16,7 @@ using CUcontext = void*;
 using CUmodule = void*;
 using CUfunction = void*;
 using CUstream = void*;
+using CUevent = void*;
 using CUdeviceptr = unsigned long long;
 
 enum : int {
@@ -47,6 +48,9 @@ struct Cuda {
                              CUstream, void**, void**) = nullptr;
   CUresult (*cuStreamCreate)(CUstream*, unsigned) = nullptr;
   CUresult (*cuStreamSynchronize)(CUstream) = nullptr;
+  CUresult (*cuEventCreate)(CUevent*, unsigned) = nullptr;  // optional: blocking waits
+  CUresult (*cuEventRecord)(CUevent, CUstream) = nullptr;
+  CUresult (*cuEventSynchronize)(CUevent) = nullptr;
   CUresult (*cuGetErrorString)(CUresult, const char**) = nullptr;
   CUresult (*cuFuncSetAttribute)(CUfunction, int, int) = nullptr;  // optional: > 48 KB dynamic shared memory
   bool ready = false;
@@ -72,6 +76,9 @@ struct Cuda {
                lib.sym("cuStreamCreate", cuStreamCreate) && lib.sym("cuStreamSynchronize", cuStreamSynchronize) &&
                lib.sym("cuGetErrorString", cuGetErrorString);
     lib.sym("cuFuncSetAttribute", cuFuncSetAttribute);
+    lib.sym("cuEventCreate", cuEventCreate);
+    lib.sym("cuEventRecord", cuEventRecord);
+    lib.sym("cuEventSynchronize", cuEventSynchronize);
     ready = all && cuInit(0) == 0;
     if (ready) cuDriverGetVersion(&driver_version);
   }
@@ -136,6 +143,13 @@ class CudaDevice : public Device {
     return check(cuda().cuLaunchKernel(f, gx, gy, gz, bx, by, bz, shared, stream_, args, nullptr));
   }
   bool sync() override { return check(cuda().cuStreamSynchronize(stream_)); }
+  bool wait() override {
+    auto& C = cuda();
+    if (!event_ && C.cuEventCreate && C.cuEventRecord && C.cuEventSynchronize)
+      C.cuEventCreate(&event_, 0x1 | 0x2);  // CU_EVENT_BLOCKING_SYNC | CU_EVENT_DISABLE_TIMING
+    if (!event_) return sync();
+    return check(C.cuEventRecord(event_, stream_)) && check(C.cuEventSynchronize(event_));
+  }
   std::string last_error() const override { return err_; }
 
  private:
@@ -150,6 +164,7 @@ class CudaDevice : public Device {
   CUdevice dev_ = 0;
   CUcontext ctx_ = nullptr;
   CUstream stream_ = nullptr;
+  CUevent event_ = nullptr;
   CUmodule module_ = nullptr;
   std::map<std::string, CUfunction> funcs_;
   std::map<CUfunction, unsigned> big_shared_;  // dynamic shared memory opted in per function
