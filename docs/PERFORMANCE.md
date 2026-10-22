@@ -6,10 +6,16 @@ Measured numbers and what we learned while tuning. Hashrates are at the power li
 
 | Card | Power limit | X-Miner | Reference | Notes |
 |---|---|---|---|---|
-| RX 9070 XT (gfx1201) | -30% (~238 W) | 93.6 TH/s | SRBMiner 3.7.6: ~100 TH/s @ 244 W | 16384x32768x4096 per pass; Kryptex live: 19/0 shares in 40 min |
+| RX 9070 XT (gfx1201) | -30% (~237 W) | 100.8 TH/s | SRBMiner 3.7.6: ~100.3 TH/s @ 244 W (2% fee) | per-lane hash tiles; Kryptex live: shares accepted |
 | RTX 3060 (sm_86) | 127 W | 39.4 TH/s @ ~1500 MHz | SRBMiner 3.7.1: 48.7 TH/s @ 127 W / 1755 MHz (re-measured 2026-10-22) | 128x256 blocks |
 
-AMD pass breakdown (RX 9070 XT, 16384x16384x4096): noise for A 0.29 ms, GEMM + fused jackpot check 11.6 ms.
+AMD per-lane hash tiles (2026-10-22): with the gfx12 WMMA layout a lane owns rows 8*(lane/16) + 0..7 of column
+lane%16 in each 16x16 accumulator, so the AMD configuration uses rows {0..7, 16..23, 32..39, 48..55} x cols
+{0, 16, 32, 48} (h*w = 128). The fold no longer needs a 16-lane DPP reduction and a select per tile every 128 k,
+and the epilogue hashes one tile per lane with no LDS gather: 94.1 -> 100.8 TH/s at the same 237 W (+7%).
+Verified by --selftest, the official verifier and live Kryptex shares.
+
+AMD pass breakdown before that (RX 9070 XT, 16384x16384x4096): noise for A 0.29 ms, GEMM + fused jackpot check 11.6 ms.
 The GEMM core alone is at parity with WildRig at the same power (pearl-rdna4 kernel).
 
 NVIDIA findings (RTX 3060):

@@ -36,7 +36,7 @@ x-miner --algorithm noid --pool na.rplant.xyz:17185 --wallet o1... --worker rig1
 
 | Card | Pearl | Parano1d |
 |---|---|---|
-| RX 9070 XT (-30% power, ~238 W) | 94.1 TH/s | 17.5 MH/s |
+| RX 9070 XT (-30% power, ~237 W) | 100.8 TH/s | 17.5 MH/s |
 | RTX 3060 (127 W) | 39.4 TH/s | 9.6 MH/s |
 
 Every share is re-checked on the CPU before it is sent. Pearl shares were also checked against the official Pearl

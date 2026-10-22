@@ -19,15 +19,6 @@ typedef int v8i __attribute__((ext_vector_type(8)));
 // Every load is then a fully coalesced 512-byte read. (A and B use the same k-permutation, so the dot
 // products are unchanged, and the permutation never crosses a 128-k fold boundary.)
 
-// XOR-reduce across the 16 lanes of a DPP row (row_xmask 1, 2, 4, 8).
-__device__ __forceinline__ unsigned row_xor16(unsigned x) {
-    x ^= __builtin_amdgcn_update_dpp(0, (int)x, 0x161, 0xf, 0xf, false);
-    x ^= __builtin_amdgcn_update_dpp(0, (int)x, 0x162, 0xf, 0xf, false);
-    x ^= __builtin_amdgcn_update_dpp(0, (int)x, 0x164, 0xf, 0xf, false);
-    x ^= __builtin_amdgcn_update_dpp(0, (int)x, 0x168, 0xf, 0xf, false);
-    return x;
-}
-
 // Grouped rasterization: consecutive workgroups sweep WGM row-blocks x all column-blocks, so the workgroups
 // running at the same time share A/B blocks in L2 / Infinity Cache instead of re-reading them from VRAM.
 // (Worth up to +35% at long K on this card.)
@@ -56,8 +47,11 @@ __device__ __forceinline__ void lds_barrier() {
 //  - Stage kt+1 global loads are issued at the top of stage kt and stored to LDS mid-stage.
 //  - Per stage: WMMA(k-pair 0) | barrier | store next stage | WMMA(k-pair 1) | barrier | load next fragments.
 //  - Unrolled by two stages (one Pearl fold per 128 k) with the last pair peeled: no branches in the hot loop.
-// Output: per 16x16 tile, 32 u32 (per-lane partial transcripts); transcript word w = out[w] ^ out[w + 16].
-// Requirements: M % 128 == 0, N % 128 == 0, K % 128 == 0, K >= 128.
+// Hash tiles follow the WMMA accumulator layout (gfx12 wave32: lane l holds rows 8*(l/16) + 0..7 of column l%16
+// in each 16x16 tile): rows {0..7, 16..23, 32..39, 48..55} x cols {0, 16, 32, 48} of the wave's 64x64 block
+// (h = 32, w = 4; the host's AMD mining configuration), i.e. exactly the 128 accumulators one lane owns.
+// Every 128 k each lane XORs its 128 running sums into x and folds t[c % 16] = rotl(t[c % 16], 13) ^ x.
+// Requirements: M % 128 == 0, N % 128 == 0, K % 2048 == 0.
 template <int WGM>
 __device__ __forceinline__ void pearl_gemm_rdna4_body(
     const int8_t* __restrict__ Ap, const int8_t* __restrict__ Bp, unsigned* __restrict__ out, int M, int N, int K,
@@ -108,11 +102,15 @@ __device__ __forceinline__ void pearl_gemm_rdna4_body(
     };
 
     v8i acc[FM][FN];
-    unsigned tr[FM][FN];                          // this lane's partial transcript word (word = lane % 16)
 #pragma unroll
     for (int i = 0; i < FM; ++i)
 #pragma unroll
-        for (int j = 0; j < FN; ++j) { acc[i][j] = (v8i){0, 0, 0, 0, 0, 0, 0, 0}; tr[i][j] = 0; }
+        for (int j = 0; j < FN; ++j) acc[i][j] = (v8i){0, 0, 0, 0, 0, 0, 0, 0};
+    // This lane's tile transcript, kept rotated so the word updated by the current 128-k chunk is always R[0]:
+    // after N chunks word w is R[(w - N) mod 16], and K % 2048 == 0 brings it back to R[w] at the end.
+    unsigned R[16];
+#pragma unroll
+    for (int w = 0; w < 16; ++w) R[w] = 0;
 
     auto mma = [&](int kp) {
 #pragma unroll
@@ -126,21 +124,20 @@ __device__ __forceinline__ void pearl_gemm_rdna4_body(
                     acc[i][j] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(true, a, true, b, acc[i][j], false);
                 }
     };
-    // Pearl fold. XOR and rotate are linear over GF(2), so each lane keeps a partial transcript of its own
-    // half-tile XOR; the two halves (lanes w and w+16) are combined once at the end. No cross-lane shuffles
-    // beyond one 16-lane DPP reduction per tile per 128 k.
-    auto fold = [&](int chunk) {
-        const bool mine = (lane & 15) == (chunk & 15);
+    // Pearl fold: XOR of this lane's 128 running sums, folded into its own transcript. No cross-lane traffic.
+    auto fold = [&](int) {
+        unsigned x = 0;
 #pragma unroll
         for (int i = 0; i < FM; ++i)
 #pragma unroll
             for (int j = 0; j < FN; ++j) {
                 v8i c = acc[i][j];
-                unsigned x = (unsigned)(c[0] ^ c[1] ^ c[2] ^ c[3] ^ c[4] ^ c[5] ^ c[6] ^ c[7]);
-                x = row_xor16(x);
-                unsigned rot = (tr[i][j] << 13) | (tr[i][j] >> 19);
-                tr[i][j] = mine ? (rot ^ x) : tr[i][j];
+                x ^= (unsigned)(c[0] ^ c[1] ^ c[2] ^ c[3] ^ c[4] ^ c[5] ^ c[6] ^ c[7]);
             }
+        unsigned r0 = ((R[0] << 13) | (R[0] >> 19)) ^ x;
+#pragma unroll
+        for (int w = 0; w < 15; ++w) R[w] = R[w + 1];
+        R[15] = r0;
     };
     auto stage = [&](int kt) {
         gload(kt + 1);
@@ -167,49 +164,35 @@ __device__ __forceinline__ void pearl_gemm_rdna4_body(
     mma(1);
     fold(nk / 2 - 1);
 
-    const int tiles_n = N / 16;
-    if (out) {  // debug path: per-lane partial transcripts for the CPU comparison in --selftest
+    // Epilogue: every lane hashes its own tile's transcript.
+    const uint32_t t_rows = (uint32_t)(by * 128 + wm * 64 + 8 * (lane >> 4));
+    const uint32_t t_cols = (uint32_t)(bx * 128 + wn * 64 + (lane & 15));
+    if (out) {  // debug path: one 16-word transcript per lane tile, in launch order
+        const size_t idx = ((size_t)(blockIdx.y * gridDim.x + blockIdx.x) * 4 + wave) * 32 + lane;
 #pragma unroll
-        for (int i = 0; i < FM; ++i)
-#pragma unroll
-            for (int j = 0; j < FN; ++j)
-                out[((size_t)(by * RB + wm * FM + i) * tiles_n + (bx * RB + wn * FN + j)) * 32 + lane] = tr[i][j];
+        for (int w = 0; w < 16; ++w) out[idx * 16 + w] = R[w];
         return;
     }
-    // Fused jackpot check. Word w of a tile = tr(lane w) ^ tr(lane w + 16). The main loop is done, so the stage
-    // buffer in LDS is free: each wave writes its 16 tiles x 32 partial words (2 KB) to its own region, then lane t
-    // (t < 16) reads back tile t's words and hashes it. Going through LDS keeps register pressure low.
-    lds_barrier();  // every wave has finished reading the last stage
-    unsigned* scratch = (unsigned*)lds + wave * (FM * FN * 32);
-#pragma unroll
-    for (int i = 0; i < FM; ++i)
-#pragma unroll
-        for (int j = 0; j < FN; ++j) scratch[(i * FN + j) * 32 + lane] = tr[i][j];
-    asm volatile("s_wait_dscnt 0x0" ::: "memory");  // this wave's LDS writes are visible to its own lanes
     uint32_t words[16];
-    const int my = lane & 15;
 #pragma unroll
-    for (int w = 0; w < 16; ++w) words[w] = scratch[my * 32 + w] ^ scratch[my * 32 + w + 16];
-    if (lane < FM * FN) {
-        uint32_t h[8];
-        b3_keyed64(a_seed, words, h);
-        if (u256_le(h, bound)) {
-            const int i = lane / FN, j = lane % FN;
-            uint32_t slot = atomicAdd(&found[0], 1u);
-            if (slot < max_found) {
-                uint32_t* rec = found + 1 + slot * 18;
-                rec[0] = (uint32_t)((by * RB + wm * FM + i) * 16);  // t_rows
-                rec[1] = (uint32_t)((bx * RB + wn * FN + j) * 16);  // t_cols
+    for (int w = 0; w < 16; ++w) words[w] = R[w];
+    uint32_t h[8];
+    b3_keyed64(a_seed, words, h);
+    if (u256_le(h, bound)) {
+        uint32_t slot = atomicAdd(&found[0], 1u);
+        if (slot < max_found) {
+            uint32_t* rec = found + 1 + slot * 18;
+            rec[0] = t_rows;
+            rec[1] = t_cols;
 #pragma unroll
-                for (int w = 0; w < 16; ++w) rec[2 + w] = words[w];
-            }
+            for (int w = 0; w < 16; ++w) rec[2 + w] = words[w];
         }
     }
 }
 
 // Entry point looked up by name from the host. Grid (N/128, M/128), block 128.
-// Requirements: M % 128 == 0, N % 128 == 0, K % 128 == 0, K >= 256.
-// out != nullptr: write partial transcripts (debug). Otherwise hash each tile in the epilogue and append tiles
+// Requirements: M % 128 == 0, N % 128 == 0, K % 2048 == 0.
+// out != nullptr: write per-lane-tile transcripts (debug). Otherwise hash each tile in the epilogue and append tiles
 // whose jackpot hash is <= bound to found[] (count, then 18-word records: t_rows, t_cols, 16 transcript words).
 extern "C" __global__ __launch_bounds__(128) void xm_pearl_gemm(const int8_t* __restrict__ Ap,
                                                                const int8_t* __restrict__ Bp,

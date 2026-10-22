@@ -34,8 +34,7 @@ unsigned blocks(size_t threads, unsigned bs) { return static_cast<unsigned>((thr
 Engine::Engine(gpu::Device& dev, uint32_t m, uint32_t n, uint64_t seed) : dev_(dev), m_(m), n_(n), rng_(seed) {
   cfg_.k = 4096;
   cfg_.rank = 128;
-  // Hash tiles match each kernel's accumulator ownership. AMD: contiguous 16x16 tiles (one WMMA accumulator, folded
-  // through LDS). NVIDIA: the 128 accumulators one lane owns in a 64x64 warp tile of m16n8 fragments, rows
+  // Hash tiles match each kernel's accumulator ownership, so each lane folds and hashes its own tile. NVIDIA: the 128 accumulators one lane owns in a 64x64 warp tile of m16n8 fragments, rows
   // {0, 8, ..., 56} x cols {0, 1, 8, 9, ..., 56, 57}, so the fold needs no cross-lane traffic (kernels/pearl/pearl.cu).
   if (dev_.info().vendor == gpu::Vendor::Nvidia) {
     std::vector<uint32_t> rows = {0, 8, 16, 24, 32, 40, 48, 56}, cols;
@@ -43,8 +42,13 @@ Engine::Engine(gpu::Device& dev, uint32_t m, uint32_t n, uint64_t seed) : dev_(d
     Pattern::from_list(rows, cfg_.rows);
     Pattern::from_list(cols, cfg_.cols);
   } else {
-    cfg_.rows = Pattern::contiguous(16);
-    cfg_.cols = Pattern::contiguous(16);
+    // AMD (gfx12 WMMA, wave32): a lane owns rows 8*(lane/16) + 0..7 of column lane%16 in each 16x16 accumulator;
+    // over a 64x64 wave tile that is rows {0..7, 16..23, 32..39, 48..55} x cols {0, 16, 32, 48}.
+    std::vector<uint32_t> rows, cols = {0, 16, 32, 48};
+    for (uint32_t b = 0; b < 64; b += 16)
+      for (uint32_t r = 0; r < 8; ++r) rows.push_back(b + r);
+    Pattern::from_list(rows, cfg_.rows);
+    Pattern::from_list(cols, cfg_.cols);
   }
 }
 
