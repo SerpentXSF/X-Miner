@@ -19,7 +19,14 @@ constexpr int BM = 128, BN = 256, BK = 64, THREADS = 256;
 constexpr int WM = 64, WN = 64;  // 8 warps: 2 (m) x 4 (n)
 constexpr int MT = WM / 16;      // m16 fragments per warp
 constexpr int STAGE_A = BM * BK, STAGE_B = BN * BK, STAGE_BYTES = STAGE_A + STAGE_B;  // 8 + 16 KB
-constexpr int STAGES = 3;  // cp.async pipeline depth: 72 KB of dynamic shared memory (host: kPearlNvShared)
+// Tuned on the RTX 3060 (TH/s at 127 W): stages 3 39.5 / 4 38.4; group rows 4 39.1 / 8 39.5 / 16 38.4.
+#ifndef XM_PEARL_STAGES
+#define XM_PEARL_STAGES 3
+#endif
+#ifndef XM_PEARL_GROUP
+#define XM_PEARL_GROUP 8
+#endif
+constexpr int STAGES = XM_PEARL_STAGES;  // cp.async pipeline depth: STAGES x 24 KB of dynamic shared memory
 
 // Byte offset of (row, 16-byte chunk) inside a 64-byte-row stage, with an XOR swizzle so the 8 row addresses of
 // an ldmatrix hit 32 distinct banks.
@@ -71,7 +78,7 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
 
   // Grouped rasterization (8 row-blocks per group) so concurrent blocks share A/B tiles in L2.
   const int gx = gridDim.x, gy = gridDim.y, pid = blockIdx.y * gx + blockIdx.x;
-  const int G = 8, per = G * gx, group = pid / per, first = group * G;
+  const int G = XM_PEARL_GROUP, per = G * gx, group = pid / per, first = group * G;
   const int rows = min(gy - first, G), in = pid % per;
   const int by = first + in % rows, bx = in / rows;
 
@@ -126,14 +133,14 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
   for (int w = 0; w < 16; ++w) R[w] = 0;
 
   const int nk = K / BK;
-  load_stage(0, 0);
-  load_stage(1, 1);
+#pragma unroll
+  for (int s = 0; s < STAGES - 1; ++s) load_stage(s, s);
   unsigned x = 0;  // XOR of this lane's running sums, produced during the last k-step of each chunk
   auto stage = [&](int kt, bool chunk_end) {  // chunk_end: 2nd stage of the 128-k chunk; else the 1st
     const int st = kt % STAGES;
     cp_async_wait<STAGES - 2>();           // stage kt has landed (one newer group may still be in flight)
     __syncthreads();                       // stage kt visible; everyone is done with stage kt-1
-    if (kt + 2 < nk) load_stage((kt + 2) % STAGES, kt + 2);
+    if (kt + STAGES - 1 < nk) load_stage((kt + STAGES - 1) % STAGES, kt + STAGES - 1);
     else cp_async_commit();                // keep the group count uniform for wait_group
     const unsigned sA = sbase + st * STAGE_BYTES, sB = sA + STAGE_A;
 #pragma unroll
