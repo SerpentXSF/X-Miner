@@ -200,3 +200,22 @@ void golden_case(const char* file) {
 
 TEST(pearl_golden_g3_rank64) { golden_case("pearl_golden_g3.json"); }
 TEST(pearl_golden_g5_rank128) { golden_case("pearl_golden_g5.json"); }
+
+TEST(pearl_incremental_tree_update) {
+  Hash key = fill(0x33);
+  for (size_t chunks : {2u, 3u, 7u, 64u, 100u}) {
+    std::vector<int8_t> m(chunks * 1024);
+    for (size_t i = 0; i < m.size(); ++i) m[i] = static_cast<int8_t>((i * 7) & 0x7f) - 64;
+    blake3::Cv kw = blake3::key_words(key.data());
+    std::vector<Hash> cvs(chunks);
+    for (size_t i = 0; i < chunks; ++i)
+      cvs[i] = blake3::cv_bytes(blake3::chunk_cv(kw, reinterpret_cast<uint8_t*>(m.data()) + i * 1024, 1024, i,
+                                                 blake3::KEYED_HASH));
+    MerkleTree t = tree_from_chunk_cvs(key, cvs);
+    for (size_t idx : {size_t(0), chunks - 1, chunks / 2}) {
+      for (int b = 0; b < 1024; ++b) m[idx * 1024 + b] = static_cast<int8_t>((b * 13 + idx) & 0x7f) - 64;
+      tree_update_chunk(t, idx, reinterpret_cast<uint8_t*>(m.data()) + idx * 1024);
+      CHECK_EQ(hex(t.root()), hex(matrix_root(key, m.data(), chunks, 1024)));
+    }
+  }
+}

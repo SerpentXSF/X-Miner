@@ -106,6 +106,21 @@ struct MerkleProof {
   Hash root{};
   std::vector<Hash> siblings;
 };
+// BLAKE3 tree of a padded matrix, kept so shares (multiproofs) and incremental updates are cheap.
+// layers[0] = chunk chaining values, ..., layers.back() = {root}. Pairs are combined, an odd node is carried up.
+struct MerkleTree {
+  Hash key{};
+  std::vector<std::vector<Hash>> layers;
+  const Hash& root() const { return layers.back()[0]; }
+  size_t leaves() const { return layers[0].size(); }
+};
+MerkleTree tree_from_chunk_cvs(const Hash& key, std::vector<Hash> chunk_cvs);   // >= 2 chunks
+// Replace chunk `index` (1024 bytes) and update the path to the root.
+void tree_update_chunk(MerkleTree& t, uint64_t index, const uint8_t* chunk1024);
+// Multiproof for `row_indices` of a row-major int8 matrix with `cols` columns, from its tree and data.
+MerkleProof tree_proof(const MerkleTree& t, const int8_t* data, size_t len, size_t cols,
+                       const std::vector<uint64_t>& row_indices);
+
 // Builds the multiproof for the given rows of a row-major int8 matrix (rows x cols), keyed with job_key.
 MerkleProof matrix_proof(const Hash& job_key, const int8_t* data, size_t rows, size_t cols,
                          const std::vector<uint64_t>& row_indices);

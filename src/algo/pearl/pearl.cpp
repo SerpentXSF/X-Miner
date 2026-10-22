@@ -387,34 +387,12 @@ U256 difficulty_bound(uint32_t nbits, const Config& c) {
 
 namespace {
 
-struct Tree {
-  std::vector<std::vector<Hash>> layers;  // layers[0] = chunk CVs; last = {root}
-};
+blake3::Cv words(const Hash& h) { return blake3::key_words(h.data()); }
 
-Tree build_tree(const Hash& key, const std::vector<uint8_t>& data) {
-  Tree t;
+Hash parent_of(const Hash& key, const Hash& l, const Hash& r, bool root) {
   blake3::Cv kw = blake3::key_words(key.data());
-  size_t chunks = data.size() / 1024;
-  if (chunks <= 1) {
-    t.layers.push_back({blake3::keyed_hash(key.data(), data.data(), data.size())});
-    return t;
-  }
-  std::vector<Hash> l0(chunks);
-  for (size_t i = 0; i < chunks; ++i)
-    l0[i] = blake3::cv_bytes(blake3::chunk_cv(kw, data.data() + i * 1024, 1024, i, blake3::KEYED_HASH));
-  t.layers.push_back(l0);
-  auto cvw = [](const Hash& h) { return blake3::key_words(h.data()); };  // bytes -> words
-  while (t.layers.back().size() > 2) {
-    const auto& prev = t.layers.back();
-    std::vector<Hash> next;
-    for (size_t i = 0; i + 1 < prev.size(); i += 2)
-      next.push_back(blake3::cv_bytes(blake3::parent_cv(kw, cvw(prev[i]), cvw(prev[i + 1]), blake3::KEYED_HASH)));
-    if (prev.size() % 2) next.push_back(prev.back());
-    t.layers.push_back(next);
-  }
-  const auto& last = t.layers.back();
-  t.layers.push_back({blake3::parent_root(kw, cvw(last[0]), cvw(last[1]), blake3::KEYED_HASH)});
-  return t;
+  return root ? blake3::parent_root(kw, words(l), words(r), blake3::KEYED_HASH)
+              : blake3::cv_bytes(blake3::parent_cv(kw, words(l), words(r), blake3::KEYED_HASH));
 }
 
 void put64(std::vector<uint8_t>& o, uint64_t v) {
@@ -439,24 +417,53 @@ void put_proof(std::vector<uint8_t>& o, const MerkleProof& p, const std::vector<
 
 }  // namespace
 
-MerkleProof matrix_proof(const Hash& key, const int8_t* data, size_t rows, size_t cols,
-                         const std::vector<uint64_t>& row_indices) {
-  size_t len = rows * cols;
-  std::vector<uint8_t> buf((len + 1023) / 1024 * 1024, 0);
-  std::memcpy(buf.data(), data, len);
-  Tree t = build_tree(key, buf);
+MerkleTree tree_from_chunk_cvs(const Hash& key, std::vector<Hash> cvs) {
+  MerkleTree t;
+  t.key = key;
+  t.layers.push_back(std::move(cvs));
+  while (t.layers.back().size() > 2) {
+    const auto& prev = t.layers.back();
+    std::vector<Hash> next;
+    next.reserve((prev.size() + 1) / 2);
+    for (size_t i = 0; i + 1 < prev.size(); i += 2) next.push_back(parent_of(key, prev[i], prev[i + 1], false));
+    if (prev.size() % 2) next.push_back(prev.back());
+    t.layers.push_back(std::move(next));
+  }
+  const auto& last = t.layers.back();
+  t.layers.push_back({parent_of(key, last[0], last[1], true)});
+  return t;
+}
 
+void tree_update_chunk(MerkleTree& t, uint64_t index, const uint8_t* chunk) {
+  blake3::Cv kw = blake3::key_words(t.key.data());
+  t.layers[0][index] = blake3::cv_bytes(blake3::chunk_cv(kw, chunk, 1024, index, blake3::KEYED_HASH));
+  uint64_t i = index;
+  for (size_t L = 0; L + 1 < t.layers.size(); ++L) {
+    uint64_t j = i / 2;
+    const auto& cur = t.layers[L];
+    bool root = L + 2 == t.layers.size();
+    if (2 * j + 1 < cur.size())
+      t.layers[L + 1][j] = parent_of(t.key, cur[2 * j], cur[2 * j + 1], root);
+    else
+      t.layers[L + 1][j] = cur[2 * j];  // odd node carried up
+    i = j;
+  }
+}
+
+MerkleProof tree_proof(const MerkleTree& t, const int8_t* data, size_t len, size_t cols,
+                       const std::vector<uint64_t>& row_indices) {
   std::set<uint64_t> leaves;
   for (uint64_t r : row_indices) {
     uint64_t first = r * cols / 1024, last = ((r + 1) * cols - 1) / 1024;
     for (uint64_t i = first; i <= last; ++i) leaves.insert(i);
   }
   MerkleProof p;
-  p.total_leaves = t.layers[0].size();
-  p.root = t.layers.back()[0];
+  p.total_leaves = t.leaves();
+  p.root = t.root();
   for (uint64_t i : leaves) {
     std::array<uint8_t, 1024> chunk{};
-    std::memcpy(chunk.data(), buf.data() + i * 1024, 1024);
+    size_t off = i * 1024;
+    if (off < len) std::memcpy(chunk.data(), data + off, std::min<size_t>(1024, len - off));
     p.leaf_data.push_back(chunk);
     p.leaf_indices.push_back(i);
   }
@@ -480,6 +487,25 @@ MerkleProof matrix_proof(const Hash& key, const int8_t* data, size_t rows, size_
     ++level;
   }
   return p;
+}
+
+MerkleProof matrix_proof(const Hash& key, const int8_t* data, size_t rows, size_t cols,
+                         const std::vector<uint64_t>& row_indices) {
+  size_t len = rows * cols;
+  size_t chunks = (len + 1023) / 1024;
+  std::vector<uint8_t> buf(chunks * 1024, 0);
+  std::memcpy(buf.data(), data, len);
+  if (chunks <= 1) {
+    MerkleTree t;
+    t.key = key;
+    t.layers.push_back({blake3::keyed_hash(key.data(), buf.data(), buf.size())});
+    return tree_proof(t, data, len, cols, row_indices);
+  }
+  blake3::Cv kw = blake3::key_words(key.data());
+  std::vector<Hash> cvs(chunks);
+  for (size_t i = 0; i < chunks; ++i)
+    cvs[i] = blake3::cv_bytes(blake3::chunk_cv(kw, buf.data() + i * 1024, 1024, i, blake3::KEYED_HASH));
+  return tree_proof(tree_from_chunk_cvs(key, std::move(cvs)), data, len, cols, row_indices);
 }
 
 std::vector<uint8_t> serialize(const PlainProof& p) {
