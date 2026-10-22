@@ -14,6 +14,7 @@
 #include "core/report.hpp"
 #include "core/stats.hpp"
 #include "gpu/sensors.hpp"
+#include "mining/fee_router.hpp"
 #include "pool/noid_pool.hpp"
 
 namespace xm {
@@ -38,24 +39,27 @@ int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   std::mutex rs_mu;
   RunState rs;
   rs.algorithm = "noid";
-  const FeeTarget* fee = fee_target("noid");
-  bool fee_configured = fee && fee->wallet[0] != '\0';
-  rs.fee_percent = fee_configured ? fee->percent : 0.0;
-  if (!fee_configured) warn("FEE", "no developer wallet in this build: the dev fee is off");
+  FeePlan plan = fee_plan("noid");
+  if (!plan.enabled) warn("FEE", "no developer wallet in this build: the dev fee is off");
 
-  NoidPool pool(cfg.pools, cfg.login(), cfg.password, [&](bool ok, const std::string& err, const std::string& job, int dev) {
-    stats.share(dev, ok, err.find("tale") != std::string::npos || err.find("expired") != std::string::npos ||
-                             err.find("superseded") != std::string::npos,
-                false);
-    if (ok) {
-      log_line(Tone::Ok, "LOCK", "share accepted  unit " + std::to_string(dev) + "  job " + job);
-      record_event("LOCK", "unit " + std::to_string(dev) + " · share accepted");
-    } else {
-      log_line(Tone::Red, "MISS", "share rejected  unit " + std::to_string(dev) + "  " + err, Tone::Red);
-      record_event("MISS", "unit " + std::to_string(dev) + " · " + err);
-    }
-  });
+  auto on_result = [&](bool fee) {
+    return [&, fee](bool ok, const std::string& err, const std::string& job, int dev) {
+      stats.share(dev, ok, err.find("tale") != std::string::npos || err.find("expired") != std::string::npos ||
+                               err.find("superseded") != std::string::npos,
+                  fee);
+      const std::string who = fee ? "dev fee share" : "share";
+      if (ok) {
+        log_line(Tone::Ok, "LOCK", who + " accepted  unit " + std::to_string(dev) + "  job " + job);
+        record_event("LOCK", "unit " + std::to_string(dev) + " · " + who + " accepted");
+      } else {
+        log_line(Tone::Red, "MISS", who + " rejected  unit " + std::to_string(dev) + "  " + err, Tone::Red);
+        record_event("MISS", "unit " + std::to_string(dev) + " · " + err);
+      }
+    };
+  };
+  NoidPool pool(cfg.pools, cfg.login(), cfg.password, on_result(false));
   pool.start();
+  FeeRouter<NoidPool, noid::Job> router(pool, plan, on_result(true));
 
   std::unique_ptr<ApiServer> api;
   if (cfg.api_enable) {
@@ -88,17 +92,20 @@ int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       // ~0.25 s on an RX 9070 XT, ~0.45 s on an RTX 3060: a share found in a batch that straddles a new block is stale.
       const uint32_t batch = 1u << 22;
       uint64_t have = 0;
+      bool job_fee = false;
       double rate = 0;
       while (!g_stop) {
         noid::Job job;
         uint64_t ver = 0;
-        if (!pool.job(job, ver)) {
+        bool fee = false;
+        if (!router.job(job, ver, fee)) {
           std::this_thread::sleep_for(std::chrono::milliseconds(200));
           continue;
         }
         if (ver != have) {
           eng.set_job(job, err);
           have = ver;
+          job_fee = fee;
         }
         std::vector<noid::Share> shares;
         auto t0 = std::chrono::steady_clock::now();
@@ -114,16 +121,19 @@ int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
         rates[i] = rate;
         for (const auto& s : shares) {
           if (s.is_block) log_line(Tone::Gold, "BLCK", "block candidate found by unit " + std::to_string(i) + "!");
-          pool.submit(s, static_cast<int>(i));
+          router.with_pool(job_fee, [&](NoidPool& p) { p.submit(s, static_cast<int>(i)); });
         }
       }
     });
   }
 
   gpu::Sensors sensors(devs);
-  auto last_table = std::chrono::steady_clock::now();
+  auto last_table = std::chrono::steady_clock::now(), last_tick = last_table;
   while (!g_stop) {
     std::this_thread::sleep_for(std::chrono::seconds(1));
+    auto now = std::chrono::steady_clock::now();
+    router.tick(std::chrono::duration<double>(now - last_tick).count());
+    last_tick = now;
     double total = 0;
     for (size_t i = 0; i < devs.size(); ++i) {
       auto r = sensors.read(i);
@@ -133,8 +143,11 @@ int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     pool.report_rate(total);
     {
       std::lock_guard<std::mutex> lk(rs_mu);
-      rs.connected = pool.connected();
-      rs.pool = pool.endpoint();
+      rs.connected = router.connected();
+      rs.pool = router.endpoint();
+      rs.fee_percent = router.percent();
+      rs.fee_window = router.on_fee();
+      rs.fee_next_s = router.seconds_to_window();
     }
     if (std::chrono::steady_clock::now() - last_table > std::chrono::seconds(30)) {
       std::lock_guard<std::mutex> lk(rs_mu);
