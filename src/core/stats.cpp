@@ -7,9 +7,10 @@ namespace xm {
 
 Stats::Stats(size_t devices) : devs_(devices) {}
 
-void Stats::set_name(int dev, std::string name) {
+void Stats::set_name(int dev, std::string name, int bus) {
   std::lock_guard<std::mutex> lk(mu_);
   devs_.at(dev).name = std::move(name);
+  devs_.at(dev).bus = bus;
 }
 
 void Stats::add_hashes(int dev, double hashes, double seconds) {
@@ -70,6 +71,7 @@ Snapshot Stats::snapshot() const {
     DeviceSnapshot ds;
     ds.id = static_cast<int>(i);
     ds.name = d.name;
+    ds.bus = d.bus;
     ds.hr_now = rate(d.samples, now, 10);
     ds.hr_1m = rate(d.samples, now, 60);
     ds.hr_15m = rate(d.samples, now, 900);

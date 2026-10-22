@@ -42,7 +42,9 @@ struct Hip {
 #ifdef _WIN32
     const char* names[] = {"amdhip64_7.dll", "amdhip64_6.dll"};
 #else
-    const char* names[] = {"libamdhip64.so.7", "libamdhip64.so.6", "libamdhip64.so"};
+    // Also the default ROCm prefix: HiveOS and most distros do not put /opt/rocm/lib on the loader path.
+    const char* names[] = {"libamdhip64.so.7", "libamdhip64.so.6", "libamdhip64.so", "/opt/rocm/lib/libamdhip64.so.7",
+                           "/opt/rocm/lib/libamdhip64.so.6", "/opt/rocm/lib/libamdhip64.so"};
 #endif
     for (const char* n : names)
       if (lib.open(n)) break;

@@ -30,3 +30,16 @@ tar -C dist -czf "dist/$name.tar.gz" "$name"
 (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
 echo "packed dist/$name.tar.gz"
 cat "dist/$name.tar.gz.sha256"
+
+# HiveOS custom-miner package: x-miner-<version>-hiveos.tar.gz with the folder x-miner/.
+hive="dist/hiveos/x-miner"
+rm -rf dist/hiveos
+mkdir -p "$hive"
+cp "$build"/x-miner LICENSE NOTICE "$hive/"
+for f in launchers/hiveos/*; do tr -d '\r' < "$f" > "$hive/$(basename "$f")"; done
+sed -i "s/^CUSTOM_VERSION=.*/CUSTOM_VERSION=$version/" "$hive/h-manifest.conf"
+chmod 644 "$hive"/*
+chmod +x "$hive"/*.sh "$hive/x-miner"
+tar -C dist/hiveos -czf "dist/x-miner-$version-hiveos.tar.gz" x-miner
+(cd dist && sha256sum "x-miner-$version-hiveos.tar.gz" > "x-miner-$version-hiveos.tar.gz.sha256")
+echo "packed dist/x-miner-$version-hiveos.tar.gz"

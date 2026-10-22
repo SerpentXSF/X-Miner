@@ -14,6 +14,7 @@ nlohmann::json build_summary(const Snapshot& s, const RunState& r) {
   for (const auto& d : s.devices) {
     gpu_hr["gpu" + std::to_string(d.id)] = d.hr_1m;
     devices.push_back({{"id", d.id},
+                       {"bus", d.bus},
                        {"name", d.name},
                        {"hr", d.hr_now},
                        {"hr_1m", d.hr_1m},

@@ -14,6 +14,7 @@ using Clock = std::chrono::steady_clock;
 
 struct DeviceSnapshot {
   int id = 0;
+  int bus = -1;  // PCI bus (-1 = unknown)
   std::string name;
   double hr_now = 0, hr_1m = 0, hr_15m = 0, hr_1h = 0;  // hashes per second
   uint64_t accepted = 0, rejected = 0, stale = 0;
@@ -32,7 +33,7 @@ class Stats {
  public:
   explicit Stats(size_t devices);
 
-  void set_name(int dev, std::string name);
+  void set_name(int dev, std::string name, int bus = -1);
   // Report that `hashes` hashes were completed on device `dev` during the last `seconds` of work.
   void add_hashes(int dev, double hashes, double seconds);
   void share(int dev, bool accepted, bool stale, bool fee_window);
@@ -47,6 +48,7 @@ class Stats {
   };
   struct Dev {
     std::string name;
+    int bus = -1;
     std::deque<Sample> samples;  // up to 1 hour
     uint64_t accepted = 0, rejected = 0, stale = 0;
     double power_w = -1, temp_c = -1, fan_pct = -1, core_mhz = -1;

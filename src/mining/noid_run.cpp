@@ -35,7 +35,7 @@ int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   std::signal(SIGTERM, on_signal);
 
   Stats stats(devs.size());
-  for (size_t i = 0; i < devs.size(); ++i) stats.set_name(static_cast<int>(i), devs[i].name);
+  for (size_t i = 0; i < devs.size(); ++i) stats.set_name(static_cast<int>(i), devs[i].name, devs[i].pci_bus);
   std::mutex rs_mu;
   RunState rs;
   rs.algorithm = "noid";
