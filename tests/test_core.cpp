@@ -106,3 +106,12 @@ TEST(hashrate_is_hashes_over_covered_time) {
   CHECK_NEAR(snap.hr_now, 4.0e12, 1e3);
   CHECK_NEAR(snap.hr_1m, 4.0e12, 1e3);
 }
+
+#include "pool/pearl_pool.hpp"
+
+TEST(pearl_pool_target_conversions) {
+  // HeroMiners fixed diff 2^21 -> compact 0x1a07fff8 (spec 4.4), via difficulty and via target hex.
+  CHECK_EQ(nbits_from_difficulty(2097152.0), 0x1a07fff8u);
+  CHECK_EQ(nbits_from_target_hex("00000000000007fff80000000000000000000000000000000000000000000000"), 0x1a07fff8u);
+  CHECK_EQ(nbits_from_difficulty(1.0), 0x1d00ffffu);
+}

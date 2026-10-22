@@ -43,6 +43,8 @@ add_library(xm_core STATIC
   src/algo/pearl/share_test.cpp
   src/algo/pearl/pearl_gpu.cpp
   src/algo/pearl/bench.cpp
+  src/pool/pearl_pool.cpp
+  src/mining/pearl_run.cpp
   src/api/api.cpp
   src/core/console.cpp
   src/core/config.cpp

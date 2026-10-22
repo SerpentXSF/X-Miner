@@ -22,6 +22,9 @@
 
 using namespace xm;
 
+namespace xm {
+int run_pearl(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+}
 namespace xm::pearl {
 int share_test(const std::string& dir);
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
@@ -184,14 +187,22 @@ int main(int argc, char** argv) {
                                         : "unknown algorithm '" + cfg.algorithm + "' (see --list-algorithms)");
     return 2;
   }
-  if (cfg.benchmark) {
-    auto all = gpu::all_devices();
-    std::vector<gpu::DeviceInfo> devs;
-    for (size_t i = 0; i < all.size(); ++i)
-      if (cfg.gpu_ids.empty() || std::find(cfg.gpu_ids.begin(), cfg.gpu_ids.end(), int(i)) != cfg.gpu_ids.end())
-        devs.push_back(all[i]);
-    print_section("BENCHMARK");
-    if (std::string(algo->name) == "pearlhash") return pearl::benchmark(cfg, devs);
+  auto all = gpu::all_devices();
+  std::vector<gpu::DeviceInfo> devs;
+  for (size_t i = 0; i < all.size(); ++i)
+    if (cfg.gpu_ids.empty() || std::find(cfg.gpu_ids.begin(), cfg.gpu_ids.end(), int(i)) != cfg.gpu_ids.end())
+      devs.push_back(all[i]);
+  if (devs.empty()) {
+    error("GPU", "no GPU selected (see --list-devices)");
+    return 1;
+  }
+  if (std::string(algo->name) == "pearlhash") {
+    if (cfg.benchmark) {
+      print_section("BENCHMARK");
+      return pearl::benchmark(cfg, devs);
+    }
+    print_section("MISSION START");
+    return run_pearl(cfg, devs);
   }
   if (!algo->implemented) {
     error("ALGO", std::string(algo->name) + " is still in development in this build");
