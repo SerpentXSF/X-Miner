@@ -17,7 +17,15 @@ void Stats::add_hashes(int dev, double hashes, double seconds) {
   auto now = Clock::now();
   std::lock_guard<std::mutex> lk(mu_);
   auto& s = devs_.at(dev).samples;
-  s.push_back({now, hashes, seconds});
+  // Merge short GPU passes into ~0.25 s buckets: rates are ratios of summed hashes and summed time, so merging
+  // keeps them exact, and an hour of history stays ~15k samples instead of one per pass (~150k on fast cards).
+  if (!s.empty() && s.back().seconds + seconds <= 0.25 && now - s.back().t < std::chrono::milliseconds(500)) {
+    s.back().hashes += hashes;
+    s.back().seconds += seconds;
+    s.back().t = now;
+  } else {
+    s.push_back({now, hashes, seconds});
+  }
   while (!s.empty() && now - s.front().t > std::chrono::hours(1)) s.pop_front();
 }
 
