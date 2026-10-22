@@ -32,8 +32,18 @@ unsigned blocks(size_t threads, unsigned bs) { return static_cast<unsigned>((thr
 Engine::Engine(gpu::Device& dev, uint32_t m, uint32_t n, uint64_t seed) : dev_(dev), m_(m), n_(n), rng_(seed) {
   cfg_.k = 4096;
   cfg_.rank = 128;
-  cfg_.rows = Pattern::contiguous(16);
-  cfg_.cols = Pattern::contiguous(16);
+  // Hash tiles match each kernel's accumulator ownership. AMD: contiguous 16x16 tiles (one WMMA accumulator, folded
+  // through LDS). NVIDIA: the 64 accumulators one lane owns in a 32x64 warp tile of m16n8 fragments, rows
+  // {0, 8, 16, 24} x cols {0, 1, 8, 9, ..., 56, 57}, so the fold needs no cross-lane traffic (kernels/pearl/pearl.cu).
+  if (dev_.info().vendor == gpu::Vendor::Nvidia) {
+    std::vector<uint32_t> rows = {0, 8, 16, 24}, cols;
+    for (uint32_t j = 0; j < 8; ++j) cols.insert(cols.end(), {8 * j, 8 * j + 1});
+    Pattern::from_list(rows, cfg_.rows);
+    Pattern::from_list(cols, cfg_.cols);
+  } else {
+    cfg_.rows = Pattern::contiguous(16);
+    cfg_.cols = Pattern::contiguous(16);
+  }
 }
 
 Engine::~Engine() {
@@ -70,7 +80,7 @@ bool Engine::init(std::string& err) {
   d_pairs_ = dev_.alloc(size_t(k) * 2 * 4);
   d_cvs_ = dev_.alloc(std::max(sa, sb) / 1024 * 32);
   d_out_ = dev_.alloc(256);  // unused by the fused path; kept non-null for allocation checks
-  d_found_ = dev_.alloc((1 + kMaxFound * 17) * 4);
+  d_found_ = dev_.alloc((1 + kMaxFound * kRecWords) * 4);
   if (!d_a_ || !d_bt_ || !d_ap_ || !d_bp_ || !d_uni_ || !d_pairs_ || !d_cvs_ || !d_out_ || !d_found_) {
     err = "out of GPU memory (" + dev_.last_error() + ")";
     return false;
@@ -172,7 +182,7 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   for (int i = 0; i < 8; ++i) bw.w[i] = bound.w[i];
   gpu::DevPtr no_out = 0;  // fused jackpot check in the GEMM epilogue
   void* g[] = {&d_ap_, &d_bp_, &no_out, &M, &N, &K, &seed, &bw, &d_found_, &maxf};
-  std::vector<uint32_t> found(1 + kMaxFound * 17);
+  std::vector<uint32_t> found(1 + kMaxFound * kRecWords);
   // Block size: the AMD kernel uses 4 waves of 32, the NVIDIA kernel 8 warps of 32.
   const unsigned threads = dev_.info().vendor == gpu::Vendor::Nvidia ? 256 : 128;
   if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_pearl_gemm", n_ / 128, m_ / 128, 1, threads, 1, 1, 0, g) ||
@@ -187,23 +197,30 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
     U256 block_bound = difficulty_bound(header_nbits(job_.header), cfg_);
     auto perm_a = permutation(Side::A, seeds_.a_noise_seed, k, cfg_.rank);
     auto perm_b = permutation(Side::B, seeds_.b_noise_seed, k, cfg_.rank);
+    const auto rl = cfg_.rows.to_list(), cl = cfg_.cols.to_list();
     for (uint32_t h = 0; h < hits; ++h) {
-      const uint32_t* rec = &found[1 + h * 17];
+      const uint32_t* rec = &found[1 + h * kRecWords];
       Found f;
-      f.t_rows = rec[0] / (n_ / 16) * 16;
-      f.t_cols = rec[0] % (n_ / 16) * 16;
-      for (int w = 0; w < 16; ++w) f.transcript[w] = rec[1 + w];
+      f.t_rows = rec[0];
+      f.t_cols = rec[1];
+      for (int w = 0; w < 16; ++w) f.transcript[w] = rec[2 + w];
+      if (!cfg_.rows.offset_is_valid(f.t_rows) || !cfg_.cols.offset_is_valid(f.t_cols) ||
+          f.t_rows + cfg_.rows.max() >= m_ || f.t_cols + cfg_.cols.max() >= n_) {
+        ++cpu_rejects_;
+        continue;
+      }
       // Re-verify on the CPU reference: the transcript of this tile from the host matrices and noise.
       std::vector<std::vector<int32_t>> ar, bc;
-      for (uint32_t d = 0; d < 16; ++d) {
+      for (uint32_t d : rl) {
         auto ea = noise_line(uniform_row(Side::A, seeds_.a_noise_seed, f.t_rows + d, cfg_.rank), perm_a);
-        auto eb = noise_line(uniform_row(Side::B, seeds_.b_noise_seed, f.t_cols + d, cfg_.rank), perm_b);
-        std::vector<int32_t> ra(k), rb(k);
-        for (uint32_t l = 0; l < k; ++l) {
-          ra[l] = a_[size_t(f.t_rows + d) * k + l] + ea[l];
-          rb[l] = bt_[size_t(f.t_cols + d) * k + l] + eb[l];
-        }
+        std::vector<int32_t> ra(k);
+        for (uint32_t l = 0; l < k; ++l) ra[l] = a_[size_t(f.t_rows + d) * k + l] + ea[l];
         ar.push_back(std::move(ra));
+      }
+      for (uint32_t d : cl) {
+        auto eb = noise_line(uniform_row(Side::B, seeds_.b_noise_seed, f.t_cols + d, cfg_.rank), perm_b);
+        std::vector<int32_t> rb(k);
+        for (uint32_t l = 0; l < k; ++l) rb[l] = bt_[size_t(f.t_cols + d) * k + l] + eb[l];
         bc.push_back(std::move(rb));
       }
       auto cpu_t = jackpot(ar, bc, k, cfg_.rank);
@@ -217,10 +234,8 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
       p.n = n_;
       p.k = k;
       p.noise_rank = cfg_.rank;
-      for (uint32_t d = 0; d < 16; ++d) {
-        p.a_rows.push_back(f.t_rows + d);
-        p.b_cols.push_back(f.t_cols + d);
-      }
+      for (uint32_t d : rl) p.a_rows.push_back(f.t_rows + d);
+      for (uint32_t d : cl) p.b_cols.push_back(f.t_cols + d);
       p.a = tree_proof(tree_a_, a_.data(), a_.size(), k, p.a_rows);
       p.bt = tree_proof(tree_b_, bt_.data(), bt_.size(), k, p.b_cols);
       Share s;

@@ -195,13 +195,13 @@ __device__ __forceinline__ void pearl_gemm_rdna4_body(
         b3_keyed64(a_seed, words, h);
         if (u256_le(h, bound)) {
             const int i = lane / FN, j = lane % FN;
-            uint32_t tile = (uint32_t)((by * RB + wm * FM + i) * tiles_n + (bx * RB + wn * FN + j));
             uint32_t slot = atomicAdd(&found[0], 1u);
             if (slot < max_found) {
-                uint32_t* rec = found + 1 + slot * 17;
-                rec[0] = tile;
+                uint32_t* rec = found + 1 + slot * 18;
+                rec[0] = (uint32_t)((by * RB + wm * FM + i) * 16);  // t_rows
+                rec[1] = (uint32_t)((bx * RB + wn * FN + j) * 16);  // t_cols
 #pragma unroll
-                for (int w = 0; w < 16; ++w) rec[1 + w] = words[w];
+                for (int w = 0; w < 16; ++w) rec[2 + w] = words[w];
             }
         }
     }
@@ -210,7 +210,7 @@ __device__ __forceinline__ void pearl_gemm_rdna4_body(
 // Entry point looked up by name from the host. Grid (N/128, M/128), block 128.
 // Requirements: M % 128 == 0, N % 128 == 0, K % 128 == 0, K >= 256.
 // out != nullptr: write partial transcripts (debug). Otherwise hash each tile in the epilogue and append tiles
-// whose jackpot hash is <= bound to found[] (count, then 17-word records: tile index + 16 transcript words).
+// whose jackpot hash is <= bound to found[] (count, then 18-word records: t_rows, t_cols, 16 transcript words).
 extern "C" __global__ __launch_bounds__(128) void xm_pearl_gemm(const int8_t* __restrict__ Ap,
                                                                const int8_t* __restrict__ Bp,
                                                                unsigned* __restrict__ out, int M, int N, int K,

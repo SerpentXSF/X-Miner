@@ -182,7 +182,8 @@ XM_DEV bool u256_le(const uint32_t a[8], const U256w& b) {
 
 // One thread per 16x16 tile: combine the GEMM's two half-transcripts, hash with a_noise_seed, compare with the
 // bound, and record hits (tile index + transcript) for the host.
-extern "C" __global__ void xm_jackpot_check(const uint32_t* __restrict__ tr, uint32_t tiles, Key8 a_seed, U256w bound,
+extern "C" __global__ void xm_jackpot_check(const uint32_t* __restrict__ tr, uint32_t tiles, uint32_t tiles_n,
+                                            Key8 a_seed, U256w bound,
                                             uint32_t* __restrict__ found, uint32_t max_found) {
   uint32_t t = blockIdx.x * blockDim.x + threadIdx.x;
   if (t >= tiles) return;
@@ -194,8 +195,9 @@ extern "C" __global__ void xm_jackpot_check(const uint32_t* __restrict__ tr, uin
   if (!u256_le(h, bound)) return;
   uint32_t slot = atomicAdd(&found[0], 1u);
   if (slot >= max_found) return;
-  uint32_t* rec = found + 1 + slot * 17;
-  rec[0] = t;
+  uint32_t* rec = found + 1 + slot * 18;
+  rec[0] = t / tiles_n * 16;  // t_rows
+  rec[1] = t % tiles_n * 16;  // t_cols
 #pragma unroll
-  for (int w = 0; w < 16; ++w) rec[1 + w] = m[w];
+  for (int w = 0; w < 16; ++w) rec[2 + w] = m[w];
 }

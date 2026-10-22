@@ -64,6 +64,7 @@ class Engine {
   uint64_t nonce_chunk_ = 0;
   uint64_t cpu_rejects_ = 0;
   static constexpr uint32_t kMaxFound = 64;
+  static constexpr uint32_t kRecWords = 18;  // t_rows, t_cols, 16 transcript words (see kernels/pearl)
 };
 
 }  // namespace xm::pearl

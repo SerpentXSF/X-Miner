@@ -2,12 +2,14 @@
 // with the Pearl transcript and a fused jackpot check. Written for X-Miner from the PTX ISA documentation.
 //
 // GEMM: C = A' * B'^T with A' (M x K) and B'^T (N x K) both row-major int8 ("K-major"), int32 accumulation.
-//   Block 128x128, 4 warps in 2x2, warp tile 64x64 = 4 (m16) x 8 (n8) mma.sync.m16n8k32 accumulators.
-//   K advances 64 per stage through a cp.async double-buffered shared-memory pipeline; fragments come from
-//   ldmatrix.x4 on XOR-swizzled 64-byte rows (conflict-free).
-// Pearl transcript: every 128 k, each 16x16 hash tile's 256 running sums are XOR-reduced to a word x and folded
-//   t[c % 16] = rotl(t[c % 16], 13) ^ x. After the last fold each tile's transcript is hashed (keyed BLAKE3 with
-//   a_noise_seed) and tiles at or under the share bound are appended to found[].
+//   Block 128x128, 8 warps in 4x2, warp tile 32x64 = 2 (m16) x 8 (n8) mma.sync.m16n8k32 accumulators.
+//   K advances 64 per stage through a cp.async 3-stage shared-memory pipeline; fragments come from ldmatrix.x4 on
+//   XOR-swizzled 64-byte rows (conflict-free).
+// Hash tiles follow the accumulator layout: rows {0, 8, 16, 24} x cols {0, 1, 8, 9, ..., 56, 57} (h = 4, w = 16;
+//   the host's NVIDIA mining configuration), i.e. exactly the 64 accumulators one lane owns in its warp tile.
+//   Every 128 k each lane XORs its 64 running sums into a word x and folds t[c % 16] = rotl(t[c % 16], 13) ^ x,
+//   with no cross-lane traffic. After the last fold each lane hashes its transcript (keyed BLAKE3 with a_noise_seed)
+//   and tiles at or under the share bound are appended to found[] as (t_rows, t_cols, 16 transcript words).
 #define XM_PEARL_ROWMAJOR 1
 #include "pearl/pearl_common.h"
 
@@ -16,7 +18,6 @@ namespace {
 constexpr int BM = 128, BN = 128, BK = 64, THREADS = 256;
 constexpr int WM = 32, WN = 64;  // 8 warps: 4 (m) x 2 (n)
 constexpr int MT = WM / 16;      // m16 fragments per warp
-constexpr int NT = MT * 4;       // 16x16 hash tiles per warp
 constexpr int STAGE_BYTES = BM * BK;  // per operand (8 KB)
 constexpr int STAGES = 3;              // cp.async pipeline depth (3 x 16 KB = 48 KB static shared memory)
 
@@ -46,19 +47,6 @@ __device__ __forceinline__ void mma_s8(int* c, const unsigned* a, unsigned b0, u
       : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
 }
 
-// One reduce-scatter step: lanes with bit MASK set keep the upper HALF of v, the others the lower half, and add
-// the partner lane's copy. Bitwise selects and constant indices keep v in registers.
-template <int HALF, int MASK, int NV>
-__device__ __forceinline__ void rs_step(unsigned (&v)[NV], int lane) {
-  const unsigned sel = 0u - (unsigned)((lane & MASK) != 0);
-#pragma unroll
-  for (int j = 0; j < HALF; ++j) {
-    const unsigned a = v[j], b = v[j + HALF];
-    const unsigned keep = (b & sel) | (a & ~sel), send = (a & sel) | (b & ~sel);
-    v[j] = keep ^ __shfl_xor_sync(0xffffffffu, send, MASK);
-  }
-}
-
 // Out-of-place variant: d = a * b + c with separate input and output registers.
 __device__ __forceinline__ void mma_s8_oop(int* d, const int* c, const unsigned* a, unsigned b0, unsigned b1) {
   asm volatile(
@@ -69,8 +57,9 @@ __device__ __forceinline__ void mma_s8_oop(int* d, const int* c, const unsigned*
 
 }  // namespace
 
-// Grid (N/128, M/128), block 128. Requirements: M % 128 == 0, N % 128 == 0, K % 2048 == 0.
-// out != nullptr: debug path writing 16 transcript words per 16x16 tile (tile-major) instead of the check.
+// Grid (N/128, M/128), block 256. Requirements: M % 128 == 0, N % 128 == 0, K % 2048 == 0.
+// out != nullptr: debug path writing 16 transcript words per lane tile instead of the check, at index
+//   ((t_rows / 32) * 8 + t_rows % 8) * (N / 8) + (t_cols / 64) * 4 + (t_cols % 8) / 2.
 extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t* __restrict__ A,
                                                                     const int8_t* __restrict__ B, unsigned* __restrict__ out,
                                                                     int M, int N, int K, Key8 a_seed, U256w bound,
@@ -130,8 +119,8 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
     for (int j = 0; j < 8; ++j)
 #pragma unroll
       for (int v = 0; v < 4; ++v) acc[i][j][v] = 0;
-  // Transcript of ONE tile per lane quad: tile q = lane >> 2 (q = i*4 + t). R is kept rotated so the word updated
-  // by the current 128-k chunk is always R[0]: after N chunks, word w is R[(w - N) mod 16].
+  // This lane's tile transcript. R is kept rotated so the word updated by the current 128-k chunk is always R[0]:
+  // after N chunks, word w is R[(w - N) mod 16].
   unsigned R[16];
 #pragma unroll
   for (int w = 0; w < 16; ++w) R[w] = 0;
@@ -139,7 +128,7 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
   const int nk = K / BK;
   load_stage(0, 0);
   load_stage(1, 1);
-  unsigned v[NT];  // per-tile XOR of this lane's accumulators, produced during the last k-step of each chunk
+  unsigned x = 0;  // XOR of this lane's running sums, produced during the last k-step of each chunk
   auto stage = [&](int kt, bool chunk_end) {  // chunk_end: 2nd stage of the 128-k chunk; else the 1st
     const int st = kt % STAGES;
     cp_async_wait<STAGES - 2>();           // stage kt has landed (one newer group may still be in flight)
@@ -168,13 +157,10 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
         // Last k-step: write the chunk's sums to snap, and XOR each row as soon as the next row has been issued.
         auto xor_row = [&](int i) {
 #pragma unroll
-          for (int t = 0; t < 4; ++t) {    // hash tile t covers n8 tiles 2t and 2t+1
-            unsigned x = 0;
-#pragma unroll
-            for (int e = 0; e < 4; ++e) x ^= (unsigned)snap[i][2 * t][e] ^ (unsigned)snap[i][2 * t + 1][e];
-            v[i * 4 + t] = x;
-          }
+          for (int j = 0; j < 8; ++j)
+            x ^= (unsigned)snap[i][j][0] ^ (unsigned)snap[i][j][1] ^ (unsigned)snap[i][j][2] ^ (unsigned)snap[i][j][3];
         };
+        x = 0;
 #pragma unroll
         for (int i = 0; i < MT; ++i) {
 #pragma unroll
@@ -190,15 +176,7 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
       }
     }
   };
-  auto fold = [&]() {                   // 128 k done: fold every 16x16 tile
-      // Per-lane XOR of each tile's 8 accumulators, then a reduce-scatter across the warp (16 shuffles instead of
-      // 16 x 5): afterwards lanes 2q and 2q+1 hold the full XOR of tile q.
-      // v[] was filled during the last k-step (stage(.., true)).
-      rs_step<4, 16>(v, lane);
-      rs_step<2, 8>(v, lane);
-      rs_step<1, 4>(v, lane);
-      unsigned x = v[0] ^ __shfl_xor_sync(0xffffffffu, v[0], 2);
-      x ^= __shfl_xor_sync(0xffffffffu, x, 1);
+  auto fold = [&]() {  // 128 k done: x (filled during the last k-step) is this lane's tile XOR
       unsigned r0 = ((R[0] << 13) | (R[0] >> 19)) ^ x;
 #pragma unroll
       for (int w = 0; w < 15; ++w) R[w] = R[w + 1];
@@ -211,30 +189,29 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
     fold();
   }
 
-  // Epilogue: even lanes hold one tile's complete transcript.
-  const int tiles_n = N / 16;
+  // Epilogue: every lane holds its tile's complete transcript.
   // K / 128 is a multiple of 16 (K % 2048 == 0), so after the last chunk R[w] is word w again.
-  if ((lane & 3) == 0) {  // lanes 4q..4q+3 hold tile q
-    const int q = lane >> 2, i = q >> 2, t = q & 3;
-    uint32_t tile = (uint32_t)((by * BM / 16 + wm * MT + i) * tiles_n + (bx * BN / 16 + wn * 4 + t));
-    if (out) {
+  const uint32_t t_rows = (uint32_t)(by * BM + wm * WM + (lane >> 2));
+  const uint32_t t_cols = (uint32_t)(bx * BN + wn * WN + 2 * (lane & 3));
+  if (out) {
+    const size_t idx = ((size_t)(t_rows / 32) * 8 + t_rows % 8) * (size_t)(N / 8) + (t_cols / 64) * 4 + (t_cols % 8) / 2;
 #pragma unroll
-      for (int w = 0; w < 16; ++w) out[(size_t)tile * 16 + w] = R[w];
-      return;
-    }
-    uint32_t words[16];  // separate copy: taking R's address would push it to local memory for the whole kernel
+    for (int w = 0; w < 16; ++w) out[idx * 16 + w] = R[w];
+    return;
+  }
+  uint32_t words[16];  // separate copy: taking R's address would push it to local memory for the whole kernel
 #pragma unroll
-    for (int w = 0; w < 16; ++w) words[w] = R[w];
-    uint32_t h[8];
-    b3_keyed64(a_seed, words, h);
-    if (u256_le(h, bound)) {
-      uint32_t slot = atomicAdd(&found[0], 1u);
-      if (slot < max_found) {
-        uint32_t* rec = found + 1 + slot * 17;
-        rec[0] = tile;
+  for (int w = 0; w < 16; ++w) words[w] = R[w];
+  uint32_t h[8];
+  b3_keyed64(a_seed, words, h);
+  if (u256_le(h, bound)) {
+    uint32_t slot = atomicAdd(&found[0], 1u);
+    if (slot < max_found) {
+      uint32_t* rec = found + 1 + slot * 18;
+      rec[0] = t_rows;
+      rec[1] = t_cols;
 #pragma unroll
-        for (int w = 0; w < 16; ++w) rec[1 + w] = words[w];
-      }
+      for (int w = 0; w < 16; ++w) rec[2 + w] = words[w];
     }
   }
 }
