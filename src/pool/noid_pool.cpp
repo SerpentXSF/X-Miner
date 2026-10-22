@@ -1,6 +1,8 @@
 #include "pool/noid_pool.hpp"
 
 #include <chrono>
+#include <cmath>
+#include <cstdio>
 
 #include "core/console.hpp"
 #include "core/version.hpp"
@@ -136,6 +138,14 @@ void NoidPool::handle(const std::string& line) {
     job_ = j;
     have_job_ = true;
     ++version_;
+    if (j.share_target != last_target_) {
+      last_target_ = j.share_target;
+      double t = 0;
+      for (int i = 31; i >= 0; --i) t = t * 256.0 + j.share_target[i];
+      char buf[64];
+      std::snprintf(buf, sizeof buf, "share difficulty %.4g (hashes per share)", t > 0 ? std::pow(2.0, 256) / t : 0.0);
+      info("POOL", buf);
+    }
     record_event("JOB", "height " + std::to_string(p.value("height", 0)) + " · " + j.id);
     return;
   }

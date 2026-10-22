@@ -59,6 +59,7 @@ class PearlPool {
   bool have_job_ = false;
   std::atomic<uint64_t> version_{0};
   uint32_t diff_nbits_ = 0;  // from mining.set_difficulty, used when notify has no target
+  uint32_t last_nbits_ = 0;  // last share target announced on the console
   size_t pool_index_ = 0;
   int next_id_ = 10;
   struct Pending {
@@ -71,6 +72,8 @@ class PearlPool {
 
 // Compact share target from a pool target given as big-endian hex (rounded down, so local == pool acceptance).
 uint32_t nbits_from_target_hex(const std::string& hex);
+// Stratum difficulty of a compact share target (D = 0xFFFF * 2^208 / target; one share per D * 2^32 MAC).
+double difficulty_from_nbits(uint32_t nbits);
 // Compact share target for a stratum difficulty D (target = 0xFFFF * 2^208 / D).
 uint32_t nbits_from_difficulty(double d);
 

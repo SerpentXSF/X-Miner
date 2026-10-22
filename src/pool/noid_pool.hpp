@@ -60,6 +60,7 @@ class NoidPool {
   bool have_job_ = false;
   std::atomic<uint64_t> version_{0};
   std::map<std::string, std::string> work_domain_;  // job id -> work_domain_id (recent jobs)
+  std::array<uint8_t, 32> last_target_{};          // last share target announced on the console
   double rate_ = 0;
   bool stats_supported_ = true;
   size_t pool_index_ = 0;

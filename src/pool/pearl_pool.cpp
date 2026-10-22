@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 
 #include "core/console.hpp"
 #include "core/version.hpp"
@@ -13,6 +14,13 @@ using nlohmann::json;
 
 uint32_t nbits_from_target_hex(const std::string& hex) {
   return pearl::target_to_nbits(pearl::U256::from_be_hex(hex));
+}
+
+double difficulty_from_nbits(uint32_t nbits) {
+  const double mant = nbits & 0x7fffff;
+  const int e = static_cast<int>(nbits >> 24);
+  if (mant == 0) return 0;
+  return 65535.0 * std::pow(2.0, 208) / (mant * std::pow(2.0, 8 * (e - 3)));
 }
 
 uint32_t nbits_from_difficulty(double d) {
@@ -105,6 +113,13 @@ void PearlPool::handle(const std::string& line) {
     }
     set_job_locked(id, header, nbits, cert);
     record_event("JOB", "height " + std::to_string(p.value("height", 0)) + " · " + id);
+    if (nbits != last_nbits_) {
+      last_nbits_ = nbits;
+      char buf[96];
+      std::snprintf(buf, sizeof buf, "share difficulty %.4g (one share per %.3g MAC)", difficulty_from_nbits(nbits),
+                    difficulty_from_nbits(nbits) * 4294967296.0);
+      info("POOL", buf);
+    }
     return;
   }
   if (method == "mining.set_difficulty") {
