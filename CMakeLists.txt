@@ -39,6 +39,7 @@ add_library(xm_core STATIC
   src/algo/selftest.cpp
   src/net/tcp.cpp
   src/crypto/blake3.cpp
+  src/algo/pearl/pearl.cpp
   src/api/api.cpp
   src/core/console.cpp
   src/core/config.cpp
@@ -63,7 +64,7 @@ add_executable(x-miner src/main.cpp)
 target_link_libraries(x-miner PRIVATE xm_core)
 
 enable_testing()
-add_executable(xm_tests tests/test_main.cpp tests/test_core.cpp tests/test_blake3.cpp)
+add_executable(xm_tests tests/test_main.cpp tests/test_core.cpp tests/test_blake3.cpp tests/test_pearl.cpp)
 target_compile_definitions(xm_tests PRIVATE XM_TEST_VECTORS="${CMAKE_SOURCE_DIR}/tests/vectors")
 target_link_libraries(xm_tests PRIVATE xm_core)
 add_test(NAME unit COMMAND xm_tests)
