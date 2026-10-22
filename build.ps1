@@ -1,7 +1,7 @@
 # Windows build: Visual Studio 2022 (C++ workload) + its bundled CMake and Ninja.
 #   .\build.ps1            Release build + unit tests
 #   .\build.ps1 -Clean     wipe build\ first
-param([switch]$Clean, [string]$Config = "Release")
+param([switch]$Clean, [string]$Config = "Release", [string]$BuildDir = "build")
 $root = $PSScriptRoot
 $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
 $env:PATH = "$installer;$env:PATH"   # vcvars64.bat calls vswhere itself
@@ -13,7 +13,7 @@ cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
   if ($_ -match '^([^=]+)=(.*)$') { Set-Item -Path "env:$($matches[1])" -Value $matches[2] }
 }
 $cmake = "$vs\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-$build = Join-Path $root "build"
+$build = Join-Path $root $BuildDir
 if ($Clean -and (Test-Path $build)) { Remove-Item -Recurse -Force $build }
 
 & $cmake -S $root -B $build -G Ninja "-DCMAKE_BUILD_TYPE=$Config"

@@ -12,8 +12,8 @@ struct AlgorithmInfo {
   const char* name;         // command-line name
   const char* aliases;      // comma-separated alternative names accepted on the command line
   const char* coin;         // "Pearl (PRL)"
+  const char* kernel;       // kernel blob name: kernels/<kernel>/ -> kernels/prebuilt/<kernel>_<arch>.*
   bool implemented;         // false until the CPU reference and at least one GPU kernel pass known-answer tests
-  std::vector<std::string> archs;  // architectures with an embedded, verified kernel
 };
 
 const std::vector<AlgorithmInfo>& algorithms();

@@ -1,0 +1,15 @@
+#!/bin/sh
+# X-Miner - Pearl (PRL) on Kryptex (payouts in BTC/USDT to your Kryptex account; use your krx... username)
+# Edit WALLET and WORKER below, then run: ./start-pearl-kryptex.sh
+# Pools: prl-us.kryptex.network:7048!prl.kryptex.network:7048
+cd "$(dirname "$0")"
+
+WALLET="YOUR_KRYPTEX_ADDRESS"
+WORKER="$(hostname)"
+POOL="prl-us.kryptex.network:7048!prl.kryptex.network:7048"
+
+while true; do
+  ./x-miner --algorithm pearlhash --pool "$POOL" --wallet "$WALLET" --worker "$WORKER"
+  echo "X-Miner exited (code $?). Restarting in 10 seconds... (Ctrl+C to stop)"
+  sleep 10
+done

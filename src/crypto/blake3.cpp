@@ -44,7 +44,7 @@ Output chunk_output(const Cv& key, const uint8_t* data, size_t len, uint64_t ind
     size_t off = b * kBlockLen;
     size_t n = len - off < kBlockLen ? len - off : kBlockLen;
     if (len) std::memcpy(block, data + off, n);
-    uint32_t f = flags | (b == 0 ? CHUNK_START : 0);
+    uint32_t f = flags | (b == 0 ? uint32_t(CHUNK_START) : 0u);
     if (b + 1 == nblocks) {
       out.cv = cv;
       std::memcpy(out.block, block, 64);
@@ -180,7 +180,7 @@ Hash parent_root(const Cv& key, const Cv& left, const Cv& right, uint32_t flags)
 std::vector<uint8_t> hash_xof(const uint8_t* data, size_t len, size_t out_len, const uint8_t* key) {
   std::vector<uint8_t> out(out_len);
   Cv k = key ? key_words(key) : kIV;
-  output_root(root_output(k, data, len, key ? KEYED_HASH : 0), out.data(), out_len);
+  output_root(root_output(k, data, len, key ? uint32_t(KEYED_HASH) : 0u), out.data(), out_len);
   return out;
 }
 

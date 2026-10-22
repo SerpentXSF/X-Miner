@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <string>
+
+#include "gpu/kernels.hpp"
 
 namespace xm {
 
@@ -16,8 +19,8 @@ std::string lower(std::string s) {
 
 const std::vector<AlgorithmInfo>& algorithms() {
   static const std::vector<AlgorithmInfo> list = {
-      {"pearlhash", "pearl,pearlpow,prl", "Pearl (PRL)", true, {"gfx1201"}},
-      {"noid", "parano1d,poseidon2b", "Parano1d (NOID)", false, {}},
+      {"pearlhash", "pearl,pearlpow,prl", "Pearl (PRL)", "pearl", true},
+      {"noid", "parano1d,poseidon2b", "Parano1d (NOID)", "noid", false},
   };
   return list;
 }
@@ -33,7 +36,15 @@ const AlgorithmInfo* find_algorithm(const std::string& name) {
 }
 
 bool supports(const AlgorithmInfo& algo, const gpu::DeviceInfo& dev) {
-  return std::find(algo.archs.begin(), algo.archs.end(), dev.arch) != algo.archs.end();
+  if (!algo.implemented) return false;
+  // Embedded kernels decide: an exact AMD code object or NVIDIA cubin, or NVIDIA PTX for an equal/older arch.
+  for (const auto& a : gpu::kernel_archs(algo.kernel)) {
+    if (a == dev.arch) return true;
+    if (dev.vendor == gpu::Vendor::Nvidia && a.rfind("compute_", 0) == 0 && dev.arch.rfind("sm_", 0) == 0 &&
+        std::stoi(a.substr(8)) <= std::stoi(dev.arch.substr(3)))
+      return true;
+  }
+  return false;
 }
 
 }  // namespace xm

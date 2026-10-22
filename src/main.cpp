@@ -18,6 +18,7 @@
 #include "core/console.hpp"
 #include "core/version.hpp"
 #include "gpu/gpu.hpp"
+#include "gpu/kernels.hpp"
 #include "gpu/sensors.hpp"
 
 using namespace xm;
@@ -79,7 +80,7 @@ int list_algorithms() {
   print_section("ALGORITHMS");
   for (const auto& a : algorithms()) {
     std::string archs;
-    for (const auto& s : a.archs) archs += (archs.empty() ? "" : " ") + s;
+    for (const auto& s : gpu::kernel_archs(a.kernel)) archs += (archs.empty() ? "" : " ") + s;
     c.line({{Tone::Radar, "  " + std::string(a.name)},
             {Tone::Dim, "  " + std::string(a.coin) + "  "},
             {a.implemented ? Tone::Ok : Tone::Gold, a.implemented ? "ready: " + archs : "in development"}});

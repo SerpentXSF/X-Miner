@@ -164,8 +164,12 @@ extern "C" __global__ void xm_apply_noise(const int8_t* __restrict__ sig, const 
     uint32_t l = k0 + i;
     v[i] = (int8_t)(s[i] + u[pairs[2 * l]] - u[pairs[2 * l + 1]]);
   }
+#ifdef XM_PEARL_ROWMAJOR
+  int8_t* dst = packed + (size_t)row * K + k0;  // NVIDIA: plain row-major (K-major), what mma.sync expects
+#else
   // k0..k0+7 stay inside one 8-byte run of the packed layout.
   int8_t* dst = packed + packed_offset(row, k0, K);
+#endif
 #pragma unroll
   for (int i = 0; i < 8; ++i) dst[i] = v[i];
 }

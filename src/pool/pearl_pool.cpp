@@ -153,7 +153,12 @@ bool PearlPool::session(const PoolEndpoint& ep) {
                    " ms)");
   record_event("POOL", "connected to " + ep.host);
   conn_.send_line(json({{"id", 1}, {"method", "mining.subscribe"}, {"params", {"X-Miner/" XM_VERSION}}}).dump());
-  conn_.send_line(json({{"id", 2}, {"method", "mining.authorize"}, {"params", {login_, password_}}}).dump());
+  // Object-form authorize: required by HeroMiners ("wallet" field), accepted by Kryptex, LuckyPool, k1pool.
+  // No "type":"v2", so the session stays v1 (plain base64 proofs, no gzip).
+  conn_.send_line(json({{"id", 2},
+                        {"method", "mining.authorize"},
+                        {"params", {{"wallet", login_}, {"password", password_}, {"agent", "X-Miner/" XM_VERSION}}}})
+                      .dump());
   connected_ = true;
   auto last_rx = std::chrono::steady_clock::now();
   while (!stop_) {

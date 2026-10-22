@@ -57,7 +57,7 @@ bool Engine::init(std::string& err) {
   dev_.make_current();
   if (!gpu::load_kernels(dev_, "pearl", err)) return false;
   const uint32_t k = cfg_.k, r = cfg_.rank;
-  size_t sa = size_t(m_) * k, sb = size_t(n_) * k, tiles = size_t(m_ / 16) * (n_ / 16);
+  size_t sa = size_t(m_) * k, sb = size_t(n_) * k;
   a_.resize(sa);
   bt_.resize(sb);
   fill_random(a_.data(), sa);
