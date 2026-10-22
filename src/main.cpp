@@ -7,6 +7,7 @@
 #include <thread>
 
 #include "algo/registry.hpp"
+#include "algo/selftest.hpp"
 #include "api/api.hpp"
 #include "core/devfee.hpp"
 #include "core/report.hpp"
@@ -159,6 +160,16 @@ int main(int argc, char** argv) {
   if (cfg.list_devices) return list_devices();
   if (cfg.list_algorithms) return list_algorithms();
   if (cfg.ui_demo) return ui_demo(cfg);
+  if (cfg.selftest) {
+    print_section("SELF TEST");
+    auto devs = gpu::all_devices();
+    if (devs.empty()) {
+      error("GPU", "no supported GPU found");
+      return 1;
+    }
+    int failed = run_selftest(devs);
+    return failed ? 1 : 0;
+  }
 
   const AlgorithmInfo* algo = find_algorithm(cfg.algorithm);
   if (!algo) {

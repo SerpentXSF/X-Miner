@@ -28,10 +28,15 @@ function(xm_embed in name)
 endfunction()
 xm_embed(web/dashboard.html dashboard_html)
 xm_embed(assets/serpentx-logo.png logo_png)
+include(cmake/kernels.cmake)
 
 add_library(xm_core STATIC
   ${XM_GEN}/dashboard_html.hpp
   ${XM_GEN}/logo_png.hpp
+  ${XM_KERNEL_HEADERS}
+  ${XM_GEN}/kernel_table.cpp
+  src/gpu/kernels.cpp
+  src/algo/selftest.cpp
   src/net/tcp.cpp
   src/api/api.cpp
   src/core/console.cpp
