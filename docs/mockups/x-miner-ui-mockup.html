@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X-Miner UI Mockups</title>
+<style>
+  :root {
+    /* SerpentX / Gundam Wing cockpit palette */
+    --void: #04050c;          /* space black */
+    --hull: #0d1433;          /* logo navy */
+    --hull-2: #161d46;        /* logo navy, lighter */
+    --plate: #1f2a5c;         /* panel edge */
+    --steel: #2b3566;
+    --armor: #faebca;         /* ivory armor */
+    --text: #dfe6ff;
+    --muted: #8e9ac7;
+    --radar: #39e0d0;         /* cockpit radar cyan */
+    --hud: #ff3d8b;           /* HUD magenta */
+    --vfin: #f5c518;          /* V-fin gold */
+    --chest: #e8323c;         /* Wing red */
+    --wing: #2f6fdc;          /* Wing blue */
+    --ok: #39e0a0;
+    --mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+    --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--void); color: var(--text); font-family: var(--sans); }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 4px; color: var(--armor); }
+  .lede { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+  h2.sec { font-size: 13px; letter-spacing: .2em; text-transform: uppercase; color: var(--vfin); margin: 36px 0 12px;
+           border-bottom: 1px solid var(--plate); padding-bottom: 6px; }
+
+  /* ---------- Console mockup ---------- */
+  .term { background: #020309; border: 1px solid var(--plate); border-radius: 6px; overflow-x: auto;
+          box-shadow: 0 0 0 1px #000, 0 12px 40px rgba(0,0,0,.6); }
+  .term-bar { background: #0b1029; padding: 6px 12px; font: 12px var(--sans); color: var(--muted); border-bottom: 1px solid var(--plate); }
+  pre { margin: 0; padding: 14px 16px; font: 13px/1.25 var(--mono); color: var(--text); white-space: pre; }
+  .c { color: var(--radar); } .m { color: var(--hud); } .g { color: var(--vfin); } .r { color: var(--chest); }
+  .b { color: var(--wing); } .w { color: var(--armor); } .d { color: #5d6896; } .k { color: var(--ok); }
+  .bold { font-weight: 700; }
+
+  /* ---------- Dashboard mockup ---------- */
+  .dash { background: radial-gradient(1200px 500px at 20% -10%, #18225a 0%, var(--void) 60%); border: 1px solid var(--plate);
+          border-radius: 10px; padding: 16px; position: relative; overflow: hidden; }
+  .dash::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+          background: repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 3px); }
+  .topbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding-bottom: 14px; border-bottom: 1px solid var(--plate); }
+  .topbar img { width: 48px; height: 48px; border-radius: 50%; border: 2px solid var(--vfin); }
+  .brand { font: 700 22px var(--sans); letter-spacing: .18em; color: var(--armor); }
+  .brand span { color: var(--hud); }
+  .ver { font: 12px var(--mono); color: var(--muted); }
+  .pill { font: 600 11px var(--sans); letter-spacing: .1em; text-transform: uppercase; padding: 4px 10px; border-radius: 99px;
+          border: 1px solid currentColor; }
+  .spacer { flex: 1; }
+  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 16px; margin-top: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: linear-gradient(180deg, rgba(31,42,92,.55), rgba(13,20,51,.85)); border: 1px solid var(--plate);
+           border-radius: 8px; padding: 14px; position: relative; }
+  .panel h3 { margin: 0 0 10px; font: 600 11px var(--sans); letter-spacing: .22em; text-transform: uppercase; color: var(--radar); }
+  .panel .corner { position: absolute; width: 14px; height: 14px; border-color: var(--hud); border-style: solid; }
+  .tl { top: -1px; left: -1px; border-width: 2px 0 0 2px; } .br { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+  .radar { display: block; margin: 0 auto; width: 100%; max-width: 300px; }
+  .big { text-align: center; margin-top: 6px; }
+  .big .v { font: 700 40px var(--mono); color: var(--radar); text-shadow: 0 0 18px rgba(57,224,208,.35); }
+  .big .u { font: 14px var(--mono); color: var(--muted); }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  @media (max-width: 640px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .kpi { background: rgba(4,5,12,.55); border: 1px solid var(--steel); border-radius: 6px; padding: 10px 12px; }
+  .kpi .l { font: 600 10px var(--sans); letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+  .kpi .n { font: 700 22px var(--mono); margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font: 13px var(--mono); }
+  th { text-align: left; font: 600 10px var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+       padding: 8px 6px; border-bottom: 1px solid var(--plate); }
+  td { padding: 8px 6px; border-bottom: 1px solid rgba(43,53,102,.5); white-space: nowrap; }
+  .tablewrap { overflow-x: auto; }
+  .bar { height: 6px; background: #0a0f26; border-radius: 3px; overflow: hidden; min-width: 80px; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--wing), var(--radar)); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  @media (max-width: 900px) { .two { grid-template-columns: 1fr; } }
+  .log { font: 12px/1.6 var(--mono); max-height: 190px; overflow: auto; }
+  .chart { width: 100%; height: 150px; display: block; }
+  .fee { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+  .fee b { color: var(--vfin); font-family: var(--mono); }
+  .note { margin-top: 28px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+  .sw { display: flex; align-items: center; gap: 8px; font: 12px var(--mono); }
+  .sw i { width: 22px; height: 22px; border-radius: 4px; border: 1px solid #ffffff22; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>X-Miner · UI mockups</h1>
+  <p class="lede">Static mockups (sample numbers). Colors from the SerpentX logo and a Gundam Wing cockpit: space-black hull,
+    logo navy panels, ivory armor text, cyan radar, magenta HUD, V-fin gold and Wing red/blue accents.</p>
+
+  <h2 class="sec">1 · Console (Windows Terminal / Linux shell)</h2>
+  <div class="term">
+    <div class="term-bar">x-miner.exe — XSF Pearl Kryptex.bat</div>
+<pre><span class="m">  ════════════════════════════════════════════════════════════════════════════════</span>
+  <span class="c bold">   ██╗  ██╗      ███╗   ███╗██╗███╗   ██╗███████╗██████╗                       </span>
+  <span class="c bold">   ╚██╗██╔╝      ████╗ ████║██║████╗  ██║██╔════╝██╔══██╗                      </span>
+  <span class="c bold">    ╚███╔╝ █████╗██╔████╔██║██║██╔██╗ ██║█████╗  ██████╔╝                      </span>
+  <span class="c bold">    ██╔██╗ ╚════╝██║╚██╔╝██║██║██║╚██╗██║██╔══╝  ██╔══██╗                      </span>
+  <span class="c bold">   ██╔╝ ██╗      ██║ ╚═╝ ██║██║██║ ╚████║███████╗██║  ██║                      </span>
+  <span class="w">   v0.1.0 </span><span class="d">·</span><span class="g"> SerpentX Tech </span><span class="d">·</span><span class="w"> open source </span><span class="d">·</span><span class="w"> dev fee </span><span class="g">1.00%</span><span class="d">            ZERO SYSTEM ONLINE</span>
+<span class="m">  ════════════════════════════════════════════════════════════════════════════════</span>
+<span class="d">  ─── SYSTEM CHECK ───────────────────────────────────────────────────────────────</span>
+<span class="c">  [UNIT 0]</span> <span class="w">AMD Radeon RX 9070 XT</span>   <span class="d">gfx1201 · 16 GB · bus 03 · HIP 6.4</span>      <span class="k">READY</span>
+<span class="c">  [UNIT 1]</span> <span class="w">NVIDIA GeForce RTX 3060</span> <span class="d">sm_86   · 12 GB · bus 01 · CUDA 12.8</span>    <span class="k">READY</span>
+<span class="c">  [ALGO  ]</span> <span class="w">pearlhash</span>  <span class="d">kernel</span> <span class="g">rdna4-wmma-v3</span> <span class="d">/</span> <span class="g">ampere-mma-v1</span>
+<span class="c">  [POOL  ]</span> <span class="w">prl.kryptex.network:7048</span>  <span class="d">user</span> krxXXXXXXX.rig1   <span class="k">CONNECTED</span> <span class="d">(42 ms)</span>
+<span class="d">  ─── 21:14:06 ───────────────────────────────────────────────────────────────────</span>
+<span class="d">  21:13:58</span> <span class="b">JOB </span>  <span class="w">new target</span> <span class="d">height</span> 124 811 <span class="d">diff</span> 9.01 P
+<span class="d">  21:14:01</span> <span class="k">LOCK</span>  <span class="w">share accepted</span>  <span class="c">UNIT 0</span>  <span class="d">diff</span> 9.01 P  <span class="d">(61 ms)</span>      <span class="g">◆ 412 / 0</span>
+<span class="d">  21:14:04</span> <span class="k">LOCK</span>  <span class="w">share accepted</span>  <span class="c">UNIT 1</span>  <span class="d">diff</span> 9.01 P  <span class="d">(58 ms)</span>      <span class="g">◆ 413 / 0</span>
+<span class="d">  21:14:05</span> <span class="r">MISS</span>  <span class="w">share rejected</span>  <span class="c">UNIT 1</span>  <span class="r">stale job</span>              <span class="g">◆ 413 / 1</span>
+
+<span class="m">  ┌─ UNIT ─┬─ DEVICE ──────────────┬── HASHRATE ──┬─ POWER ─┬─ EFF ──────┬ TEMP ┬ FAN ┬ A/R ─────┐</span>
+<span class="m">  │</span> <span class="c">  0   </span> <span class="m">│</span> <span class="w">RX 9070 XT           </span> <span class="m">│</span> <span class="c bold"> 100.4 TH/s  </span><span class="m">│</span> <span class="w">243 W  </span> <span class="m">│</span> <span class="g">0.413 T/W </span> <span class="m">│</span> <span class="w">50°C</span> <span class="m">│</span> <span class="w">55%</span> <span class="m">│</span> <span class="k">208</span>/<span class="r">0  </span>  <span class="m">│</span>
+<span class="m">  │</span> <span class="c">  1   </span> <span class="m">│</span> <span class="w">RTX 3060             </span> <span class="m">│</span> <span class="c bold">  47.0 TH/s  </span><span class="m">│</span> <span class="w">119 W  </span> <span class="m">│</span> <span class="g">0.395 T/W </span> <span class="m">│</span> <span class="w">61°C</span> <span class="m">│</span> <span class="w">66%</span> <span class="m">│</span> <span class="k">205</span>/<span class="r">1  </span>  <span class="m">│</span>
+<span class="m">  ├────────┴───────────────────────┼──────────────┼─────────┼────────────┴──────┴─────┴──────────┤</span>
+<span class="m">  │</span> <span class="w bold">TOTAL</span>                          <span class="m">│</span> <span class="c bold"> 147.4 TH/s  </span><span class="m">│</span> <span class="w">362 W  </span> <span class="m">│</span> <span class="d">1m</span> 147.1 <span class="d">15m</span> 146.8 <span class="d">1h</span> 147.0 <span class="d">up 6h12m </span><span class="m">│</span>
+<span class="m">  └────────────────────────────────┴──────────────┴─────────┴──────────────────────────────────────┘</span>
+<span class="d">  dev fee 1.00% · next dev window in 13m 40s · API http://127.0.0.1:21550 · keys: [h]ashrate [p]ool [q]uit</span></pre>
+  </div>
+
+  <h2 class="sec">2 · Web dashboard (http://127.0.0.1:21550)</h2>
+  <div class="dash">
+    <div class="topbar">
+      <img src="../../assets/serpentx-logo.png" alt="SerpentX logo">
+      <div>
+        <div class="brand">X<span>-</span>MINER</div>
+        <div class="ver">v0.1.0 · SerpentX Tech · pearlhash</div>
+      </div>
+      <div class="spacer"></div>
+      <span class="pill" style="color:var(--ok)">● Online · 6h 12m</span>
+      <span class="pill" style="color:var(--vfin)">Dev fee 1.00%</span>
+      <span class="pill" style="color:var(--radar)">prl.kryptex.network</span>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <span class="corner tl"></span><span class="corner br"></span>
+        <h3>Total hashrate</h3>
+        <svg class="radar" viewBox="0 0 300 300" role="img" aria-label="Radar-style hashrate gauge">
+          <defs>
+            <radialGradient id="scope" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#1d3a8a"/><stop offset="100%" stop-color="#0b1a4a"/>
+            </radialGradient>
+          </defs>
+          <circle cx="150" cy="150" r="140" fill="url(#scope)" stroke="#2b3566" stroke-width="3"/>
+          <g fill="none" stroke="#39e0d0" stroke-opacity=".75" stroke-width="1.2">
+            <ellipse cx="150" cy="150" rx="95" ry="95"/>
+            <ellipse cx="150" cy="150" rx="95" ry="30"/>
+            <ellipse cx="150" cy="150" rx="95" ry="60"/>
+            <ellipse cx="150" cy="150" rx="30" ry="95"/>
+            <ellipse cx="150" cy="150" rx="60" ry="95"/>
+            <line x1="150" y1="10" x2="150" y2="290"/>
+            <line x1="10" y1="150" x2="290" y2="150"/>
+            <ellipse cx="150" cy="150" rx="130" ry="18" stroke-opacity=".45"/>
+          </g>
+          <!-- hashrate arc: 147.4 of 180 TH/s scale -->
+          <circle cx="150" cy="150" r="118" fill="none" stroke="#ff3d8b" stroke-width="7" stroke-linecap="round"
+                  stroke-dasharray="607 741" transform="rotate(-90 150 150)"/>
+          <g fill="#ff3d8b">
+            <rect x="52" y="52" width="40" height="28" fill="none" stroke="#ff3d8b" stroke-width="2"/>
+            <path d="M52 66h40M66 52v28M78 52v28" stroke="#ff3d8b" stroke-width="1"/>
+            <rect x="212" y="216" width="34" height="6" rx="3"/>
+            <rect x="140" y="232" width="6" height="22" rx="3"/>
+          </g>
+          <circle cx="150" cy="150" r="4" fill="#f5c518"/>
+        </svg>
+        <div class="big"><span class="v">147.4</span> <span class="u">TH/s</span></div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:16px; min-width:0">
+        <div class="kpis">
+          <div class="kpi"><div class="l">Accepted</div><div class="n" style="color:var(--ok)">413</div></div>
+          <div class="kpi"><div class="l">Rejected</div><div class="n" style="color:var(--chest)">1</div></div>
+          <div class="kpi"><div class="l">Power</div><div class="n" style="color:var(--armor)">362 W</div></div>
+          <div class="kpi"><div class="l">Efficiency</div><div class="n" style="color:var(--vfin)">0.407 T/W</div></div>
+        </div>
+        <div class="panel">
+          <span class="corner tl"></span><span class="corner br"></span>
+          <h3>Units</h3>
+          <div class="tablewrap">
+          <table>
+            <thead><tr><th>Unit</th><th>Device</th><th>Hashrate</th><th>Load</th><th>Power</th><th>Temp</th><th>Fan</th><th>A / R</th></tr></thead>
+            <tbody>
+              <tr><td style="color:var(--radar)">0</td><td>RX 9070 XT</td><td style="color:var(--radar)">100.4 TH/s</td>
+                  <td><div class="bar"><i style="width:98%"></i></div></td><td>243 W</td><td>50°C</td><td>55%</td>
+                  <td><span style="color:var(--ok)">208</span> / <span style="color:var(--chest)">0</span></td></tr>
+              <tr><td style="color:var(--radar)">1</td><td>RTX 3060</td><td style="color:var(--radar)">47.0 TH/s</td>
+                  <td><div class="bar"><i style="width:96%"></i></div></td><td>119 W</td><td>61°C</td><td>66%</td>
+                  <td><span style="color:var(--ok)">205</span> / <span style="color:var(--chest)">1</span></td></tr>
+            </tbody>
+          </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="two">
+      <div class="panel">
+        <span class="corner tl"></span><span class="corner br"></span>
+        <h3>Hashrate · last hour</h3>
+        <svg class="chart" viewBox="0 0 600 150" preserveAspectRatio="none" role="img" aria-label="Hashrate over the last hour">
+          <g stroke="#2b3566" stroke-width="1"><line x1="0" y1="30" x2="600" y2="30"/><line x1="0" y1="75" x2="600" y2="75"/><line x1="0" y1="120" x2="600" y2="120"/></g>
+          <polyline fill="none" stroke="#39e0d0" stroke-width="2"
+            points="0,52 40,50 80,53 120,49 160,51 200,50 240,54 280,50 320,49 360,52 400,51 440,50 480,48 520,51 560,50 600,49"/>
+          <polyline fill="none" stroke="#ff3d8b" stroke-width="1.5" stroke-dasharray="4 4"
+            points="0,98 40,97 80,99 120,98 160,97 200,98 240,99 280,97 320,98 360,98 400,97 440,99 480,98 520,97 560,98 600,98"/>
+        </svg>
+        <div class="fee"><span style="color:var(--radar)">━ RX 9070 XT</span><span style="color:var(--hud)">┅ RTX 3060</span></div>
+      </div>
+      <div class="panel">
+        <span class="corner tl"></span><span class="corner br"></span>
+        <h3>Combat log</h3>
+        <div class="log">
+          <div><span style="color:#5d6896">21:14:05</span> <span style="color:var(--chest)">MISS</span> unit 1 · stale job</div>
+          <div><span style="color:#5d6896">21:14:04</span> <span style="color:var(--ok)">LOCK</span> unit 1 · share accepted · 58 ms</div>
+          <div><span style="color:#5d6896">21:14:01</span> <span style="color:var(--ok)">LOCK</span> unit 0 · share accepted · 61 ms</div>
+          <div><span style="color:#5d6896">21:13:58</span> <span style="color:var(--wing)">JOB</span> height 124 811 · diff 9.01 P</div>
+          <div><span style="color:#5d6896">21:00:20</span> <span style="color:var(--vfin)">FEE</span> dev window ended · 15 s · back to user pool</div>
+          <div><span style="color:#5d6896">20:59:42</span> <span style="color:var(--ok)">LOCK</span> unit 0 · share accepted · 64 ms</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2 class="sec">3 · Palette</h2>
+  <div class="swatches">
+    <div class="sw"><i style="background:var(--void)"></i>void #04050c</div>
+    <div class="sw"><i style="background:var(--hull-2)"></i>hull #161d46</div>
+    <div class="sw"><i style="background:var(--armor)"></i>armor #faebca</div>
+    <div class="sw"><i style="background:var(--radar)"></i>radar #39e0d0</div>
+    <div class="sw"><i style="background:var(--hud)"></i>HUD #ff3d8b</div>
+    <div class="sw"><i style="background:var(--vfin)"></i>V-fin #f5c518</div>
+    <div class="sw"><i style="background:var(--chest)"></i>Wing red #e8323c</div>
+    <div class="sw"><i style="background:var(--wing)"></i>Wing blue #2f6fdc</div>
+  </div>
+  <p class="note">Console colors map to standard 24-bit ANSI escapes (Windows Terminal, conhost on Windows 10+, every Linux terminal);
+    a <code>--no-color</code> flag falls back to plain text for logs and HiveOS. Share lines use cockpit words: LOCK (accepted),
+    MISS (rejected), JOB, FEE. Plain words stay alongside them so the log reads clearly to new users.</p>
+</div>
+</body>
+</html>
