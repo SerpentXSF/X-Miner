@@ -20,7 +20,7 @@ std::string lower(std::string s) {
 const std::vector<AlgorithmInfo>& algorithms() {
   static const std::vector<AlgorithmInfo> list = {
       {"pearlhash", "pearl,pearlpow,prl", "Pearl (PRL)", "pearl", true},
-      {"noid", "parano1d,poseidon2b", "Parano1d (NOID)", "noid", false},
+      {"noid", "parano1d,poseidon2b", "Parano1d (NOID)", "noid", true},
   };
   return list;
 }

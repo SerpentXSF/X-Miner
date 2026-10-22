@@ -7,6 +7,7 @@
 
 #include "algo/noid/noid.hpp"
 #include "test.hpp"
+#include "pool/noid_pool.hpp"
 
 using namespace xm::noid;
 
@@ -112,4 +113,25 @@ TEST(noid_table_multiplier_matches_karatsuba) {
     W4 a = to_w4(u(x ^ (x >> 7), x * 0x9e3779b97f4a7c15ull));
     for (int c = 0; c < 6; ++c) CHECK(from_w4(t.mul(c, a)) == from_w4(k.mul(c, a)));
   }
+}
+
+// Stratum parsing against a job captured from rplant (na.rplant.xyz:17185, height 241943).
+TEST(noid_stratum_job_layout) {
+  const std::string fields_hex =
+      "23139bb2c638a5f828b30b52399e9f1b0d27027ccf9c6c58855e232dd2cbfe5f28ac3ac46208e0be060ef1044577aa7196fb18a9c4fd829f"
+      "4b7f9e09d222e5d28e8354c1f3e8bcc06b881add38926e5662fed38b9ab60df530c4baf761b72600188cd96a000000000000000000000000"
+      "17b103000000000000000000000000001c98c496a985fb4e3badf043c470f644cc35fcc72f77f0d78c82bfe3056377090000000000000000"
+      "000000000000000034cf3ebff9aecf073b4f4e9a1f414e0175e48d8aa5662edb9d3c08000000000018000000000000000000000000000000"
+      "5674010000000000000000000000000050950900000000000000000000000000";
+  Fields f{};
+  CHECK(xm::noid_parse_fields(fields_hex, f));
+  CHECK(f[kNonceField] == U128{});  // the pool zeroes the nonce field
+  CHECK_EQ(f[6].lo, 0x6ad98c18ull);  // timestamp field: small little-endian integer
+  CHECK_EQ(f[7].lo, 0x3b117ull);     // height 241943
+  CHECK(!xm::noid_parse_fields(fields_hex.substr(2), f));
+  uint64_t prefix = 0;
+  CHECK(xm::noid_parse_prefix("1a33000000002f16", prefix));
+  CHECK_EQ(prefix, 0x162f00000000331aull);
+  // Submit form: counter bytes (LE) then the raw prefix bytes.
+  CHECK_EQ(xm::noid_nonce_hex(U128{0x0102, prefix}), std::string("02010000000000001a33000000002f16"));
 }

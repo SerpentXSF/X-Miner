@@ -14,6 +14,8 @@ if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
   add_compile_options(-Wall -Wextra)
+  # Portable Linux binary: no dependency on the target's libstdc++ version.
+  add_link_options(-static-libstdc++ -static-libgcc)
 endif()
 
 find_package(Threads REQUIRED)
@@ -48,6 +50,8 @@ add_library(xm_core STATIC
   src/algo/pearl/bench.cpp
   src/pool/pearl_pool.cpp
   src/mining/pearl_run.cpp
+  src/pool/noid_pool.cpp
+  src/mining/noid_run.cpp
   src/api/api.cpp
   src/core/console.cpp
   src/core/config.cpp

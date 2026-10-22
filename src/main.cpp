@@ -25,6 +25,7 @@ using namespace xm;
 
 namespace xm {
 int run_pearl(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::noid {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
@@ -200,9 +201,13 @@ int main(int argc, char** argv) {
     error("GPU", "no GPU selected (see --list-devices)");
     return 1;
   }
-  if (std::string(algo->name) == "noid" && cfg.benchmark) {
-    print_section("BENCHMARK");
-    return noid::benchmark(cfg, devs);
+  if (std::string(algo->name) == "noid") {
+    if (cfg.benchmark) {
+      print_section("BENCHMARK");
+      return noid::benchmark(cfg, devs);
+    }
+    print_section("MISSION START");
+    return run_noid(cfg, devs);
   }
   if (std::string(algo->name) == "pearlhash") {
     if (cfg.benchmark) {
