@@ -8,6 +8,11 @@
 #if defined(__HIP__)
 #include <hip/hip_runtime.h>
 #endif
+#if defined(__CUDA_ARCH__) && !defined(__HIP__)
+// IMAD.WIDE carry-less multiply: RTX 3060 8.65 -> 9.63 MH/s. Not on AMD, where 32-bit multiplies are quarter rate
+// (RX 9070 XT 17.7 -> 14.9 MH/s); the 16-bit path uses the full-rate 24-bit multiplier there.
+#define NOID_GMUL32 1
+#endif
 #include "noid/noid_perm.h"
 
 struct NoidJob {

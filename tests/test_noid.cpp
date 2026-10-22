@@ -115,6 +115,18 @@ TEST(noid_table_multiplier_matches_karatsuba) {
   }
 }
 
+TEST(noid_gmul32_matches_reference) {
+  uint64_t x = 0x9e3779b97f4a7c15ull;
+  for (int i = 0; i < 500; ++i) {
+    x = x * 6364136223846793005ull + 1442695040888963407ull;
+    U128 a = u(x ^ (x >> 11), x * 0xbf58476d1ce4e5b9ull);
+    x = x * 6364136223846793005ull + 1442695040888963407ull;
+    U128 b = u(x * 0x94d049bb133111ebull, x ^ (x >> 29));
+    if (i == 0) a = u(~0ull, ~0ull), b = u(~0ull, ~0ull);  // worst case for the per-class carry bound
+    CHECK(from_w4(gmul32(to_w4(a), to_w4(b))) == gf_mul(a, b));
+  }
+}
+
 // Stratum parsing against a job captured from rplant (na.rplant.xyz:17185, height 241943).
 TEST(noid_stratum_job_layout) {
   const std::string fields_hex =

@@ -231,10 +231,59 @@ NOID_HD W4 kmul(const KOp& a, const KOp& b)
     return reduce256(r);
 }
 
+// X-Miner: carry-less 32x32 -> 64 with four 32x32 -> 64 integer multiplies per class pair (IMAD.WIDE on
+// NVIDIA). Operands split in 4 bit classes (bit i mod 4, 8 bits each): a class product has at most 8 terms per
+// position, so the integer sum (< 16) never reaches the next bit of the same class.
+NOID_HD uint64_t cl32(uint32_t a, uint32_t b)
+{
+    const uint32_t a0 = a & 0x11111111u, a1 = a & 0x22222222u, a2 = a & 0x44444444u, a3 = a & 0x88888888u;
+    const uint32_t b0 = b & 0x11111111u, b1 = b & 0x22222222u, b2 = b & 0x44444444u, b3 = b & 0x88888888u;
+#define NOID_P(x, y) ((uint64_t)(x) * (y))
+    uint64_t k0 = NOID_P(a0, b0) ^ NOID_P(a1, b3) ^ NOID_P(a2, b2) ^ NOID_P(a3, b1);
+    uint64_t k1 = NOID_P(a0, b1) ^ NOID_P(a1, b0) ^ NOID_P(a2, b3) ^ NOID_P(a3, b2);
+    uint64_t k2 = NOID_P(a0, b2) ^ NOID_P(a1, b1) ^ NOID_P(a2, b0) ^ NOID_P(a3, b3);
+    uint64_t k3 = NOID_P(a0, b3) ^ NOID_P(a1, b2) ^ NOID_P(a2, b1) ^ NOID_P(a3, b0);
+#undef NOID_P
+    return (k0 & 0x1111111111111111ull) | (k1 & 0x2222222222222222ull) | (k2 & 0x4444444444444444ull) |
+           (k3 & 0x8888888888888888ull);
+}
+
+// carry-less 64x64 -> 128 (Karatsuba over cl32), r[0..3] little-endian words
+NOID_HD void cl64(uint32_t u0, uint32_t u1, uint32_t v0, uint32_t v1, uint32_t r[4])
+{
+    uint64_t L = cl32(u0, v0), H = cl32(u1, v1), M = cl32(u0 ^ u1, v0 ^ v1) ^ L ^ H;
+    r[0] = (uint32_t)L;
+    r[1] = (uint32_t)(L >> 32) ^ (uint32_t)M;
+    r[2] = (uint32_t)H ^ (uint32_t)(M >> 32);
+    r[3] = (uint32_t)(H >> 32);
+}
+
+NOID_HD W4 gmul32(W4 a, W4 b)
+{
+    uint32_t L[4], H[4], M[4], r[8];
+    cl64(a.w0, a.w1, b.w0, b.w1, L);
+    cl64(a.w2, a.w3, b.w2, b.w3, H);
+    cl64(a.w0 ^ a.w2, a.w1 ^ a.w3, b.w0 ^ b.w2, b.w1 ^ b.w3, M);
+    for (int i = 0; i < 4; i++) M[i] ^= L[i] ^ H[i];
+    r[0] = L[0];
+    r[1] = L[1];
+    r[2] = L[2] ^ M[0];
+    r[3] = L[3] ^ M[1];
+    r[4] = H[0] ^ M[2];
+    r[5] = H[1] ^ M[3];
+    r[6] = H[2];
+    r[7] = H[3];
+    return reduce256(r);
+}
+
 NOID_HD W4 gmul(W4 a, W4 b)
 {
+#if defined(NOID_GMUL32)
+    return gmul32(a, b);
+#else
     KOp ka = kop(a), kb = kop(b);
     return kmul(ka, kb);
+#endif
 }
 
 // Bit spread of the low 16 bits of x into the even bits of a 32-bit word

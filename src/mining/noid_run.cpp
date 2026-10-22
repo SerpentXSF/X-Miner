@@ -85,7 +85,8 @@ int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
         error("GPU", "unit " + std::to_string(i) + " " + devs[i].name + ": " + err);
         return;
       }
-      const uint32_t batch = 1u << 23;  // ~0.5 s on an RX 9070 XT, ~1 s on an RTX 3060
+      // ~0.25 s on an RX 9070 XT, ~0.45 s on an RTX 3060: a share found in a batch that straddles a new block is stale.
+      const uint32_t batch = 1u << 22;
       uint64_t have = 0;
       double rate = 0;
       while (!g_stop) {

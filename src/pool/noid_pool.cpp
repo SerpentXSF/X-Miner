@@ -128,7 +128,9 @@ void NoidPool::handle(const std::string& line) {
     }
     noid_parse_target(p.value("block_target_hex", ""), j.block_target);  // optional
     std::lock_guard<std::mutex> lk(mu_);
-    // Shares for replaced jobs are still sent: the pool decides whether they are stale (some allow a grace period).
+    // A clean job supersedes the older ones: rplant rejects their shares ("stale share (template superseded)"),
+    // so they are dropped here and counted as stale instead of being sent.
+    if (p.value("clean", true)) work_domain_.clear();
     while (work_domain_.size() >= 16) work_domain_.erase(work_domain_.begin());
     work_domain_[j.id] = wd;
     job_ = j;
