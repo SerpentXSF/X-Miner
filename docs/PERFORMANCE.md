@@ -2,6 +2,11 @@
 
 Measured numbers and what we learned while tuning. Hashrates are at the power limits shown.
 
+CPU use: the GPU workers wait on blocking-sync events (and HIP runs with hipDeviceScheduleBlockingSync), so a
+worker sleeps while its kernel runs. RX 9070 XT Pearl: under 5% of one core (it was a full core spinning in the
+runtime before 2026-10-22). One Pearl pass (16384x32768x4096) on the 9070 XT is 21.3 ms GEMM + 0.3 ms noise with
+~0.1 ms of host time between passes.
+
 ## Pearl (pearlhash)
 
 | Card | Power limit | X-Miner | Reference | Notes |
