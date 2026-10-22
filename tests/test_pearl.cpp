@@ -129,3 +129,74 @@ TEST(pearl_merkle_root_equals_keyed_hash) {
     CHECK_EQ(p.total_leaves, uint64_t(rows));
   }
 }
+
+// ---- Golden vectors from rheza/prl-3090-miner (ISC): fixed noise keys, full noise matrices, found transcripts.
+#include <fstream>
+
+#include "nlohmann/json.hpp"
+
+namespace {
+
+std::vector<int8_t> unhex_i8(const std::string& h) {
+  std::vector<int8_t> out(h.size() / 2);
+  for (size_t i = 0; i < out.size(); ++i) out[i] = static_cast<int8_t>(std::stoul(h.substr(2 * i, 2), nullptr, 16));
+  return out;
+}
+
+void golden_case(const char* file) {
+  std::ifstream f(std::string(XM_TEST_VECTORS) + "/" + file);
+  auto j = nlohmann::json::parse(f);
+  uint32_t m = j["m"], k = j["k"], n = j["n"], r = j["rank"];
+  Hash key_a{}, key_b{};
+  auto ka = unhex_i8(j["key_A"]), kb = unhex_i8(j["key_B"]);
+  for (int i = 0; i < 32; ++i) {
+    key_a[i] = static_cast<uint8_t>(ka[i]);
+    key_b[i] = static_cast<uint8_t>(kb[i]);
+  }
+  auto a = unhex_i8(j["A_hex"]), bt = unhex_i8(j["Bt_hex"]);
+  CHECK_EQ(a.size(), size_t(m) * k);
+  CHECK_EQ(bt.size(), size_t(n) * k);
+
+  // Uniform noise rows (E_AL) and columns (E_BR) match the reference exactly.
+  for (int i = 0; i < 3; ++i) {
+    auto u = uniform_row(Side::A, key_a, i, r);
+    std::vector<int> want = j["E_AL_rows"][i];
+    CHECK_EQ(std::vector<int>(u.begin(), u.end()) == want, true);
+    auto v = uniform_row(Side::B, key_b, i, r);
+    std::vector<int> wantb = j["E_BR_cols"][i];
+    CHECK_EQ(std::vector<int>(v.begin(), v.end()) == wantb, true);
+  }
+  // Sparse permutation: column l of E_AR has +1 at p0[l] and -1 at p1[l].
+  auto pa = permutation(Side::A, key_a, k, r);
+  for (int l = 0; l < 4; ++l) {
+    std::vector<int> col = j["E_AR_first_cols"][l];
+    CHECK_EQ(col[pa[l][0]], 1);
+    CHECK_EQ(col[pa[l][1]], -1);
+    int nz = 0;
+    for (int x : col) nz += x != 0;
+    CHECK_EQ(nz, 2);
+  }
+  // Found tile transcript: noised rows of A and columns of B, then the jackpot fold.
+  auto pb = permutation(Side::B, key_b, k, r);
+  std::vector<std::vector<int32_t>> ar, bc;
+  for (uint32_t row : j["tile_rows"].get<std::vector<uint32_t>>()) {
+    auto e = noise_line(uniform_row(Side::A, key_a, row, r), pa);
+    std::vector<int32_t> line(k);
+    for (uint32_t l = 0; l < k; ++l) line[l] = a[size_t(row) * k + l] + e[l];
+    ar.push_back(line);
+  }
+  for (uint32_t col : j["tile_cols"].get<std::vector<uint32_t>>()) {
+    auto e = noise_line(uniform_row(Side::B, key_b, col, r), pb);
+    std::vector<int32_t> line(k);
+    for (uint32_t l = 0; l < k; ++l) line[l] = bt[size_t(col) * k + l] + e[l];
+    bc.push_back(line);
+  }
+  auto t = jackpot(ar, bc, k, r);
+  std::vector<uint32_t> want = j["transcript"];
+  for (int i = 0; i < 16; ++i) CHECK_EQ(t[i], want[i]);
+}
+
+}  // namespace
+
+TEST(pearl_golden_g3_rank64) { golden_case("pearl_golden_g3.json"); }
+TEST(pearl_golden_g5_rank128) { golden_case("pearl_golden_g5.json"); }
