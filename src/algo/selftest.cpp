@@ -5,6 +5,9 @@
 #include <string>
 #include <vector>
 
+#include "algo/noid/noid_gpu.hpp"
+#include "algo/pearl/pearl_gpu.hpp"
+#include "algo/registry.hpp"
 #include "core/console.hpp"
 #include "gpu/kernels.hpp"
 
@@ -49,20 +52,82 @@ bool smoke(gpu::Device& dev, std::string& detail) {
   return bad == 0;
 }
 
+double ms_since(std::chrono::steady_clock::time_point t0) {
+  return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+// Pearl: one 1024 x 1024 x 4096 pass with a target every tile meets. The engine re-computes each reported tile's
+// transcript on the CPU (host matrices + CPU noise), so this checks noise, GEMM, fold and hash against the reference.
+bool pearl_check(gpu::Device& dev, std::string& detail) {
+  pearl::Engine eng(dev, 1024, 1024, 0x5e1f7e57);
+  pearl::Job job;
+  job.id = "selftest";
+  for (int i = 0; i < 76; ++i) job.header[i] = static_cast<uint8_t>(i * 37 + 11);
+  job.share_nbits = 0x2000ffff;  // 2^248: the bound saturates, so every tile is a share
+  auto t0 = std::chrono::steady_clock::now();
+  std::vector<pearl::Share> shares;
+  if (!eng.init(detail) || !eng.set_job(job, detail) || eng.iterate(shares, detail) == 0) return false;
+  char buf[128];
+  std::snprintf(buf, sizeof buf, "%zu tiles match the CPU reference, %llu mismatches (%.0f ms)", shares.size(),
+                static_cast<unsigned long long>(eng.cpu_rejects()), ms_since(t0));
+  detail = buf;
+  return !shares.empty() && eng.cpu_rejects() == 0;
+}
+
+// Parano1d: 2^18 nonces of a known-answer header against target 2^246 (about 256 hits expected). Every GPU hit is
+// re-hashed with the CPU reference digest.
+bool noid_check(gpu::Device& dev, std::string& detail) {
+  noid::Engine eng(dev, 0x5e1f7e57);
+  noid::Job job;
+  job.id = "selftest";
+  for (int i = 0; i < 16; ++i) job.fields[i] = {0x9e3779b97f4a7c15ull * (i + 1), 0xbf58476d1ce4e5b9ull ^ uint64_t(i)};
+  job.share_target[30] = 0x40;
+  job.nonce_prefix = 0x0123456789abcdefull;
+  auto t0 = std::chrono::steady_clock::now();
+  std::vector<noid::Share> shares;
+  if (!eng.init(detail) || !eng.set_job(job, detail) || eng.iterate(1u << 18, shares, detail) == 0) return false;
+  char buf[128];
+  std::snprintf(buf, sizeof buf, "%zu hits verified by the CPU reference, %llu rejected (%.0f ms)", shares.size(),
+                static_cast<unsigned long long>(eng.cpu_rejects()), ms_since(t0));
+  detail = buf;
+  return shares.size() >= 128 && shares.size() <= 512 && eng.cpu_rejects() == 0;
+}
+
+void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int state, const std::string& detail) {
+  static const char* kState[] = {"FAIL  ", "PASS  ", "SKIP  "};
+  Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(i) + " ] "},
+                       {Tone::Plain, d.name + "  "},
+                       {Tone::Dim, what + " (" + d.arch + ")  "},
+                       {state == 1 ? Tone::Ok : state == 0 ? Tone::Red : Tone::Dim, kState[state]},
+                       {Tone::Dim, detail}});
+}
+
 }  // namespace
 
 int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
   int failures = 0;
+  struct Check {
+    const char* algo;
+    bool (*fn)(gpu::Device&, std::string&);
+  };
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;
     bool ok = smoke(*dev, detail);
     failures += !ok;
-    Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(i) + " ] "},
-                         {Tone::Plain, devices[i].name + "  "},
-                         {Tone::Dim, "pipeline (" + devices[i].arch + ")  "},
-                         {ok ? Tone::Ok : Tone::Red, ok ? "PASS  " : "FAIL  "},
-                         {Tone::Dim, detail}});
+    report(i, devices[i], "pipeline", ok, detail);
+    for (const auto& c : checks) {
+      const AlgorithmInfo* a = find_algorithm(c.algo);
+      if (!a || !supports(*a, devices[i])) {
+        report(i, devices[i], c.algo, 2, "no kernel for this GPU");
+        continue;
+      }
+      detail.clear();
+      ok = c.fn(*dev, detail);
+      failures += !ok;
+      report(i, devices[i], c.algo, ok, detail);
+    }
   }
   return failures;
 }
