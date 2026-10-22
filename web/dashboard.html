@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X-Miner</title>
+<link rel="icon" href="/logo.png">
+<style>
+  :root {
+    --void:#04050c; --hull:#0d1433; --plate:#1f2a5c; --steel:#2b3566; --armor:#faebca; --text:#dfe6ff;
+    --muted:#8e9ac7; --radar:#39e0d0; --hud:#ff3d8b; --vfin:#f5c518; --chest:#e8323c; --wing:#2f6fdc; --ok:#39e0a0;
+    --mono:"Cascadia Mono","JetBrains Mono",Consolas,"Courier New",monospace; --sans:"Segoe UI",system-ui,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:radial-gradient(1200px 500px at 20% -10%, #18225a 0%, var(--void) 60%) fixed, var(--void);
+         color:var(--text); font-family:var(--sans); min-height:100vh; }
+  body::after { content:""; position:fixed; inset:0; pointer-events:none;
+         background:repeating-linear-gradient(0deg, rgba(255,255,255,.022) 0 1px, transparent 1px 3px); }
+  .wrap { max-width:1240px; margin:0 auto; padding:16px; }
+  .topbar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-bottom:14px; border-bottom:1px solid var(--plate); }
+  .topbar img { width:48px; height:48px; border-radius:50%; border:2px solid var(--vfin); }
+  .brand { font:700 22px var(--sans); letter-spacing:.18em; color:var(--armor); }
+  .brand span { color:var(--hud); }
+  .ver { font:12px var(--mono); color:var(--muted); }
+  .spacer { flex:1; }
+  .pill { font:600 11px var(--sans); letter-spacing:.1em; text-transform:uppercase; padding:4px 10px; border-radius:99px; border:1px solid currentColor; }
+  .grid { display:grid; grid-template-columns:340px 1fr; gap:16px; margin-top:16px; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
+  @media (max-width:900px) { .grid, .two { grid-template-columns:1fr; } }
+  .panel { background:linear-gradient(180deg, rgba(31,42,92,.55), rgba(13,20,51,.85)); border:1px solid var(--plate); border-radius:8px; padding:14px; position:relative; min-width:0; }
+  .panel h3 { margin:0 0 10px; font:600 11px var(--sans); letter-spacing:.22em; text-transform:uppercase; color:var(--radar); }
+  .corner { position:absolute; width:14px; height:14px; border-color:var(--hud); border-style:solid; }
+  .tl { top:-1px; left:-1px; border-width:2px 0 0 2px; } .br { bottom:-1px; right:-1px; border-width:0 2px 2px 0; }
+  .radar { display:block; margin:0 auto; width:100%; max-width:300px; }
+  .big { text-align:center; margin-top:6px; }
+  .big .v { font:700 40px var(--mono); color:var(--radar); text-shadow:0 0 18px rgba(57,224,208,.35); }
+  .big .u { font:14px var(--mono); color:var(--muted); }
+  .avg { text-align:center; font:12px var(--mono); color:var(--muted); margin-top:4px; }
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  @media (max-width:640px) { .kpis { grid-template-columns:repeat(2,1fr); } }
+  .kpi { background:rgba(4,5,12,.55); border:1px solid var(--steel); border-radius:6px; padding:10px 12px; }
+  .kpi .l { font:600 10px var(--sans); letter-spacing:.16em; text-transform:uppercase; color:var(--muted); }
+  .kpi .n { font:700 22px var(--mono); margin-top:4px; }
+  table { width:100%; border-collapse:collapse; font:13px var(--mono); }
+  th { text-align:left; font:600 10px var(--sans); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); padding:8px 6px; border-bottom:1px solid var(--plate); }
+  td { padding:8px 6px; border-bottom:1px solid rgba(43,53,102,.5); white-space:nowrap; }
+  .tablewrap { overflow-x:auto; }
+  .log { font:12px/1.6 var(--mono); max-height:220px; overflow:auto; }
+  .chart { width:100%; height:160px; display:block; }
+  .legend { display:flex; flex-wrap:wrap; gap:12px; font-size:12px; color:var(--muted); }
+  .offline { position:fixed; inset:auto 16px 16px auto; background:var(--chest); color:#fff; padding:8px 14px; border-radius:6px; font:600 13px var(--sans); display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <img src="/logo.png" alt="">
+    <div><div class="brand">X<span>-</span>MINER</div><div class="ver" id="ver">connecting…</div></div>
+    <div class="spacer"></div>
+    <span class="pill" id="status" style="color:var(--muted)">● —</span>
+    <span class="pill" id="fee" style="color:var(--vfin)">Dev fee —</span>
+    <span class="pill" id="pool" style="color:var(--radar)">—</span>
+  </div>
+
+  <div class="grid">
+    <div class="panel"><span class="corner tl"></span><span class="corner br"></span>
+      <h3>Total hashrate</h3>
+      <svg class="radar" viewBox="0 0 300 300" role="img" aria-label="Hashrate gauge">
+        <defs><radialGradient id="scope" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#1d3a8a"/><stop offset="100%" stop-color="#0b1a4a"/></radialGradient></defs>
+        <circle cx="150" cy="150" r="140" fill="url(#scope)" stroke="#2b3566" stroke-width="3"/>
+        <g fill="none" stroke="#39e0d0" stroke-opacity=".75" stroke-width="1.2">
+          <ellipse cx="150" cy="150" rx="95" ry="95"/><ellipse cx="150" cy="150" rx="95" ry="30"/><ellipse cx="150" cy="150" rx="95" ry="60"/>
+          <ellipse cx="150" cy="150" rx="30" ry="95"/><ellipse cx="150" cy="150" rx="60" ry="95"/>
+          <line x1="150" y1="10" x2="150" y2="290"/><line x1="10" y1="150" x2="290" y2="150"/>
+          <ellipse cx="150" cy="150" rx="130" ry="18" stroke-opacity=".45"/>
+        </g>
+        <circle id="arc" cx="150" cy="150" r="118" fill="none" stroke="#ff3d8b" stroke-width="7" stroke-linecap="round"
+                stroke-dasharray="0 741" transform="rotate(-90 150 150)"/>
+        <g fill="none" stroke="#ff3d8b"><rect x="52" y="52" width="40" height="28" stroke-width="2"/><path d="M52 66h40M66 52v28M78 52v28" stroke-width="1"/></g>
+        <circle cx="150" cy="150" r="4" fill="#f5c518"/>
+      </svg>
+      <div class="big"><span class="v" id="hr">—</span> <span class="u" id="hru"></span></div>
+      <div class="avg" id="avg"></div>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:16px; min-width:0">
+      <div class="kpis">
+        <div class="kpi"><div class="l">Accepted</div><div class="n" id="acc" style="color:var(--ok)">—</div></div>
+        <div class="kpi"><div class="l">Rejected</div><div class="n" id="rej" style="color:var(--chest)">—</div></div>
+        <div class="kpi"><div class="l">Power</div><div class="n" id="pow" style="color:var(--armor)">—</div></div>
+        <div class="kpi"><div class="l">Efficiency</div><div class="n" id="eff" style="color:var(--vfin)">—</div></div>
+      </div>
+      <div class="panel"><span class="corner tl"></span><span class="corner br"></span>
+        <h3>Units</h3>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Unit</th><th>Device</th><th>Hashrate</th><th>Power</th><th>Eff</th><th>Temp</th><th>Fan</th><th>A / R</th></tr></thead>
+          <tbody id="units"></tbody>
+        </table></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="panel"><span class="corner tl"></span><span class="corner br"></span>
+      <h3>Hashrate · this session</h3>
+      <svg class="chart" id="chart" viewBox="0 0 600 160" preserveAspectRatio="none" role="img" aria-label="Hashrate over time"></svg>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="panel"><span class="corner tl"></span><span class="corner br"></span>
+      <h3>Combat log</h3>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+</div>
+<div class="offline" id="offline">Miner not responding</div>
+<script>
+const COLORS = ["#39e0d0", "#ff3d8b", "#f5c518", "#2f6fdc", "#39e0a0", "#e8323c", "#faebca", "#8e9ac7"];
+const UNITS = ["H/s", "kH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"];
+function split(h) { let u = 0; while (h >= 1000 && u < 6) { h /= 1000; u++; } return [h, UNITS[u]]; }
+function fmt(h) { const [v, u] = split(h); return v.toFixed(2) + " " + u; }
+function dur(s) { s = Math.floor(s); const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`; }
+function esc(t) { return String(t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+const history = [];  // [{t, per-device hashrates}]
+const $ = id => document.getElementById(id);
+
+function draw() {
+  const svg = $("chart"); if (history.length < 2) { svg.innerHTML = ""; return; }
+  const n = history[history.length - 1].v.length;
+  let max = 0; history.forEach(p => p.v.forEach(v => { if (v > max) max = v; })); max = max * 1.15 || 1;
+  let out = '<g stroke="#2b3566" stroke-width="1"><line x1="0" y1="40" x2="600" y2="40"/><line x1="0" y1="80" x2="600" y2="80"/><line x1="0" y1="120" x2="600" y2="120"/></g>';
+  for (let d = 0; d < n; d++) {
+    const pts = history.map((p, i) => `${(i / (history.length - 1) * 600).toFixed(1)},${(160 - (p.v[d] || 0) / max * 150).toFixed(1)}`).join(" ");
+    out += `<polyline fill="none" stroke="${COLORS[d % COLORS.length]}" stroke-width="2" points="${pts}"/>`;
+  }
+  svg.innerHTML = out;
+}
+
+async function tick() {
+  let s;
+  try { s = await (await fetch("/api/summary", {cache: "no-store"})).json(); $("offline").style.display = "none"; }
+  catch { $("offline").style.display = "block"; return; }
+  const x = s.x;
+  $("ver").textContent = `v${x.version} · ${x.vendor} · ${x.algorithm}`;
+  $("status").textContent = x.connected ? `● Online · ${dur(x.uptime)}` : "● Connecting";
+  $("status").style.color = x.connected ? "var(--ok)" : "var(--vfin)";
+  $("fee").textContent = x.fee.in_window ? `Dev fee ${x.fee.percent.toFixed(2)}% · active` : `Dev fee ${x.fee.percent.toFixed(2)}%`;
+  $("fee").title = x.fee.in_window ? "Mining for the developer now" : `Next fee window in ${dur(x.fee.next_window_s)}`;
+  $("pool").textContent = x.pool || "no pool";
+  const [v, u] = split(x.hr.now); $("hr").textContent = v.toFixed(2); $("hru").textContent = u;
+  $("avg").textContent = `1m ${fmt(x.hr["1m"])} · 15m ${fmt(x.hr["15m"])} · 1h ${fmt(x.hr["1h"])}`;
+  $("acc").textContent = x.shares.accepted; $("rej").textContent = x.shares.rejected + x.shares.stale;
+  let watts = 0; x.devices.forEach(d => { if (d.power > 0) watts += d.power; });
+  $("pow").textContent = watts ? watts.toFixed(0) + " W" : "—";
+  if (watts) { const [ev, eu] = split(x.hr.now / watts); $("eff").textContent = ev.toFixed(3) + " " + eu.replace("/s", "/W"); }
+  else $("eff").textContent = "—";
+  const scale = Math.max(...history.map(p => p.v.reduce((a, b) => a + b, 0)), x.hr.now) * 1.2 || 1;
+  $("arc").setAttribute("stroke-dasharray", `${(x.hr.now / scale * 741).toFixed(0)} 741`);
+  $("units").innerHTML = x.devices.map((d, i) => {
+    const eff = d.power > 0 ? split(d.hr / d.power) : null;
+    return `<tr><td style="color:${COLORS[i % COLORS.length]}">${d.id}</td><td>${esc(d.name)}</td><td style="color:var(--radar)">${fmt(d.hr)}</td>
+      <td>${d.power > 0 ? d.power.toFixed(0) + " W" : "—"}</td><td style="color:var(--vfin)">${eff ? eff[0].toFixed(3) + " " + eff[1].replace("/s", "/W") : "—"}</td>
+      <td>${d.temp >= 0 ? d.temp.toFixed(0) + "°C" : "—"}</td><td>${d.fan >= 0 ? d.fan.toFixed(0) + "%" : "—"}</td>
+      <td><span style="color:var(--ok)">${d.accepted}</span> / <span style="color:var(--chest)">${d.rejected + d.stale}</span></td></tr>`; }).join("");
+  $("legend").innerHTML = x.devices.map((d, i) => `<span style="color:${COLORS[i % COLORS.length]}">━ ${esc(d.name)}</span>`).join("");
+  const TAGS = {LOCK: "var(--ok)", MISS: "var(--chest)", JOB: "var(--wing)", FEE: "var(--vfin)", POOL: "var(--radar)"};
+  $("log").innerHTML = x.log.slice().reverse().map(l =>
+    `<div><span style="color:#5d6896">${esc(l.t)}</span> <span style="color:${TAGS[l.tag] || "var(--radar)"}">${esc(l.tag)}</span> ${esc(l.msg)}</div>`).join("");
+  history.push({t: Date.now(), v: x.devices.map(d => d.hr)}); if (history.length > 1800) history.shift();
+  draw();
+}
+tick(); setInterval(tick, 2000);
+</script>
+</body>
+</html>

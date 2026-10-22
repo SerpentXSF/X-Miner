@@ -12,11 +12,11 @@ void Stats::set_name(int dev, std::string name) {
   devs_.at(dev).name = std::move(name);
 }
 
-void Stats::add_hashes(int dev, double hashes) {
+void Stats::add_hashes(int dev, double hashes, double seconds) {
   auto now = Clock::now();
   std::lock_guard<std::mutex> lk(mu_);
   auto& s = devs_.at(dev).samples;
-  s.push_back({now, hashes});
+  s.push_back({now, hashes, seconds});
   while (!s.empty() && now - s.front().t > std::chrono::hours(1)) s.pop_front();
 }
 
@@ -42,14 +42,21 @@ void Stats::sensors(int dev, double power_w, double temp_c, double fan_pct, doub
   d.core_mhz = core_mhz;
 }
 
-double Stats::rate(const std::deque<Sample>& s, Clock::time_point now, double window_s, Clock::time_point start) {
-  // Sum of hashes reported within the window, divided by the window length (or by the time since start,
-  // whichever is shorter, so the first minutes are not underestimated).
-  double total = 0;
+double Stats::rate(const std::deque<Sample>& s, Clock::time_point now, double window_s) {
+  // Hashes divided by the work time those samples cover, using the samples that ended inside the window.
+  // Each sample carries its own duration, so the result does not depend on where the window edge falls.
+  double hashes = 0, secs = 0;
   auto cutoff = now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(window_s));
-  for (auto it = s.rbegin(); it != s.rend() && it->t > cutoff; ++it) total += it->hashes;
-  double span = std::min(window_s, std::chrono::duration<double>(now - start).count());
-  return span > 0.5 ? total / span : 0.0;
+  for (auto it = s.rbegin(); it != s.rend() && it->t > cutoff; ++it) {
+    hashes += it->hashes;
+    secs += it->seconds;
+  }
+  // A device that stopped reporting is idle: stretch the covered time to the window so its rate decays.
+  if (!s.empty()) {
+    double since_last = std::chrono::duration<double>(now - s.back().t).count();
+    if (since_last > 2.0) secs += std::min(since_last, window_s);
+  }
+  return secs > 0 ? hashes / secs : 0.0;
 }
 
 Snapshot Stats::snapshot() const {
@@ -63,10 +70,10 @@ Snapshot Stats::snapshot() const {
     DeviceSnapshot ds;
     ds.id = static_cast<int>(i);
     ds.name = d.name;
-    ds.hr_now = rate(d.samples, now, 10, start_);
-    ds.hr_1m = rate(d.samples, now, 60, start_);
-    ds.hr_15m = rate(d.samples, now, 900, start_);
-    ds.hr_1h = rate(d.samples, now, 3600, start_);
+    ds.hr_now = rate(d.samples, now, 10);
+    ds.hr_1m = rate(d.samples, now, 60);
+    ds.hr_15m = rate(d.samples, now, 900);
+    ds.hr_1h = rate(d.samples, now, 3600);
     ds.accepted = d.accepted;
     ds.rejected = d.rejected;
     ds.stale = d.stale;

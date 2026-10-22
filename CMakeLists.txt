@@ -18,17 +18,33 @@ endif()
 
 find_package(Threads REQUIRED)
 
+# Embed the web dashboard and logo into the executable.
+set(XM_GEN ${CMAKE_BINARY_DIR}/generated)
+function(xm_embed in name)
+  add_custom_command(OUTPUT ${XM_GEN}/${name}.hpp
+    COMMAND ${CMAKE_COMMAND} -DIN=${CMAKE_SOURCE_DIR}/${in} -DOUT=${XM_GEN}/${name}.hpp -DNAME=${name}
+            -P ${CMAKE_SOURCE_DIR}/cmake/embed.cmake
+    DEPENDS ${CMAKE_SOURCE_DIR}/${in} ${CMAKE_SOURCE_DIR}/cmake/embed.cmake VERBATIM)
+endfunction()
+xm_embed(web/dashboard.html dashboard_html)
+xm_embed(assets/serpentx-logo.png logo_png)
+
 add_library(xm_core STATIC
+  ${XM_GEN}/dashboard_html.hpp
+  ${XM_GEN}/logo_png.hpp
+  src/net/tcp.cpp
+  src/api/api.cpp
   src/core/console.cpp
   src/core/config.cpp
   src/core/devfee.cpp
   src/core/stats.cpp
   src/core/banner.cpp
+  src/core/report.cpp
   src/algo/registry.cpp
   src/gpu/hip_backend.cpp
   src/gpu/cuda_backend.cpp
 )
-target_include_directories(xm_core PUBLIC src third_party)
+target_include_directories(xm_core PUBLIC src third_party ${XM_GEN})
 target_link_libraries(xm_core PUBLIC Threads::Threads)
 if(WIN32)
   target_link_libraries(xm_core PUBLIC ws2_32)

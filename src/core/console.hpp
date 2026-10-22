@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace xm {
 
@@ -52,5 +53,12 @@ inline void warn(const char* tag, const std::string& msg) { log_line(Tone::Gold,
 inline void error(const char* tag, const std::string& msg) { log_line(Tone::Red, tag, msg, Tone::Red); }
 
 std::string now_hms();
+
+// The last events (share results, jobs, pool and fee changes) for the dashboard's combat log.
+struct Event {
+  std::string t, tag, msg;
+};
+void record_event(const std::string& tag, const std::string& msg);
+std::vector<Event> recent_events();
 
 }  // namespace xm

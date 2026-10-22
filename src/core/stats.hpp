@@ -33,16 +33,17 @@ class Stats {
   explicit Stats(size_t devices);
 
   void set_name(int dev, std::string name);
-  // Report that `hashes` hashes were completed on device `dev` since its previous report.
-  void add_hashes(int dev, double hashes);
+  // Report that `hashes` hashes were completed on device `dev` during the last `seconds` of work.
+  void add_hashes(int dev, double hashes, double seconds);
   void share(int dev, bool accepted, bool stale, bool fee_window);
   void sensors(int dev, double power_w, double temp_c, double fan_pct, double core_mhz);
   Snapshot snapshot() const;
 
  private:
   struct Sample {
-    Clock::time_point t;
+    Clock::time_point t;  // end of the interval
     double hashes;
+    double seconds;       // length of the interval
   };
   struct Dev {
     std::string name;
@@ -50,7 +51,7 @@ class Stats {
     uint64_t accepted = 0, rejected = 0, stale = 0;
     double power_w = -1, temp_c = -1, fan_pct = -1, core_mhz = -1;
   };
-  static double rate(const std::deque<Sample>& s, Clock::time_point now, double window_s, Clock::time_point start);
+  static double rate(const std::deque<Sample>& s, Clock::time_point now, double window_s);
 
   mutable std::mutex mu_;
   std::vector<Dev> devs_;

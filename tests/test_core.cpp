@@ -98,3 +98,11 @@ TEST(hashrate_formatting) {
   CHECK_EQ(format_hashrate(950), std::string("950.00 H/s"));
   CHECK_EQ(format_duration(22320), std::string("6h 12m"));
 }
+
+TEST(hashrate_is_hashes_over_covered_time) {
+  Stats st(1);
+  for (int i = 0; i < 5; ++i) st.add_hashes(0, 2.0e12, 0.5);  // 4 TH/s in half-second reports
+  auto snap = st.snapshot();
+  CHECK_NEAR(snap.hr_now, 4.0e12, 1e3);
+  CHECK_NEAR(snap.hr_1m, 4.0e12, 1e3);
+}

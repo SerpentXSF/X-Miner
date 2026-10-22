@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <ctime>
+#include <deque>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -99,6 +100,22 @@ std::string now_hms() {
   char buf[16];
   std::strftime(buf, sizeof buf, "%H:%M:%S", &tm);
   return buf;
+}
+
+namespace {
+std::mutex g_events_mu;
+std::deque<Event> g_events;
+}  // namespace
+
+void record_event(const std::string& tag, const std::string& msg) {
+  std::lock_guard<std::mutex> lk(g_events_mu);
+  g_events.push_back({now_hms(), tag, msg});
+  while (g_events.size() > 60) g_events.pop_front();
+}
+
+std::vector<Event> recent_events() {
+  std::lock_guard<std::mutex> lk(g_events_mu);
+  return {g_events.begin(), g_events.end()};
 }
 
 void log_line(Tone tag_tone, const char* tag, const std::string& msg, Tone msg_tone) {

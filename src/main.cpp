@@ -1,7 +1,16 @@
+#include <chrono>
 #include <cstdio>
+#include <memory>
+#include <mutex>
+#include <random>
 #include <string>
+#include <thread>
 
 #include "algo/registry.hpp"
+#include "api/api.hpp"
+#include "core/devfee.hpp"
+#include "core/report.hpp"
+#include "core/stats.hpp"
 #include "core/banner.hpp"
 #include "core/config.hpp"
 #include "core/console.hpp"
@@ -59,6 +68,66 @@ int list_algorithms() {
   return 0;
 }
 
+// Developer tool: simulated devices and shares, to exercise the console table and the web dashboard.
+// Everything it shows is labelled DEMO; it never connects to a pool.
+int ui_demo(const Config& cfg) {
+  Stats stats(2);
+  stats.set_name(0, "DEMO RX 9070 XT");
+  stats.set_name(1, "DEMO RTX 3060");
+  FeeSchedule fee(kFeePercent, 600);  // short demo cycle so the fee window shows up quickly
+  RunState rs;
+  rs.algorithm = "pearlhash (DEMO)";
+  rs.pool = "demo.invalid:0";
+  rs.fee_percent = kFeePercent;
+  std::mutex mu;
+  std::unique_ptr<ApiServer> api;
+  if (cfg.api_enable) {
+    api = std::make_unique<ApiServer>(cfg.api_host, cfg.api_port, [&] {
+      std::lock_guard<std::mutex> lk(mu);
+      return build_summary(stats.snapshot(), rs);
+    });
+    std::string err;
+    if (!api->start(err)) {
+      error("API", err);
+      api.reset();
+    } else {
+      info("API", "dashboard at http://" + cfg.api_host + ":" + std::to_string(cfg.api_port) + "/");
+    }
+  }
+  std::mt19937 rng(42);
+  std::normal_distribution<double> noise(1.0, 0.01);
+  info("DEMO", "simulated devices; nothing here is real mining");
+  record_event("POOL", "DEMO connected to demo.invalid");
+  for (int sec = 1; sec <= cfg.benchmark_seconds; ++sec) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::lock_guard<std::mutex> lk(mu);
+    rs.connected = true;
+    stats.add_hashes(0, 100.4e12 * noise(rng), 1.0);
+    stats.add_hashes(1, 47.0e12 * noise(rng), 1.0);
+    stats.sensors(0, 243 + 3 * noise(rng), 50, 55, 1883);
+    stats.sensors(1, 119, 61, 66, 1702);
+    bool was = rs.fee_window;
+    rs.fee_window = fee.advance(1.0);
+    rs.fee_next_s = fee.seconds_to_window();
+    if (rs.fee_window != was) {
+      log_line(Tone::Gold, "FEE", rs.fee_window ? "dev fee window started (DEMO)" : "dev fee window ended (DEMO)");
+      record_event("FEE", rs.fee_window ? "dev window started" : "dev window ended");
+    }
+    if (sec % 7 == 0) {
+      int dev = (sec / 7) % 2;
+      bool ok = (sec % 91) != 0;
+      stats.share(dev, ok, false, rs.fee_window);
+      log_line(ok ? Tone::Ok : Tone::Red, ok ? "LOCK" : "MISS",
+               std::string(ok ? "share accepted" : "share rejected") + "  unit " + std::to_string(dev) + " (DEMO)");
+      record_event(ok ? "LOCK" : "MISS", std::string(ok ? "share accepted" : "share rejected") + " · unit " +
+                                             std::to_string(dev));
+    }
+    if (sec % 30 == 0) record_event("JOB", "new job (DEMO)");
+    if (sec % 20 == 0) print_stats_table(stats.snapshot(), rs);
+  }
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -80,6 +149,7 @@ int main(int argc, char** argv) {
   print_banner(cfg.algorithm);
   if (cfg.list_devices) return list_devices();
   if (cfg.list_algorithms) return list_algorithms();
+  if (cfg.ui_demo) return ui_demo(cfg);
 
   const AlgorithmInfo* algo = find_algorithm(cfg.algorithm);
   if (!algo) {

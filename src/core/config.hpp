@@ -33,6 +33,7 @@ struct Config {
   bool benchmark = false;             // hash locally without a pool (no shares submitted)
   int benchmark_seconds = 60;
   bool selftest = false;              // run CPU-vs-GPU known-answer checks and exit
+  bool ui_demo = false;               // developer: simulated devices to exercise the console and dashboard
   bool help = false;
   bool version = false;
 

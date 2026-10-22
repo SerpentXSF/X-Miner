@@ -76,6 +76,7 @@ std::optional<std::string> parse_args(int argc, char** argv, Config& c) {
     else if (a == "--api-enable") { c.api_enable = true; }
     else if (a == "--benchmark") { c.benchmark = true; }
     else if (a == "--selftest") { c.selftest = true; }
+    else if (a == "--ui-demo") { c.ui_demo = true; }
     else if (a == "--algorithm" || a == "-a" || a == "--algo" || a == "--algorithm-gpu") {
       if (!(v = value())) return a + " needs a value";
       c.algorithm = *v;
