@@ -95,7 +95,12 @@ bool TcpLine::connect(const std::string& host, uint16_t port, int timeout_ms, bo
     set_nonblocking(s, true);
     int r = ::connect(s, a->ai_addr, static_cast<socklen_t>(a->ai_addrlen));
     bool ok = r == 0;
-    if (!ok && wait_fd(s, true, timeout_ms) > 0) {
+#ifdef _WIN32
+    const bool in_progress = !ok && XM_ERRNO == WSAEWOULDBLOCK;
+#else
+    const bool in_progress = !ok && (XM_ERRNO == EINPROGRESS || XM_ERRNO == EWOULDBLOCK);
+#endif
+    if (in_progress && wait_fd(s, true, timeout_ms) > 0) {  // otherwise it failed at once (e.g. refused)
       int so = 0;
       socklen_t len = sizeof so;
       getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&so), &len);

@@ -204,7 +204,7 @@ void PearlPool::run() {
       std::lock_guard<std::mutex> lk(mu_);
       pool_index_ = (pool_index_ + 1) % pools_.size();
       failures = 0;
-      warn("POOL", "switching to " + pools_[pool_index_].host);
+      warn("POOL", "switching to " + pools_[pool_index_].host + ":" + std::to_string(pools_[pool_index_].port));
     }
     for (int i = 0; i < 50 && !stop_; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }

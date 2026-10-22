@@ -44,13 +44,16 @@ int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
 
   auto on_result = [&](bool fee) {
     return [&, fee](bool ok, const std::string& err, const std::string& job, int dev) {
-      stats.share(dev, ok, err.find("tale") != std::string::npos || err.find("expired") != std::string::npos ||
-                               err.find("superseded") != std::string::npos,
-                  fee);
+      const bool stale = err.find("tale") != std::string::npos || err.find("expired") != std::string::npos ||
+                         err.find("superseded") != std::string::npos;
+      stats.share(dev, ok, stale, fee);
       const std::string who = fee ? "dev fee share" : "share";
       if (ok) {
         log_line(Tone::Ok, "LOCK", who + " accepted  unit " + std::to_string(dev) + "  job " + job);
         record_event("LOCK", "unit " + std::to_string(dev) + " · " + who + " accepted");
+      } else if (stale) {
+        log_line(Tone::Gold, "STAL", who + " stale  unit " + std::to_string(dev) + "  " + err, Tone::Dim);
+        record_event("STAL", "unit " + std::to_string(dev) + " · " + err);
       } else {
         log_line(Tone::Red, "MISS", who + " rejected  unit " + std::to_string(dev) + "  " + err, Tone::Red);
         record_event("MISS", "unit " + std::to_string(dev) + " · " + err);
