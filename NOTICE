@@ -1,0 +1,13 @@
+X-Miner
+Copyright 2026 SerpentX Tech. Licensed under the MIT License (LICENSE).
+
+This product includes constants and test vectors from Apache-2.0 licensed projects:
+
+Parano1d (https://github.com/ignotusnemo/parano1d)
+Copyright 2026 Paranoid Zero. Designed and developed by Ignotus Nemo.
+Portions of the binary-field implementation are derived from hekate-math (Copyright 2026 Andrei Kochergin and
+Oumuamua Labs) and binius64 (Copyright (c) 2025 The Binius Developers, Copyright (c) 2025 Irreducible, Inc.).
+
+NoidMiner (https://github.com/gacanga/NoidMiner): Parano1d test vectors.
+
+It also includes code and data under ISC, MIT, CC0 and Apache-2.0 licences listed in THIRD_PARTY.md.
