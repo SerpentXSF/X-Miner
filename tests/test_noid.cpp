@@ -77,3 +77,24 @@ TEST(noid_midstate_path_equals_full) {
     CHECK(digest(g) == digest_from_midstate(mid, fs, g[kNonceField]));
   }
 }
+
+#include "algo/noid/noid_gpu_consts.hpp"
+
+TEST(noid_gpu_permutation_matches_reference) {
+  // The ported GPU permutation (kernels/noid, compiled as C++) against the reference, on several states.
+  KOp cm[6];
+  constant_kops(cm);
+  CMulKop mul{cm};
+  RcFlat rc;
+  for (uint64_t seed : {0ull, 1ull, 0x0123456789abcdefull}) {
+    State ref;
+    W4 s[4];
+    for (int i = 0; i < 4; ++i) {
+      ref[i] = u(seed * 0x9e3779b97f4a7c15ull + i, ~seed ^ (i * 0x1111ull));
+      s[i] = to_w4(ref[i]);
+    }
+    permute_flat(ref);
+    permute(s, mul, rc);
+    for (int i = 0; i < 4; ++i) CHECK(from_w4(s[i]) == ref[i]);
+  }
+}

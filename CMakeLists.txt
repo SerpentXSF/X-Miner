@@ -41,6 +41,8 @@ add_library(xm_core STATIC
   src/crypto/blake3.cpp
   src/algo/pearl/pearl.cpp
   src/algo/noid/noid.cpp
+  src/algo/noid/noid_gpu.cpp
+  src/algo/noid/bench.cpp
   src/algo/pearl/share_test.cpp
   src/algo/pearl/pearl_gpu.cpp
   src/algo/pearl/bench.cpp
@@ -58,7 +60,7 @@ add_library(xm_core STATIC
   src/gpu/cuda_backend.cpp
   src/gpu/sensors.cpp
 )
-target_include_directories(xm_core PUBLIC src third_party ${XM_GEN})
+target_include_directories(xm_core PUBLIC src third_party ${XM_GEN} kernels)
 target_link_libraries(xm_core PUBLIC Threads::Threads)
 if(WIN32)
   target_link_libraries(xm_core PUBLIC ws2_32)

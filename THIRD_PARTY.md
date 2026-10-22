@@ -9,3 +9,4 @@
 | Pearl golden vectors g3, g5 | tests/vectors/pearl_golden_*.json | ISC (PRL-3090 contributors) | https://github.com/rheza/prl-3090-miner tests/golden |
 | Parano1d PoW constants (generated) | src/algo/noid/noid_consts.hpp | Apache-2.0 (Paranoid Zero) | https://github.com/ignotusnemo/parano1d @5302b3f; see NOTICE |
 | Parano1d digest vectors | tests/vectors/noid_vectors.txt | Apache-2.0 | https://github.com/gacanga/NoidMiner tests/vectors.txt (generated from the official crates) |
+| Parano1d GF(2^128) arithmetic and permutation (ported) | kernels/noid/noid_math.h, noid_perm.h | Apache-2.0 (gacanga) | https://github.com/gacanga/NoidMiner @31fa4a8, modified for HIP |
