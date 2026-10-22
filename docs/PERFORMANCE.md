@@ -52,3 +52,9 @@ multiplies 13.2 MH/s. The table multiply (64 conflict-free LDS.64 per product) i
 next step is fewer bytes per constant multiply: every constant (g, h, d_i + 1) lies in the GF(2^16) subfield, so in a
 composite basis GF((2^32)^4) a constant multiply is 4 independent GF(2^32) products (32 LDS.32 from 512-byte nibble
 tables, 4x fewer LDS wavefronts) while the general multiply keeps the 9 IMAD.WIDE products. Not done yet.
+
+RX 9070 XT, same timing-only builds: 17.5 MH/s full, 24.9 without the table multiplies, 31.5 without the S-boxes.
+There the LDS bandwidth ceiling is far away (~50 MH/s); the table multiply costs issue slots (64 LDS + ~85 ALU per
+product), so the composite basis would save only ~5% on AMD (cheaper constant multiply, slightly dearer general
+multiply) against an estimated ~15% on NVIDIA. With NOID at ~$0.54 (~1.1 NOID/day for a 9070 XT at 17.5 MH/s on a
+656 GH/s network, 2026-10-22) this is parked behind Pearl work.
