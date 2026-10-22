@@ -4,3 +4,4 @@
 *.png binary
 *.hsaco binary
 *.cubin binary
+*.ptx binary
