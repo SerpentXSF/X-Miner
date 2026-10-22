@@ -115,3 +115,25 @@ TEST(pearl_pool_target_conversions) {
   CHECK_EQ(nbits_from_target_hex("00000000000007fff80000000000000000000000000000000000000000000000"), 0x1a07fff8u);
   CHECK_EQ(nbits_from_difficulty(1.0), 0x1d00ffffu);
 }
+
+// gzip writer: CRC-32 check value, plus an optional dump (XM_GZIP_DUMP=dir) for decompression by an external tool.
+#include <cstdlib>
+#include <fstream>
+#include "core/gzip.hpp"
+TEST(gzip_crc32_and_framing) {
+  const char* s = "123456789";
+  CHECK_EQ(xm::crc32(reinterpret_cast<const uint8_t*>(s), 9), 0xCBF43926u);
+  std::vector<uint8_t> data(200000);
+  uint64_t x = 1;
+  for (size_t i = 0; i < data.size(); ++i) {
+    x = x * 6364136223846793005ull + 1442695040888963407ull;
+    data[i] = i % 7 == 0 ? static_cast<uint8_t>(x >> 56) : static_cast<uint8_t>(((x >> 60) & 15) - 8);
+  }
+  auto gz = xm::gzip_compress(data.data(), data.size());
+  CHECK(gz.size() > 18 && gz[0] == 0x1f && gz[1] == 0x8b && gz[2] == 8);
+  CHECK(gz.size() < data.size() * 3 / 4);  // ~4.5 bits per byte for this mix
+  if (const char* d = std::getenv("XM_GZIP_DUMP")) {
+    std::ofstream(std::string(d) + "/raw.bin", std::ios::binary).write(reinterpret_cast<const char*>(data.data()), data.size());
+    std::ofstream(std::string(d) + "/raw.bin.gz", std::ios::binary).write(reinterpret_cast<const char*>(gz.data()), gz.size());
+  }
+}

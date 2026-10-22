@@ -41,6 +41,7 @@ add_library(xm_core STATIC
   src/algo/selftest.cpp
   src/net/tcp.cpp
   src/net/tls.cpp
+  src/core/gzip.cpp
   src/crypto/blake3.cpp
   src/algo/pearl/pearl.cpp
   src/algo/noid/noid.cpp

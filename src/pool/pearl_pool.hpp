@@ -1,9 +1,10 @@
 // Pearl pool client: the "object" stratum dialect used by Kryptex, HeroMiners, k1pool, LuckyPool and NushyPool.
 //   -> mining.subscribe ["X-Miner/x.y.z"]
-//   -> mining.authorize ["wallet.worker", "password"]                 (v1 session: plain base64 proofs)
+//   -> mining.authorize {wallet, password, agent, type: "v2"}   (Kryptex echoes type v2: gzip proofs; others
+//                                                                 ignore it and keep plain base64 proofs)
 //   <- mining.notify {job_id, header(152 hex), target(64 hex, big-endian share target), height, cert_version}
 //   <- mining.set_difficulty [D]   (some pools; share target = 0xFFFF * 2^208 / D)
-//   -> mining.submit {worker, job_id, plain_proof}
+//   -> mining.submit {worker, job_id, plain_proof = base64(bincode) or, in a v2 session, base64(gzip(bincode))}
 // Sources: Pearl spec notes (docs), arabel1a/ascend_prl kryptex.c (MIT), nushypool protocol README.
 #pragma once
 
@@ -52,6 +53,7 @@ class PearlPool {
   std::string login_, password_;
   ResultFn on_result_;
   std::atomic<bool> stop_{false}, connected_{false};
+  bool gzip_ = false;  // this session negotiated type v2 (gzip proofs)
   std::thread thread_;
   mutable std::mutex mu_;
   net::TcpLine conn_;

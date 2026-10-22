@@ -57,11 +57,12 @@ Engine::~Engine() {
 }
 
 void Engine::fill_random(int8_t* p, size_t n) {
-  // Signal values in [-64, 63]; 8 per 64-bit draw.
+  // Signal values in [-8, 7], 16 per 64-bit draw. Consensus allows [-64, 64] and the work is the same (the GEMM
+  // runs on A + noise, noise in [-63, 63]), but 4-bit rows make share proofs compress ~2x for gzip pools.
   size_t i = 0;
   while (i < n) {
     uint64_t r = rng_();
-    for (int j = 0; j < 8 && i < n; ++j, ++i) p[i] = static_cast<int8_t>(static_cast<int>((r >> (8 * j)) & 127) - 64);
+    for (int j = 0; j < 16 && i < n; ++j, ++i) p[i] = static_cast<int8_t>(static_cast<int>((r >> (4 * j)) & 15) - 8);
   }
 }
 
@@ -252,7 +253,8 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
       Share s;
       s.job_id = job_.id;
       s.found = f;
-      s.proof_b64 = base64(serialize(p));
+      s.proof = serialize(p);
+      s.proof_b64 = base64(s.proof);
       s.is_block = U256::from_le_bytes(f.hash.data()) <= block_bound;
       shares.push_back(std::move(s));
     }

@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "core/console.hpp"
+#include "core/gzip.hpp"
 #include "core/version.hpp"
 #include "nlohmann/json.hpp"
 
@@ -72,7 +73,8 @@ void PearlPool::submit(const pearl::Share& s, int tag, double hashrate) {
   int id = next_id_++;
   json m = {{"id", id},
             {"method", "mining.submit"},
-            {"params", {{"worker", login_}, {"job_id", s.job_id}, {"plain_proof", s.proof_b64},
+            {"params", {{"worker", login_}, {"job_id", s.job_id},
+                        {"plain_proof", gzip_ ? pearl::base64(gzip_compress(s.proof.data(), s.proof.size())) : s.proof_b64},
                         {"hs", static_cast<uint64_t>(hashrate)}}}};
   pending_[id] = {s.job_id, tag};
   outbox_.push_back(m.dump());
@@ -138,7 +140,14 @@ void PearlPool::handle(const std::string& line) {
   if (m.contains("error") && !m["error"].is_null()) err = m["error"].dump();
   if (id == 2) {  // authorize
     if (ok) {
-      info("POOL", "authorized as " + login_);
+      // Kryptex answers a v2 authorize with "type":"v2" (top level or in the result) and then expects gzip proofs.
+      auto is_v2 = [](const json& o) { return o.is_object() && o.value("type", "") == "v2"; };
+      bool v2 = is_v2(m) || (m.contains("result") && is_v2(m["result"]));
+      {
+        std::lock_guard<std::mutex> lk(mu_);
+        gzip_ = v2;
+      }
+      info("POOL", "authorized as " + login_ + (v2 ? " (gzip shares)" : ""));
     } else {
       error("POOL", "authorization failed: " + (err.empty() ? std::string("rejected") : err));
     }
@@ -165,10 +174,15 @@ bool PearlPool::session(const PoolEndpoint& ep) {
   record_event("POOL", "connected to " + ep.host);
   conn_.send_line(json({{"id", 1}, {"method", "mining.subscribe"}, {"params", {"X-Miner/" XM_VERSION}}}).dump());
   // Object-form authorize: required by HeroMiners ("wallet" field), accepted by Kryptex, LuckyPool, k1pool.
-  // No "type":"v2", so the session stays v1 (plain base64 proofs, no gzip).
+  // "type":"v2" asks for gzip proofs; only a pool that echoes it switches the session (see handle()).
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    gzip_ = false;
+  }
   conn_.send_line(json({{"id", 2},
                         {"method", "mining.authorize"},
-                        {"params", {{"wallet", login_}, {"password", password_}, {"agent", "X-Miner/" XM_VERSION}}}})
+                        {"params",
+                         {{"wallet", login_}, {"password", password_}, {"agent", "X-Miner/" XM_VERSION}, {"type", "v2"}}}})
                       .dump());
   connected_ = true;
   auto last_rx = std::chrono::steady_clock::now();
