@@ -44,11 +44,13 @@ verifier. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 ## Pools
 
-TLS (`stratum+ssl://`) is not supported yet; use the plain TCP ports.
+TLS pools work with `stratum+ssl://host:port` (Windows: SChannel; Linux: OpenSSL 1.1 or 3, loaded at run time).
+Pool certificates are not verified, as with other miners (pools use self-signed certificates).
 
 - Pearl: Kryptex (`prl.kryptex.network:7048`, `prl-us.kryptex.network:7048`), HeroMiners, and other pools that use
   the object-style Pearl stratum.
-- Parano1d: rplant (`na.rplant.xyz:17185`) and other `parano1d-stratum-v1` pools.
+- Parano1d: rplant (`na.rplant.xyz:17185`, plain or TLS on the same port), InnovLab
+  (`stratum+ssl://us.innovlab.cc:19601`) and other `parano1d-stratum-v1` pools.
 
 ## Building from source
 

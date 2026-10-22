@@ -7,7 +7,7 @@ Flight sheet:
     Installation URL: the x-miner-<version>-hiveos.tar.gz release link
     Hash algorithm:   pearlhash   (or noid)
     Wallet and worker template: %WAL%.%WORKER_NAME%
-    Pool URL:         prl.kryptex.network:7048   (noid: na.rplant.xyz:17185); TLS ports are not supported yet
+    Pool URL:         prl.kryptex.network:7048   (noid: na.rplant.xyz:17185); TLS: stratum+ssl://host:port
     Pass:             x
     Extra config arguments: optional, e.g. --gpu-id 0,1
 

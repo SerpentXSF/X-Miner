@@ -1,5 +1,7 @@
 #include "net/tcp.hpp"
 
+#include "net/tls.hpp"
+
 #include <chrono>
 #include <cstring>
 
@@ -69,12 +71,13 @@ int wait_fd(uintptr_t fd, bool for_write, int timeout_ms) {
 TcpLine::~TcpLine() { close(); }
 
 void TcpLine::close() {
+  tls_.reset();
   if (fd_ != kInvalid) XM_CLOSE(fd_);
   fd_ = kInvalid;
   buf_.clear();
 }
 
-bool TcpLine::connect(const std::string& host, uint16_t port, int timeout_ms) {
+bool TcpLine::connect(const std::string& host, uint16_t port, int timeout_ms, bool tls) {
   close();
   startup();
   addrinfo hints{};
@@ -114,12 +117,29 @@ bool TcpLine::connect(const std::string& host, uint16_t port, int timeout_ms) {
   }
   connect_ms_ = static_cast<int>(
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
+  if (tls) {
+    std::string err;
+    auto t = Tls::create(err);
+    if (!t || !t->handshake(static_cast<uintptr_t>(fd_), host, timeout_ms, err)) {
+      err_ = host + ":" + std::to_string(port) + ": " + err;
+      close();
+      return false;
+    }
+    tls_ = std::move(t);
+  }
   return true;
 }
 
 bool TcpLine::send_line(const std::string& line) {
   if (fd_ == kInvalid) return false;
   std::string data = line + "\n";
+  if (tls_) {
+    if (!tls_->write(data.data(), data.size(), err_)) {
+      close();
+      return false;
+    }
+    return true;
+  }
   size_t off = 0;
   while (off < data.size()) {
     int n = ::send(fd_, data.data() + off, static_cast<int>(data.size() - off), 0);
@@ -147,6 +167,13 @@ int TcpLine::read_line(std::string& out, int timeout_ms) {
     int left = static_cast<int>(
         std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count());
     if (left <= 0) return 0;
+    if (tls_ && tls_->pending()) {
+      if (tls_->read(buf_, err_) < 0) {
+        close();
+        return -1;
+      }
+      continue;
+    }
     int r = wait_fd(fd_, false, left);
     if (r == 0) return 0;
     if (r < 0) {
@@ -154,14 +181,21 @@ int TcpLine::read_line(std::string& out, int timeout_ms) {
       close();
       return -1;
     }
-    char tmp[65536];
-    int n = ::recv(fd_, tmp, sizeof tmp, 0);
-    if (n <= 0) {
-      err_ = n == 0 ? "pool closed the connection" : "recv failed (" + std::to_string(XM_ERRNO) + ")";
-      close();
-      return -1;
+    if (tls_) {
+      if (tls_->read(buf_, err_) < 0) {
+        close();
+        return -1;
+      }
+    } else {
+      char tmp[65536];
+      int n = ::recv(fd_, tmp, sizeof tmp, 0);
+      if (n <= 0) {
+        err_ = n == 0 ? "pool closed the connection" : "recv failed (" + std::to_string(XM_ERRNO) + ")";
+        close();
+        return -1;
+      }
+      buf_.append(tmp, static_cast<size_t>(n));
     }
-    buf_.append(tmp, static_cast<size_t>(n));
     if (buf_.size() > (16u << 20)) {  // a pool never sends a 16 MB line; refuse to grow without bound
       err_ = "oversized message from pool";
       close();

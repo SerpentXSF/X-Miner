@@ -40,6 +40,7 @@ add_library(xm_core STATIC
   src/gpu/kernels.cpp
   src/algo/selftest.cpp
   src/net/tcp.cpp
+  src/net/tls.cpp
   src/crypto/blake3.cpp
   src/algo/pearl/pearl.cpp
   src/algo/noid/noid.cpp
@@ -67,7 +68,7 @@ add_library(xm_core STATIC
 target_include_directories(xm_core PUBLIC src third_party ${XM_GEN} kernels)
 target_link_libraries(xm_core PUBLIC Threads::Threads)
 if(WIN32)
-  target_link_libraries(xm_core PUBLIC ws2_32)
+  target_link_libraries(xm_core PUBLIC ws2_32 secur32)
 else()
   target_link_libraries(xm_core PUBLIC ${CMAKE_DL_LIBS})
 endif()

@@ -141,16 +141,12 @@ void PearlPool::handle(const std::string& line) {
 }
 
 bool PearlPool::session(const PoolEndpoint& ep) {
-  if (ep.tls) {
-    error("POOL", ep.host + ": TLS pools are not supported in this build yet; use the plain TCP port");
-    return false;
-  }
-  if (!conn_.connect(ep.host, ep.port, 10000)) {
+  if (!conn_.connect(ep.host, ep.port, 10000, ep.tls)) {
     warn("POOL", conn_.error());
     return false;
   }
-  info("POOL", "connected to " + ep.host + ":" + std::to_string(ep.port) + " (" + std::to_string(conn_.latency_ms()) +
-                   " ms)");
+  info("POOL", "connected to " + ep.host + ":" + std::to_string(ep.port) + (ep.tls ? " over TLS" : "") + " (" +
+                   std::to_string(conn_.latency_ms()) + " ms)");
   record_event("POOL", "connected to " + ep.host);
   conn_.send_line(json({{"id", 1}, {"method", "mining.subscribe"}, {"params", {"X-Miner/" XM_VERSION}}}).dump());
   // Object-form authorize: required by HeroMiners ("wallet" field), accepted by Kryptex, LuckyPool, k1pool.

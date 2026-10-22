@@ -1,8 +1,11 @@
-// Blocking TCP client with timeouts and a line reader, for stratum (newline-delimited JSON).
+// Blocking TCP client with timeouts and a line reader, for stratum (newline-delimited JSON), optionally over TLS.
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
+
+#include "net/tls.hpp"
 
 namespace xm::net {
 
@@ -15,8 +18,8 @@ class TcpLine {
   TcpLine(const TcpLine&) = delete;
   TcpLine& operator=(const TcpLine&) = delete;
 
-  // Resolves and connects; returns false with error() set on failure.
-  bool connect(const std::string& host, uint16_t port, int timeout_ms);
+  // Resolves and connects (then runs the TLS handshake when tls is set); returns false with error() set on failure.
+  bool connect(const std::string& host, uint16_t port, int timeout_ms, bool tls = false);
   void close();
   bool connected() const { return fd_ != kInvalid; }
 
@@ -36,6 +39,7 @@ class TcpLine {
   static constexpr Sock kInvalid = -1;
 #endif
   Sock fd_ = kInvalid;
+  std::unique_ptr<Tls> tls_;
   std::string buf_;
   std::string err_;
   int connect_ms_ = 0;
