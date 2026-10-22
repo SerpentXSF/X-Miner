@@ -183,9 +183,10 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   gpu::DevPtr no_out = 0;  // fused jackpot check in the GEMM epilogue
   void* g[] = {&d_ap_, &d_bp_, &no_out, &M, &N, &K, &seed, &bw, &d_found_, &maxf};
   std::vector<uint32_t> found(1 + kMaxFound * kRecWords);
-  // Block size: both kernels use 4 waves / warps of 32.
-  const unsigned threads = 128;
-  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_pearl_gemm", n_ / 128, m_ / 128, 1, threads, 1, 1, 0, g) ||
+  // AMD: 128x128 blocks of 4 waves. NVIDIA: 128x256 blocks of 8 warps with 72 KB of dynamic shared memory.
+  const bool nv = dev_.info().vendor == gpu::Vendor::Nvidia;
+  const unsigned bn = nv ? 256 : 128, threads = nv ? 256 : 128, shared = nv ? 3 * (128 + 256) * 64 : 0;
+  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_pearl_gemm", n_ / bn, m_ / 128, 1, threads, 1, 1, shared, g) ||
       !dev_.download(found.data(), d_found_, found.size() * 4)) {  // the download waits for the stream
     err = dev_.last_error();
     return 0;

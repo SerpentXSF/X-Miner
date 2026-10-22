@@ -48,6 +48,7 @@ struct Cuda {
   CUresult (*cuStreamCreate)(CUstream*, unsigned) = nullptr;
   CUresult (*cuStreamSynchronize)(CUstream) = nullptr;
   CUresult (*cuGetErrorString)(CUresult, const char**) = nullptr;
+  CUresult (*cuFuncSetAttribute)(CUfunction, int, int) = nullptr;  // optional: > 48 KB dynamic shared memory
   bool ready = false;
   int driver_version = 0;
 
@@ -70,6 +71,7 @@ struct Cuda {
                lib.sym("cuModuleGetFunction", cuModuleGetFunction) && lib.sym("cuLaunchKernel", cuLaunchKernel) &&
                lib.sym("cuStreamCreate", cuStreamCreate) && lib.sym("cuStreamSynchronize", cuStreamSynchronize) &&
                lib.sym("cuGetErrorString", cuGetErrorString);
+    lib.sym("cuFuncSetAttribute", cuFuncSetAttribute);
     ready = all && cuInit(0) == 0;
     if (ready) cuDriverGetVersion(&driver_version);
   }
@@ -108,6 +110,7 @@ class CudaDevice : public Device {
     if (a.rfind("sm_", 0) == 0 && a != info_.arch) return false;
     if (a.rfind("compute_", 0) == 0 && std::stoi(a.substr(8)) > std::stoi(info_.arch.substr(3))) return false;
     funcs_.clear();
+    big_shared_.clear();
     return check(cuda().cuModuleLoadData(&module_, blob.data));
   }
   bool launch(const char* kernel, unsigned gx, unsigned gy, unsigned gz, unsigned bx, unsigned by, unsigned bz,
@@ -119,6 +122,16 @@ class CudaDevice : public Device {
     } else {
       if (!check(cuda().cuModuleGetFunction(&f, module_, kernel))) return false;
       funcs_[kernel] = f;
+    }
+    if (shared > 48 * 1024) {  // opt in to more than the default 48 KB of dynamic shared memory (once per size)
+      unsigned& set = big_shared_[f];
+      if (set < shared) {
+        const int kMaxDynamicSharedSizeBytes = 8;  // CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES
+        if (!cuda().cuFuncSetAttribute ||
+            !check(cuda().cuFuncSetAttribute(f, kMaxDynamicSharedSizeBytes, static_cast<int>(shared))))
+          return false;
+        set = shared;
+      }
     }
     return check(cuda().cuLaunchKernel(f, gx, gy, gz, bx, by, bz, shared, stream_, args, nullptr));
   }
@@ -139,6 +152,7 @@ class CudaDevice : public Device {
   CUstream stream_ = nullptr;
   CUmodule module_ = nullptr;
   std::map<std::string, CUfunction> funcs_;
+  std::map<CUfunction, unsigned> big_shared_;  // dynamic shared memory opted in per function
   std::string err_;
 };
 

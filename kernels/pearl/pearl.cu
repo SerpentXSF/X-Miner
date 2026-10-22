@@ -2,7 +2,7 @@
 // with the Pearl transcript and a fused jackpot check. Written for X-Miner from the PTX ISA documentation.
 //
 // GEMM: C = A' * B'^T with A' (M x K) and B'^T (N x K) both row-major int8 ("K-major"), int32 accumulation.
-//   Block 128x128, 4 warps in 2x2, warp tile 64x64 = 4 (m16) x 8 (n8) mma.sync.m16n8k32 accumulators.
+//   Block 128x256, 8 warps in 2x4, warp tile 64x64 = 4 (m16) x 8 (n8) mma.sync.m16n8k32 accumulators.
 //   K advances 64 per stage through a cp.async 3-stage shared-memory pipeline; fragments come from ldmatrix.x4 on
 //   XOR-swizzled 64-byte rows (conflict-free).
 // Hash tiles follow the accumulator layout: rows {0, 8, ..., 56} x cols {0, 1, 8, 9, ..., 56, 57} (h = 8, w = 16;
@@ -15,11 +15,11 @@
 
 namespace {
 
-constexpr int BM = 128, BN = 128, BK = 64, THREADS = 128;
-constexpr int WM = 64, WN = 64;  // 4 warps: 2 (m) x 2 (n)
+constexpr int BM = 128, BN = 256, BK = 64, THREADS = 256;
+constexpr int WM = 64, WN = 64;  // 8 warps: 2 (m) x 4 (n)
 constexpr int MT = WM / 16;      // m16 fragments per warp
-constexpr int STAGE_BYTES = BM * BK;  // per operand (8 KB)
-constexpr int STAGES = 3;              // cp.async pipeline depth (3 x 16 KB = 48 KB static shared memory)
+constexpr int STAGE_A = BM * BK, STAGE_B = BN * BK, STAGE_BYTES = STAGE_A + STAGE_B;  // 8 + 16 KB
+constexpr int STAGES = 3;  // cp.async pipeline depth: 72 KB of dynamic shared memory (host: kPearlNvShared)
 
 // Byte offset of (row, 16-byte chunk) inside a 64-byte-row stage, with an XOR swizzle so the 8 row addresses of
 // an ldmatrix hit 32 distinct banks.
@@ -57,16 +57,17 @@ __device__ __forceinline__ void mma_s8_oop(int* d, const int* c, const unsigned*
 
 }  // namespace
 
-// Grid (N/128, M/128), block 128. Requirements: M % 128 == 0, N % 128 == 0, K % 2048 == 0.
+// Grid (N/256, M/128), block 256, 72 KB dynamic shared memory. Requirements: M % 128 == 0, N % 256 == 0,
+// K % 2048 == 0.
 // out != nullptr: debug path writing 16 transcript words per lane tile instead of the check, at index
 //   ((t_rows / 64) * 8 + t_rows % 8) * (N / 8) + (t_cols / 64) * 4 + (t_cols % 8) / 2.
 extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t* __restrict__ A,
                                                                     const int8_t* __restrict__ B, unsigned* __restrict__ out,
                                                                     int M, int N, int K, Key8 a_seed, U256w bound,
                                                                     uint32_t* __restrict__ found, uint32_t max_found) {
-  __shared__ __align__(128) int8_t smem[STAGES][2][STAGE_BYTES];  // [stage][A|B]
+  extern __shared__ __align__(128) int8_t smem[];  // [stage][A (BM x 64) | B (BN x 64)]
   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
-  const int wm = warp >> 1, wn = warp & 1;  // wm 0..1, wn 0..1
+  const int wm = warp >> 2, wn = warp & 3;  // wm 0..1, wn 0..3
 
   // Grouped rasterization (8 row-blocks per group) so concurrent blocks share A/B tiles in L2.
   const int gx = gridDim.x, gy = gridDim.y, pid = blockIdx.y * gx + blockIdx.x;
@@ -76,23 +77,22 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
 
   const int8_t* gA = A + (size_t)by * BM * K;
   const int8_t* gB = B + (size_t)bx * BN * K;
-  const unsigned sbase = (unsigned)__cvta_generic_to_shared(&smem[0][0][0]);
+  const unsigned sbase = (unsigned)__cvta_generic_to_shared(&smem[0]);
 
-  // Each thread copies 4 x 16 bytes of A and of B per stage: chunk q = tid + 128*i -> row q/4 (+32 per i),
-  // 16-byte chunk q%4. The swizzle depends on (row >> 1) & 3, which +32 rows does not change, so the per-lane
-  // shared and global offsets are computed once.
+  // Each thread copies 2 x 16 bytes of A and 4 x 16 bytes of B per stage: chunk q = tid + 256*i -> row q/4
+  // (+64 per i), 16-byte chunk q%4. The swizzle depends on (row >> 1) & 3, which +64 rows does not change, so the
+  // per-lane shared and global offsets are computed once.
   const int cp_row = tid >> 2, cp_ch = tid & 3;
   const unsigned cp_soff = swz(cp_row, cp_ch);
-  const size_t cp_goff = (size_t)cp_row * K + cp_ch * 16, cp_gstep = (size_t)32 * K;
+  const size_t cp_goff = (size_t)cp_row * K + cp_ch * 16, cp_gstep = (size_t)64 * K;
   auto load_stage = [&](int stage, int kt) {
-    const unsigned sa = sbase + (stage * 2 + 0) * STAGE_BYTES + cp_soff, sb = sa + STAGE_BYTES;
+    const unsigned sa = sbase + stage * STAGE_BYTES + cp_soff, sb = sa + STAGE_A;
     const int8_t* ga = gA + cp_goff + (size_t)kt * BK;
     const int8_t* gb = gB + cp_goff + (size_t)kt * BK;
 #pragma unroll
-    for (int i = 0; i < 4; ++i) {
-      cp_async16(sa + i * 32 * 64, ga + i * cp_gstep);
-      cp_async16(sb + i * 32 * 64, gb + i * cp_gstep);
-    }
+    for (int i = 0; i < 2; ++i) cp_async16(sa + i * 64 * 64, ga + i * cp_gstep);
+#pragma unroll
+    for (int i = 0; i < 4; ++i) cp_async16(sb + i * 64 * 64, gb + i * cp_gstep);
     cp_async_commit();
   };
 
@@ -135,7 +135,7 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
     __syncthreads();                       // stage kt visible; everyone is done with stage kt-1
     if (kt + 2 < nk) load_stage((kt + 2) % STAGES, kt + 2);
     else cp_async_commit();                // keep the group count uniform for wait_group
-    const unsigned sA = sbase + (st * 2 + 0) * STAGE_BYTES, sB = sbase + (st * 2 + 1) * STAGE_BYTES;
+    const unsigned sA = sbase + st * STAGE_BYTES, sB = sA + STAGE_A;
 #pragma unroll
     for (int ks = 0; ks < 2; ++ks) {       // two k32 steps per 64-k stage
       unsigned af[MT][4], bf[8][2];
