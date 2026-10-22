@@ -43,6 +43,7 @@ add_library(xm_core STATIC
   src/algo/registry.cpp
   src/gpu/hip_backend.cpp
   src/gpu/cuda_backend.cpp
+  src/gpu/sensors.cpp
 )
 target_include_directories(xm_core PUBLIC src third_party ${XM_GEN})
 target_link_libraries(xm_core PUBLIC Threads::Threads)

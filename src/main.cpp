@@ -16,6 +16,7 @@
 #include "core/console.hpp"
 #include "core/version.hpp"
 #include "gpu/gpu.hpp"
+#include "gpu/sensors.hpp"
 
 using namespace xm;
 
@@ -51,6 +52,14 @@ int list_devices() {
                             std::to_string(d.compute_units) +
                             (d.vendor == gpu::Vendor::Nvidia ? " SM  " : (d.arch >= "gfx10" ? " WGP  " : " CU  "))},
             {algos.empty() ? Tone::Dim : Tone::Ok, algos.empty() ? "no kernel yet" : algos}});
+  }
+  gpu::Sensors sensors(devs);
+  for (size_t i = 0; i < devs.size(); ++i) {
+    auto r = sensors.read(i);
+    char b[160];
+    std::snprintf(b, sizeof b, "power %.0f W · temp %.0f C · fan %.0f%% · core %.0f MHz", r.power_w, r.temp_c,
+                  r.fan_pct, r.core_mhz);
+    c.line({{Tone::Dim, "  [GPU " + std::to_string(i) + " ] sensors: "}, {Tone::Plain, b}});
   }
   return 0;
 }
