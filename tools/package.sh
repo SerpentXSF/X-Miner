@@ -6,18 +6,19 @@
 set -e
 cd "$(dirname "$0")/.."
 
+build="${BUILD_DIR:-build-release}"
 version=$(sed -n 's/^#define XM_VERSION "\(.*\)"/\1/p' src/core/version.hpp)
 if [ "$1" != "--skip-build" ]; then
-  cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
-  cmake --build build-release
-  ./build-release/xm_tests
+  cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release
+  cmake --build "$build"
+  ./"$build"/xm_tests
 fi
 
 name="X-Miner-$version-linux-x64"
 stage="dist/$name"
 rm -rf "$stage"
 mkdir -p "$stage"
-cp build-release/x-miner LICENSE NOTICE THIRD_PARTY.md README.md "$stage/"
+cp "$build"/x-miner LICENSE NOTICE THIRD_PARTY.md README.md "$stage/"
 for f in launchers/linux/*.sh; do
   tr -d '\r' < "$f" > "$stage/$(basename "$f")"
   chmod +x "$stage/$(basename "$f")"
