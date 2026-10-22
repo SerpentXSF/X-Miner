@@ -21,6 +21,10 @@
 
 using namespace xm;
 
+namespace xm::pearl {
+int share_test(const std::string& dir);
+}
+
 namespace {
 
 std::string gb(size_t bytes) {
@@ -160,6 +164,7 @@ int main(int argc, char** argv) {
   if (cfg.list_devices) return list_devices();
   if (cfg.list_algorithms) return list_algorithms();
   if (cfg.ui_demo) return ui_demo(cfg);
+  if (!cfg.pearl_share_test.empty()) return pearl::share_test(cfg.pearl_share_test);
   if (cfg.selftest) {
     print_section("SELF TEST");
     auto devs = gpu::all_devices();

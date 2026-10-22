@@ -1,0 +1,12 @@
+[package]
+name = "pearl-oracle"
+version = "0.1.0"
+edition = "2024"
+description = "Checks X-Miner Pearl shares with the official zk-pow verifier (development tool)"
+license = "MIT"
+
+[dependencies]
+# Path to a checkout of https://github.com/pearl-research-labs/pearl (ISC); see tools/pearl-oracle/README.md
+zk-pow = { path = "../../../pearl/zk-pow" }
+base64 = "0.21"
+anyhow = "1"
