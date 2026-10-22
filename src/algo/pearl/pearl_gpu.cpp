@@ -33,10 +33,10 @@ Engine::Engine(gpu::Device& dev, uint32_t m, uint32_t n, uint64_t seed) : dev_(d
   cfg_.k = 4096;
   cfg_.rank = 128;
   // Hash tiles match each kernel's accumulator ownership. AMD: contiguous 16x16 tiles (one WMMA accumulator, folded
-  // through LDS). NVIDIA: the 64 accumulators one lane owns in a 32x64 warp tile of m16n8 fragments, rows
-  // {0, 8, 16, 24} x cols {0, 1, 8, 9, ..., 56, 57}, so the fold needs no cross-lane traffic (kernels/pearl/pearl.cu).
+  // through LDS). NVIDIA: the 128 accumulators one lane owns in a 64x64 warp tile of m16n8 fragments, rows
+  // {0, 8, ..., 56} x cols {0, 1, 8, 9, ..., 56, 57}, so the fold needs no cross-lane traffic (kernels/pearl/pearl.cu).
   if (dev_.info().vendor == gpu::Vendor::Nvidia) {
-    std::vector<uint32_t> rows = {0, 8, 16, 24}, cols;
+    std::vector<uint32_t> rows = {0, 8, 16, 24, 32, 40, 48, 56}, cols;
     for (uint32_t j = 0; j < 8; ++j) cols.insert(cols.end(), {8 * j, 8 * j + 1});
     Pattern::from_list(rows, cfg_.rows);
     Pattern::from_list(cols, cfg_.cols);
@@ -183,8 +183,8 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   gpu::DevPtr no_out = 0;  // fused jackpot check in the GEMM epilogue
   void* g[] = {&d_ap_, &d_bp_, &no_out, &M, &N, &K, &seed, &bw, &d_found_, &maxf};
   std::vector<uint32_t> found(1 + kMaxFound * kRecWords);
-  // Block size: the AMD kernel uses 4 waves of 32, the NVIDIA kernel 8 warps of 32.
-  const unsigned threads = dev_.info().vendor == gpu::Vendor::Nvidia ? 256 : 128;
+  // Block size: both kernels use 4 waves / warps of 32.
+  const unsigned threads = 128;
   if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_pearl_gemm", n_ / 128, m_ / 128, 1, threads, 1, 1, 0, g) ||
       !dev_.download(found.data(), d_found_, found.size() * 4)) {  // the download waits for the stream
     err = dev_.last_error();

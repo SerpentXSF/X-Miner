@@ -7,7 +7,7 @@ Measured numbers and what we learned while tuning. Hashrates are at the power li
 | Card | Power limit | X-Miner | Reference | Notes |
 |---|---|---|---|---|
 | RX 9070 XT (gfx1201) | -30% (~238 W) | 93.6 TH/s | SRBMiner 3.7.6: ~100 TH/s @ 244 W | 16384x32768x4096 per pass; Kryptex live: 19/0 shares in 40 min |
-| RTX 3060 (sm_86) | 127 W | 35.9 TH/s @ ~1600 MHz | SRBMiner 3.7.1: 48.8 TH/s @ 127 W / 1760 MHz | |
+| RTX 3060 (sm_86) | 127 W | 37.4 TH/s @ ~1500 MHz | SRBMiner 3.7.1: 48.8 TH/s @ 127 W / 1760 MHz | per-lane hash tiles |
 
 AMD pass breakdown (RX 9070 XT, 16384x16384x4096): noise for A 0.29 ms, GEMM + fused jackpot check 11.6 ms.
 The GEMM core alone is at parity with WildRig at the same power (pearl-rdna4 kernel).
@@ -20,7 +20,14 @@ NVIDIA findings (RTX 3060):
   between the fold and the next chunk's mma).
 - Small wins: unconditional fold after a 2-stage unroll (+3%), reduce-scatter instead of per-tile butterflies,
   precomputed swizzled ldmatrix/cp.async addresses.
-- Every variant sits at 35-36 TH/s and ~1600 MHz at the power cap, while SRBMiner holds 1760 MHz at the same
+- Per-lane hash tiles (2026-10-22): Pearl allows periodic, non-contiguous tiles, so the NVIDIA configuration uses
+  exactly the accumulators one lane owns (64x64 warp tile: rows {0,8,..,56} x cols {0,1,8,9,..,56,57}, h*w = 128).
+  The fold becomes an in-register XOR with no shuffles: 35.9 -> 37.0 TH/s (32x64 warp tiles), 37.4 (64x64, 4 warps).
+  The official reference miner does the same (rows [0,8], 64 columns). The "no fold" variant above likely let the
+  compiler delete the MMAs (55 registers), so the fold was never the 40% it seemed.
+- At the 127.5 W cap the card runs 1500 MHz (throttle reason: software power cap) and the kernel reaches ~86% of the
+  int8 tensor peak per clock; the gap to SRBMiner is energy per MAC, not issue rate.
+- Earlier: every variant sat at 35-36 TH/s and ~1600 MHz at the power cap, while SRBMiner holds 1760 MHz at the same
   power. Next to try: larger block tiles (128x256 / 256x128) with dynamic shared memory (needs
   cuFuncSetAttribute support in the CUDA backend) to cut L2 and shared-memory traffic per MAC.
 
