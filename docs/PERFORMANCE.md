@@ -7,7 +7,7 @@ Measured numbers and what we learned while tuning. Hashrates are at the power li
 | Card | Power limit | X-Miner | Reference | Notes |
 |---|---|---|---|---|
 | RX 9070 XT (gfx1201) | -30% (~238 W) | 93.6 TH/s | SRBMiner 3.7.6: ~100 TH/s @ 244 W | 16384x32768x4096 per pass; Kryptex live: 19/0 shares in 40 min |
-| RTX 3060 (sm_86) | 127 W | 37.4 TH/s @ ~1500 MHz | SRBMiner 3.7.1: 48.8 TH/s @ 127 W / 1760 MHz | per-lane hash tiles |
+| RTX 3060 (sm_86) | 127 W | 39.4 TH/s @ ~1500 MHz | SRBMiner 3.7.1: 48.7 TH/s @ 127 W / 1755 MHz (re-measured 2026-10-22) | 128x256 blocks |
 
 AMD pass breakdown (RX 9070 XT, 16384x16384x4096): noise for A 0.29 ms, GEMM + fused jackpot check 11.6 ms.
 The GEMM core alone is at parity with WildRig at the same power (pearl-rdna4 kernel).
@@ -27,6 +27,11 @@ NVIDIA findings (RTX 3060):
   compiler delete the MMAs (55 registers), so the fold was never the 40% it seemed.
 - At the 127.5 W cap the card runs 1500 MHz (throttle reason: software power cap) and the kernel reaches ~86% of the
   int8 tensor peak per clock; the gap to SRBMiner is energy per MAC, not issue rate.
+- 128x256 blocks (8 warps of 64x64, 72 KB dynamic shared memory): 37.4 -> 39.5 TH/s. 4 stages (96 KB) 38.4;
+  rasterization groups of 4 / 16 rows 39.1 / 38.4 (8 stays).
+- SRBMiner sustains ~97% of the int8 tensor peak per clock (48.7 TH/s at 1755 MHz = 28.7K MAC/clk x 0.97) and still
+  holds 1755 MHz inside 127 W, so its energy per MAC is ~25% lower than ours. Our loop is already lean (128 IMMA vs
+  ~200 other instructions per 128 k, most of them the fold's XORs); finding the rest needs a profiler (Nsight).
 - Earlier: every variant sat at 35-36 TH/s and ~1600 MHz at the power cap, while SRBMiner holds 1760 MHz at the same
   power. Next to try: larger block tiles (128x256 / 256x128) with dynamic shared memory (needs
   cuFuncSetAttribute support in the CUDA backend) to cut L2 and shared-memory traffic per MAC.
