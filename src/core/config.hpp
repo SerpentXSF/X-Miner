@@ -34,6 +34,7 @@ struct Config {
   int benchmark_seconds = 60;
   bool selftest = false;              // run CPU-vs-GPU known-answer checks and exit
   std::string pearl_share_test;       // developer: CPU-mine one Pearl share into this folder for the oracle
+  std::string share_dump;             // developer: write the first share (header/nbits/base64) here
   bool ui_demo = false;               // developer: simulated devices to exercise the console and dashboard
   bool help = false;
   bool version = false;

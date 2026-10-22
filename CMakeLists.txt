@@ -41,6 +41,8 @@ add_library(xm_core STATIC
   src/crypto/blake3.cpp
   src/algo/pearl/pearl.cpp
   src/algo/pearl/share_test.cpp
+  src/algo/pearl/pearl_gpu.cpp
+  src/algo/pearl/bench.cpp
   src/api/api.cpp
   src/core/console.cpp
   src/core/config.cpp

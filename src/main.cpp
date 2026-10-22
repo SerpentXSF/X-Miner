@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <memory>
@@ -23,6 +24,7 @@ using namespace xm;
 
 namespace xm::pearl {
 int share_test(const std::string& dir);
+int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 
 namespace {
@@ -181,6 +183,15 @@ int main(int argc, char** argv) {
     error("ALGO", cfg.algorithm.empty() ? "no --algorithm given (see --list-algorithms)"
                                         : "unknown algorithm '" + cfg.algorithm + "' (see --list-algorithms)");
     return 2;
+  }
+  if (cfg.benchmark) {
+    auto all = gpu::all_devices();
+    std::vector<gpu::DeviceInfo> devs;
+    for (size_t i = 0; i < all.size(); ++i)
+      if (cfg.gpu_ids.empty() || std::find(cfg.gpu_ids.begin(), cfg.gpu_ids.end(), int(i)) != cfg.gpu_ids.end())
+        devs.push_back(all[i]);
+    print_section("BENCHMARK");
+    if (std::string(algo->name) == "pearlhash") return pearl::benchmark(cfg, devs);
   }
   if (!algo->implemented) {
     error("ALGO", std::string(algo->name) + " is still in development in this build");

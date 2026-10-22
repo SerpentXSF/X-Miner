@@ -77,7 +77,10 @@ std::optional<std::string> parse_args(int argc, char** argv, Config& c) {
     else if (a == "--benchmark") { c.benchmark = true; }
     else if (a == "--selftest") { c.selftest = true; }
     else if (a == "--ui-demo") { c.ui_demo = true; }
-    else if (a == "--pearl-share-test") {
+    else if (a == "--share-dump") {
+      if (!(v = value())) return a + " needs a folder";
+      c.share_dump = *v;
+    } else if (a == "--pearl-share-test") {
       if (!(v = value())) return a + " needs a folder";
       c.pearl_share_test = *v;
     }
