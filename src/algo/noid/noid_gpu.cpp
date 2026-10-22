@@ -1,5 +1,6 @@
 #include "algo/noid/noid_gpu.hpp"
 
+#include <cstdlib>
 #include <cstring>
 
 #include "algo/noid/noid_consts.hpp"
@@ -36,6 +37,11 @@ Engine::~Engine() {
 
 bool Engine::init(std::string& err) {
   dev_.make_current();
+  // Threads per block: every block holds its own 48 KB copy of the constant tables, so larger blocks fit more
+  // threads per compute unit (RX 9070 XT: 128 -> 15.3, 256 -> 17.1, 512 -> 17.7 MH/s). NVIDIA is flat from 256 to
+  // 768 (RTX 3060 ~8.65 MH/s) and 1024 exceeds its register budget. XM_NOID_TPB overrides (developer tuning).
+  tpb_ = dev_.info().vendor == gpu::Vendor::Amd ? 512 : 256;
+  if (const char* e = std::getenv("XM_NOID_TPB")) tpb_ = static_cast<uint32_t>(std::atoi(e));
   if (!gpu::load_kernels(dev_, "noid", err)) return false;
   std::vector<W4> rc(4 * 66);
   for (int l = 0; l < 4; ++l)
@@ -84,7 +90,7 @@ double Engine::iterate(uint32_t batch, std::vector<Share>& shares, std::string& 
   uint32_t start = lo32_, maxf = kMaxFound;
   void* args[] = {&a, &d_rc_, &d_cm_, &d_f2t_, &start, &d_found_, &maxf};
   std::vector<uint32_t> found(1 + kMaxFound);
-  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_noid_search", batch / 256, 1, 1, 256, 1, 1, NOID_TBL_WORDS * 4, args) ||
+  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_noid_search", batch / (tpb_ * kLanes), 1, 1, tpb_, 1, 1, NOID_TBL_WORDS * 4, args) ||
       !dev_.download(found.data(), d_found_, found.size() * 4)) {
     err = dev_.last_error();
     return 0;

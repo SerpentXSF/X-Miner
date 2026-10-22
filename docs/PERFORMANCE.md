@@ -28,8 +28,10 @@ NVIDIA findings (RTX 3060):
 
 | Card | X-Miner | Reference |
 |---|---|---|
-| RX 9070 XT | 11.1 MH/s @ 236 W (first version) | SRBMiner: 0 H/s; closed AMD miner: 20.9 MH/s on RX 9070 |
-| RTX 3060 | see below | closed miners: ~29.5 MH/s @ 90 W |
+| RX 9070 XT | 17.7 MH/s @ ~237 W (512 threads/block) | SRBMiner: 0 H/s; closed AMD miner: 20.9 MH/s on RX 9070 |
+| RTX 3060 | 8.65 MH/s @ 127 W | closed miners: ~29.5 MH/s @ 90 W |
 
-First version uses the generic Karatsuba multiply for the MDS constants. NoidMiner's shared-memory nibble tables and
-tower-basis partial rounds are the next steps.
+History: generic Karatsuba constant multiply 11.1 / 5.32 MH/s; shared-memory/LDS nibble tables (NoidMiner) 16.6 /
+8.72 MH/s; AMD block size 512 17.7 MH/s. Two nonces per thread was slower on both vendors (15.3 / 8.30).
+NVIDIA block size is flat from 256 to 768. The large gap to closed NVIDIA miners points at the arithmetic itself
+(e.g. bitsliced GF(2^128) or tower-basis partial rounds), not occupancy.

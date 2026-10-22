@@ -33,34 +33,55 @@ extern "C" __global__ void xm_noid_search(NoidJob job, const W4* __restrict__ rc
   extern __shared__ uint32_t stbl[];
   for (uint32_t i = threadIdx.x; i < NOID_TBL_WORDS; i += blockDim.x) stbl[i] = tbl[i];
   __syncthreads();
-  const uint32_t lo = counter_base + blockIdx.x * blockDim.x + threadIdx.x;
-  W4 n = job.nonce_base;
-#pragma unroll 4
-  for (int b = 0; b < 32; ++b)
-    if ((lo >> b) & 1u) n = w4x(n, job.t2f_lo[b]);
-
+#ifndef XM_NOID_LANES
+#define XM_NOID_LANES 1
+#endif
+  constexpr int L = XM_NOID_LANES;  // nonces per thread, interleaved for instruction-level parallelism
+  const uint32_t lo0 = counter_base + (blockIdx.x * blockDim.x + threadIdx.x) * L;
   CMulTable mul{stbl};
   RcGlobal rcg{rc};
-  W4 s[4] = {w4x(job.mid[0], n), w4x(job.mid[1], job.f[0]), job.mid[2], job.mid[3]};
-  permute(s, mul, rcg);
-  s[0] = w4x(s[0], job.f[1]);
-  s[1] = w4x(s[1], job.f[2]);
-  permute(s, mul, rcg);
-  s[0] = w4x(s[0], job.f[3]);
-  s[1] = w4x(s[1], job.f[4]);
-  permute(s, mul, rcg);
-
-  // Top 64 bits of the digest = high half of flat_to_tower(s[1]).
-  uint64_t hi = 0;
-  const uint32_t w[4] = {s[1].w0, s[1].w1, s[1].w2, s[1].w3};
+  W4 s[L][4];
 #pragma unroll
-  for (int k = 0; k < 4; ++k) {
-    uint32_t v = w[k];
-#pragma unroll 8
+  for (int n = 0; n < L; ++n) {
+    W4 nf = job.nonce_base;
+    const uint32_t lo = lo0 + n;
+#pragma unroll 4
     for (int b = 0; b < 32; ++b)
-      if ((v >> b) & 1u) hi ^= f2t_hi[k * 32 + b];
+      if ((lo >> b) & 1u) nf = w4x(nf, job.t2f_lo[b]);
+    s[n][0] = w4x(job.mid[0], nf);
+    s[n][1] = w4x(job.mid[1], job.f[0]);
+    s[n][2] = job.mid[2];
+    s[n][3] = job.mid[3];
   }
-  if (hi > job.target_hi) return;
-  uint32_t slot = atomicAdd(&found[0], 1u);
-  if (slot < max_found) found[1 + slot] = lo;
+  permute_n<L>(s, mul, rcg);
+#pragma unroll
+  for (int n = 0; n < L; ++n) {
+    s[n][0] = w4x(s[n][0], job.f[1]);
+    s[n][1] = w4x(s[n][1], job.f[2]);
+  }
+  permute_n<L>(s, mul, rcg);
+#pragma unroll
+  for (int n = 0; n < L; ++n) {
+    s[n][0] = w4x(s[n][0], job.f[3]);
+    s[n][1] = w4x(s[n][1], job.f[4]);
+  }
+  permute_n<L>(s, mul, rcg);
+
+#pragma unroll
+  for (int n = 0; n < L; ++n) {
+    // Top 64 bits of the digest = high half of flat_to_tower(s[n][1]).
+    uint64_t hi = 0;
+    const uint32_t w[4] = {s[n][1].w0, s[n][1].w1, s[n][1].w2, s[n][1].w3};
+#pragma unroll
+    for (int k = 0; k < 4; ++k) {
+      uint32_t v = w[k];
+#pragma unroll 8
+      for (int bb = 0; bb < 32; ++bb)
+        if ((v >> bb) & 1u) hi ^= f2t_hi[k * 32 + bb];
+    }
+    if (hi <= job.target_hi) {
+      uint32_t slot = atomicAdd(&found[0], 1u);
+      if (slot < max_found) found[1 + slot] = lo0 + n;
+    }
+  }
 }

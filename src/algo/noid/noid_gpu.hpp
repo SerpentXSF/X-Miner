@@ -46,7 +46,9 @@ class Engine {
   bool have_job_ = false;
   uint32_t hi32_ = 0, lo32_ = 0;
   uint64_t cpu_rejects_ = 0;
+  uint32_t tpb_ = 256;
   static constexpr uint32_t kMaxFound = 1024;
+  static constexpr uint32_t kLanes = 1;  // nonces per GPU thread (XM_NOID_LANES in kernels/noid/noid.cu)
 };
 
 }  // namespace xm::noid
