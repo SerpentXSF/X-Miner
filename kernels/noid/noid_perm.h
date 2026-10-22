@@ -1,6 +1,6 @@
 // Ported for X-Miner from gacanga/NoidMiner gpu/noid_perm.h (commit 31fa4a8), Apache License 2.0,
 // Copyright 2026 gacanga. X-Miner keeps the permutation core and the pre-split constant-multiplier policy; the
-// shared-table and tower engines are not included. See NOTICE and THIRD_PARTY.md.
+// shared-memory nibble-table constant multiplier (CMulTable); the tower engine is not included. See NOTICE and THIRD_PARTY.md.
 // noid_perm.h - Poseidon2b permutation (flat basis) built on noid_math.h.
 //
 // Templated on a constant-multiplier policy CM providing
@@ -200,5 +200,60 @@ NOID_HD void permute_n(W4 s[N][4], CM& cm, RC& rc)
 struct CMulKop {
     const KOp* k;   // NOID_NCONST entries
     NOID_HDM W4 mul(int c, W4 a) { KOp ka = kop(a); return kmul(ka, k[c]); }
+};
+
+// nibble tables, 64-bit entries: tbl[(((c*2 + half)*32 + nibble)*16 + value)*2 + {0,1}]
+//   half 0 = words (w0,w1), half 1 = words (w2,w3) of value*x^(4*nibble)*const.
+// 16 entries x 8 bytes = 128 bytes = the 32 shared-memory banks: an LDS.64
+// half-warp access never has a bank conflict.
+#define NOID_TBL_WORDS (NOID_NCONST * 2 * 32 * 16 * 2)
+struct CMulTable {
+    const uint32_t* tbl;
+    NOID_HDM W4 mul(int c, W4 a)
+    {
+#if defined(NOID_EXPERIMENT) && NOID_EXPERIMENT == 1
+        return w4(a.w1 ^ (uint32_t)c, a.w2, a.w3 ^ a.w0, a.w0 + 3u);
+#endif
+#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+        // Byte offset of entry (c, half, nibble k, value v) =
+        //   c*8192 + half*4096 + k*128 + v*8.
+        // v*8 for the 8 nibbles of a word comes from two masked copies
+        // (low nibbles << 3, high nibbles >> 1); one PRMT then merges the
+        // selected byte with the constant's base (bytes 1-2 of `base`), so a
+        // lookup costs 1 PRMT + 2 LDS.64 with immediate offsets.
+        const char* t = reinterpret_cast<const char*>(tbl);
+        const uint32_t base = (uint32_t)c * 8192u;
+        uint32_t r0 = 0, r1 = 0, r2 = 0, r3 = 0;
+        uint32_t w[4] = { a.w0, a.w1, a.w2, a.w3 };
+        NOID_UNROLL
+        for (int i = 0; i < 4; i++) {
+            const uint32_t mlo = (w[i] << 3) & 0x78787878u;
+            const uint32_t mhi = (w[i] >> 1) & 0x78787878u;
+            NOID_UNROLL
+            for (int j = 0; j < 4; j++) {
+                const uint32_t alo = __byte_perm(mlo, base, 0x7650u | (uint32_t)j);
+                const uint32_t ahi = __byte_perm(mhi, base, 0x7650u | (uint32_t)j);
+                const int k = 8 * i + 2 * j;
+                const uint2 e0 = *reinterpret_cast<const uint2*>(t + alo + k * 128);
+                const uint2 e1 = *reinterpret_cast<const uint2*>(t + alo + 4096 + k * 128);
+                const uint2 f0 = *reinterpret_cast<const uint2*>(t + ahi + (k + 1) * 128);
+                const uint2 f1 = *reinterpret_cast<const uint2*>(t + ahi + 4096 + (k + 1) * 128);
+                r0 ^= e0.x ^ f0.x; r1 ^= e0.y ^ f0.y; r2 ^= e1.x ^ f1.x; r3 ^= e1.y ^ f1.y;
+            }
+        }
+        return w4(r0, r1, r2, r3);
+#else
+        const uint32_t* tw = tbl + c * (2 * 32 * 16 * 2);
+        uint32_t r0 = 0, r1 = 0, r2 = 0, r3 = 0;
+        uint32_t w[4] = { a.w0, a.w1, a.w2, a.w3 };
+        for (int k = 0; k < 32; k++) {
+            uint32_t v = (w[k >> 3] >> (4 * (k & 7))) & 15u;
+            const uint32_t* e0 = tw + (k * 16 + v) * 2;
+            const uint32_t* e1 = tw + (512 + k * 16 + v) * 2;
+            r0 ^= e0[0]; r1 ^= e0[1]; r2 ^= e1[0]; r3 ^= e1[1];
+        }
+        return w4(r0, r1, r2, r3);
+#endif
+    }
 };
 

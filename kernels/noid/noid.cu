@@ -25,16 +25,21 @@ struct RcGlobal {
 
 // Grid of 1-D blocks; each thread tests one nonce (low 32 bits = counter_base + thread index).
 // f2t_hi[i] = top 64 bits of flat_to_tower(bit i).
-extern "C" __global__ void xm_noid_search(NoidJob job, const W4* __restrict__ rc, const KOp* __restrict__ cm,
+// Constant multiplies use nibble tables (NOID_TBL_WORDS words = 48 KB) copied from tbl into shared memory / LDS;
+// launch with 48 KB of dynamic shared memory.
+extern "C" __global__ void xm_noid_search(NoidJob job, const W4* __restrict__ rc, const uint32_t* __restrict__ tbl,
                                           const uint64_t* __restrict__ f2t_hi, uint32_t counter_base,
                                           uint32_t* __restrict__ found, uint32_t max_found) {
+  extern __shared__ uint32_t stbl[];
+  for (uint32_t i = threadIdx.x; i < NOID_TBL_WORDS; i += blockDim.x) stbl[i] = tbl[i];
+  __syncthreads();
   const uint32_t lo = counter_base + blockIdx.x * blockDim.x + threadIdx.x;
   W4 n = job.nonce_base;
 #pragma unroll 4
   for (int b = 0; b < 32; ++b)
     if ((lo >> b) & 1u) n = w4x(n, job.t2f_lo[b]);
 
-  CMulKop mul{cm};
+  CMulTable mul{stbl};
   RcGlobal rcg{rc};
   W4 s[4] = {w4x(job.mid[0], n), w4x(job.mid[1], job.f[0]), job.mid[2], job.mid[3]};
   permute(s, mul, rcg);

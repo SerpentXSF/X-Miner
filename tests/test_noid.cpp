@@ -98,3 +98,18 @@ TEST(noid_gpu_permutation_matches_reference) {
     for (int i = 0; i < 4; ++i) CHECK(from_w4(s[i]) == ref[i]);
   }
 }
+
+TEST(noid_table_multiplier_matches_karatsuba) {
+  std::vector<uint32_t> tbl(NOID_TBL_WORDS);
+  constant_tables(tbl.data());
+  KOp ks[6];
+  constant_kops(ks);
+  CMulTable t{tbl.data()};
+  CMulKop k{ks};
+  uint64_t x = 0x243f6a8885a308d3ull;
+  for (int i = 0; i < 200; ++i) {
+    x = x * 6364136223846793005ull + 1442695040888963407ull;
+    W4 a = to_w4(u(x ^ (x >> 7), x * 0x9e3779b97f4a7c15ull));
+    for (int c = 0; c < 6; ++c) CHECK(from_w4(t.mul(c, a)) == from_w4(k.mul(c, a)));
+  }
+}

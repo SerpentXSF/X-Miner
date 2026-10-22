@@ -40,16 +40,16 @@ bool Engine::init(std::string& err) {
   std::vector<W4> rc(4 * 66);
   for (int l = 0; l < 4; ++l)
     for (int r = 0; r < 66; ++r) rc[l * 66 + r] = to_w4({kRoundConstFlat[l][r].lo, kRoundConstFlat[l][r].hi});
-  KOp cm[6];
-  constant_kops(cm);
+  std::vector<uint32_t> tbl(NOID_TBL_WORDS);
+  constant_tables(tbl.data());
   std::vector<uint64_t> f2t(128);
   for (int i = 0; i < 128; ++i) f2t[i] = kFlatToTower[i].hi;
   d_rc_ = dev_.alloc(rc.size() * sizeof(W4));
-  d_cm_ = dev_.alloc(sizeof cm);
+  d_cm_ = dev_.alloc(tbl.size() * 4);
   d_f2t_ = dev_.alloc(f2t.size() * 8);
   d_found_ = dev_.alloc((1 + kMaxFound) * 4);
   if (!d_rc_ || !d_cm_ || !d_f2t_ || !d_found_ || !dev_.upload(d_rc_, rc.data(), rc.size() * sizeof(W4)) ||
-      !dev_.upload(d_cm_, cm, sizeof cm) || !dev_.upload(d_f2t_, f2t.data(), f2t.size() * 8)) {
+      !dev_.upload(d_cm_, tbl.data(), tbl.size() * 4) || !dev_.upload(d_f2t_, f2t.data(), f2t.size() * 8)) {
     err = dev_.last_error();
     return false;
   }
@@ -84,7 +84,7 @@ double Engine::iterate(uint32_t batch, std::vector<Share>& shares, std::string& 
   uint32_t start = lo32_, maxf = kMaxFound;
   void* args[] = {&a, &d_rc_, &d_cm_, &d_f2t_, &start, &d_found_, &maxf};
   std::vector<uint32_t> found(1 + kMaxFound);
-  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_noid_search", batch / 256, 1, 1, 256, 1, 1, 0, args) ||
+  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_noid_search", batch / 256, 1, 1, 256, 1, 1, NOID_TBL_WORDS * 4, args) ||
       !dev_.download(found.data(), d_found_, found.size() * 4)) {
     err = dev_.last_error();
     return 0;
