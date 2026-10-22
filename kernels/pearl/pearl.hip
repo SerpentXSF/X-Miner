@@ -60,7 +60,8 @@ __device__ __forceinline__ void lds_barrier() {
 // Requirements: M % 128 == 0, N % 128 == 0, K % 128 == 0, K >= 128.
 template <int WGM>
 __device__ __forceinline__ void pearl_gemm_rdna4_body(
-    const int8_t* __restrict__ Ap, const int8_t* __restrict__ Bp, unsigned* __restrict__ out, int M, int N, int K) {
+    const int8_t* __restrict__ Ap, const int8_t* __restrict__ Bp, unsigned* __restrict__ out, int M, int N, int K,
+    const Key8& a_seed, const U256w& bound, uint32_t* __restrict__ found, uint32_t max_found) {
     constexpr int FM = 4, FN = 4, KP = 2, RB = 8;
     constexpr int STAGE_V4 = RB * KP * 32;       // 16-byte vectors per operand per stage (8 KB)
     __shared__ v4i lds[2 * STAGE_V4];            // [A stage | B stage]
@@ -167,17 +168,53 @@ __device__ __forceinline__ void pearl_gemm_rdna4_body(
     fold(nk / 2 - 1);
 
     const int tiles_n = N / 16;
+    if (out) {  // debug path: per-lane partial transcripts for the CPU comparison in --selftest
+#pragma unroll
+        for (int i = 0; i < FM; ++i)
+#pragma unroll
+            for (int j = 0; j < FN; ++j)
+                out[((size_t)(by * RB + wm * FM + i) * tiles_n + (bx * RB + wn * FN + j)) * 32 + lane] = tr[i][j];
+        return;
+    }
+    // Fused jackpot check. Word w of a tile = tr(lane w) ^ tr(lane w + 16). The main loop is done, so the stage
+    // buffer in LDS is free: each wave writes its 16 tiles x 32 partial words (2 KB) to its own region, then lane t
+    // (t < 16) reads back tile t's words and hashes it. Going through LDS keeps register pressure low.
+    lds_barrier();  // every wave has finished reading the last stage
+    unsigned* scratch = (unsigned*)lds + wave * (FM * FN * 32);
 #pragma unroll
     for (int i = 0; i < FM; ++i)
 #pragma unroll
-        for (int j = 0; j < FN; ++j)
-            out[((size_t)(by * RB + wm * FM + i) * tiles_n + (bx * RB + wn * FN + j)) * 32 + lane] = tr[i][j];
+        for (int j = 0; j < FN; ++j) scratch[(i * FN + j) * 32 + lane] = tr[i][j];
+    asm volatile("s_wait_dscnt 0x0" ::: "memory");  // this wave's LDS writes are visible to its own lanes
+    uint32_t words[16];
+    const int my = lane & 15;
+#pragma unroll
+    for (int w = 0; w < 16; ++w) words[w] = scratch[my * 32 + w] ^ scratch[my * 32 + w + 16];
+    if (lane < FM * FN) {
+        uint32_t h[8];
+        b3_keyed64(a_seed, words, h);
+        if (u256_le(h, bound)) {
+            const int i = lane / FN, j = lane % FN;
+            uint32_t tile = (uint32_t)((by * RB + wm * FM + i) * tiles_n + (bx * RB + wn * FN + j));
+            uint32_t slot = atomicAdd(&found[0], 1u);
+            if (slot < max_found) {
+                uint32_t* rec = found + 1 + slot * 17;
+                rec[0] = tile;
+#pragma unroll
+                for (int w = 0; w < 16; ++w) rec[1 + w] = words[w];
+            }
+        }
+    }
 }
 
 // Entry point looked up by name from the host. Grid (N/128, M/128), block 128.
 // Requirements: M % 128 == 0, N % 128 == 0, K % 128 == 0, K >= 256.
+// out != nullptr: write partial transcripts (debug). Otherwise hash each tile in the epilogue and append tiles
+// whose jackpot hash is <= bound to found[] (count, then 17-word records: tile index + 16 transcript words).
 extern "C" __global__ __launch_bounds__(128) void xm_pearl_gemm(const int8_t* __restrict__ Ap,
                                                                const int8_t* __restrict__ Bp,
-                                                               unsigned* __restrict__ out, int M, int N, int K) {
-  pearl_gemm_rdna4_body<16>(Ap, Bp, out, M, N, K);
+                                                               unsigned* __restrict__ out, int M, int N, int K,
+                                                               Key8 a_seed, U256w bound, uint32_t* __restrict__ found,
+                                                               uint32_t max_found) {
+  pearl_gemm_rdna4_body<16>(Ap, Bp, out, M, N, K, a_seed, bound, found, max_found);
 }

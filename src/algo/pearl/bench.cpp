@@ -1,5 +1,6 @@
 // --benchmark for pearlhash: a synthetic job on each selected GPU, every hit re-verified on the CPU.
 #include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <fstream>
 #include <thread>
@@ -26,19 +27,23 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   job.id = "bench";
   for (int i = 0; i < 76; ++i)
     job.header[i] = static_cast<uint8_t>(std::stoul(std::string(kHeaderHex + 2 * i, 2), nullptr, 16));
-  job.share_nbits = 0x1c010000;  // target 2^216: about one share per 2^40 MACs, i.e. ~1 per 16384^2 x 4096 pass
+  // With --share-dump: an easy target (~1 share per 16384^2 x 4096 pass) to exercise the share path.
+  // Otherwise a pool-like target (difficulty 2^21) so the run measures GPU throughput.
+  job.share_nbits = cfg.share_dump.empty() ? 0x1a07fff8 : 0x1c010000;
   int failures = 0;
   gpu::Sensors sensors(devs);
   for (size_t d = 0; d < devs.size(); ++d) {
     auto dev = gpu::open(devs[d]);
-    Engine eng(*dev, 16384, 16384, 0x5eed0000 + d);
+    uint32_t bm = 16384, bn = 32768;
+    if (const char* e = std::getenv("XM_PEARL_MN")) std::sscanf(e, "%ux%u", &bm, &bn);  // developer tuning
+    Engine eng(*dev, bm, bn, 0x5eed0000 + d);
     std::string err;
     if (!eng.init(err) || !eng.set_job(job, err)) {
       error("GPU", "GPU " + std::to_string(d) + " " + devs[d].name + ": " + err);
       ++failures;
       continue;
     }
-    info("BENCH", "GPU " + std::to_string(d) + " " + devs[d].name + ": pearlhash 16384x16384x4096, " +
+    info("BENCH", "GPU " + std::to_string(d) + " " + devs[d].name + ": pearlhash " + std::to_string(bm) + "x" + std::to_string(bn) + "x4096, " +
                       std::to_string(cfg.benchmark_seconds) + " s");
     auto t0 = std::chrono::steady_clock::now(), last = t0;
     double hashes = 0, window = 0, watts = 0;

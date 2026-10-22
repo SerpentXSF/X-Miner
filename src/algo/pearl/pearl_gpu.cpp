@@ -1,5 +1,8 @@
 #include "algo/pearl/pearl_gpu.hpp"
 
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "gpu/kernels.hpp"
@@ -66,7 +69,7 @@ bool Engine::init(std::string& err) {
   d_uni_ = dev_.alloc(size_t(std::max(m_, n_)) * r);
   d_pairs_ = dev_.alloc(size_t(k) * 2 * 4);
   d_cvs_ = dev_.alloc(std::max(sa, sb) / 1024 * 32);
-  d_out_ = dev_.alloc(tiles * 32 * 4);
+  d_out_ = dev_.alloc(256);  // unused by the fused path; kept non-null for allocation checks
   d_found_ = dev_.alloc((1 + kMaxFound * 17) * 4);
   if (!d_a_ || !d_bt_ || !d_ap_ || !d_bp_ || !d_uni_ || !d_pairs_ || !d_cvs_ || !d_out_ || !d_found_) {
     err = "out of GPU memory (" + dev_.last_error() + ")";
@@ -149,25 +152,34 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   tree_update_chunk(tree_a_, nonce_chunk_, reinterpret_cast<const uint8_t*>(chunk));
   seeds_ = commitment_seeds(job_key_, tree_a_.root(), tree_b_.root(), m_, n_, job_.salted);
 
+  static const bool prof = std::getenv("XM_PROFILE") != nullptr;
+  auto tp = [&](const char* what, std::chrono::steady_clock::time_point& t) {
+    if (!prof) return;
+    dev_.sync();
+    auto now = std::chrono::steady_clock::now();
+    std::fprintf(stderr, "%s %.3f ms  ", what, std::chrono::duration<double, std::milli>(now - t).count());
+    t = now;
+  };
+  auto t_prof = std::chrono::steady_clock::now();
+  tp("cpu", t_prof);
   if (!launch_noise(false, seeds_.a_noise_seed, d_a_, d_ap_, m_, err)) return 0;
+  tp("noiseA", t_prof);
   int M = static_cast<int>(m_), N = static_cast<int>(n_), K = static_cast<int>(k);
-  void* g[] = {&d_ap_, &d_bp_, &d_out_, &M, &N, &K};
-  if (!dev_.launch("xm_pearl_gemm", n_ / 128, m_ / 128, 1, 128, 1, 1, 0, g)) {
-    err = dev_.last_error();
-    return 0;
-  }
-  uint32_t tiles = (m_ / 16) * (n_ / 16), maxf = kMaxFound;
+  uint32_t maxf = kMaxFound;
   Key8 seed = key8(seeds_.a_noise_seed);
   U256 bound = difficulty_bound(job_.share_nbits, cfg_);
   U256w bw;
   for (int i = 0; i < 8; ++i) bw.w[i] = bound.w[i];
-  void* j[] = {&d_out_, &tiles, &seed, &bw, &d_found_, &maxf};
+  gpu::DevPtr no_out = 0;  // fused jackpot check in the GEMM epilogue
+  void* g[] = {&d_ap_, &d_bp_, &no_out, &M, &N, &K, &seed, &bw, &d_found_, &maxf};
   std::vector<uint32_t> found(1 + kMaxFound * 17);
-  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_jackpot_check", blocks(tiles, 256), 1, 1, 256, 1, 1, 0, j) ||
+  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_pearl_gemm", n_ / 128, m_ / 128, 1, 128, 1, 1, 0, g) ||
       !dev_.download(found.data(), d_found_, found.size() * 4)) {  // the download waits for the stream
     err = dev_.last_error();
     return 0;
   }
+  tp("gemm+check", t_prof);
+  if (prof) std::fputc('\n', stderr);
   uint32_t hits = std::min(found[0], kMaxFound);
   if (hits) {
     U256 block_bound = difficulty_bound(header_nbits(job_.header), cfg_);

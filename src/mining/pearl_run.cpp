@@ -75,7 +75,7 @@ int run_pearl(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   for (size_t i = 0; i < devs.size(); ++i) {
     workers.emplace_back([&, i] {
       auto dev = gpu::open(devs[i]);
-      pearl::Engine eng(*dev, 16384, 16384, 0x9e3779b97f4a7c15ull ^ (uint64_t(i) << 32) ^
+      pearl::Engine eng(*dev, 16384, 32768, 0x9e3779b97f4a7c15ull ^ (uint64_t(i) << 32) ^
                                                static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
       std::string err;
       if (!eng.init(err)) {
