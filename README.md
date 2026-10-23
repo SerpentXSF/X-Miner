@@ -39,6 +39,10 @@ x-miner --algorithm noid --pool na.rplant.xyz:17185 --wallet o1... --worker rig1
 | RX 9070 XT (-30% power, ~237 W) | 100.8 TH/s | 17.5 MH/s |
 | RTX 3060 (127 W), Linux / Windows | 39.4 / 35.5 TH/s | 9.6 / 8.7 MH/s |
 
+The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share
+difficulty x 2^32 for Pearl) per hour and per run. That is what the pool should credit, so it is the number to compare
+with the pool's dashboard once a few dozen shares are in.
+
 Every share is re-checked on the CPU before it is sent. Pearl shares were also checked against the official Pearl
 verifier. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
@@ -48,7 +52,7 @@ TLS pools work with `stratum+ssl://host:port` (Windows: SChannel; Linux: OpenSSL
 Pool certificates are not verified, as with other miners (pools use self-signed certificates).
 
 - Pearl: Kryptex (`prl.kryptex.network:7048`, `prl-us.kryptex.network:7048`), HeroMiners, and other pools that use
-  the object-style Pearl stratum.
+  the object-style Pearl stratum. Kryptex gets gzip-compressed share proofs (negotiated automatically).
 - Parano1d: rplant (`na.rplant.xyz:17185`, plain or TLS on the same port), InnovLab
   (`stratum+ssl://us.innovlab.cc:19601`) and other `parano1d-stratum-v1` pools.
 
