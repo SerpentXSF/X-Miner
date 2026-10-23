@@ -102,6 +102,114 @@ struct NvmlTune {
   }
 };
 
+#ifdef _WIN32
+// ---------------------------------------------------------------- ADL Overdrive8 (AMD, Windows)
+// Layouts and IDs from AMD's ADL SDK (github.com/GPUOpen-LibrariesAndSDKs/display-library, include/adl_defines.h and
+// adl_structures.h; Copyright (c) Advanced Micro Devices, Inc., MIT licence). The set procedure follows the SDK's
+// Overdrive8 sample: switch the optimized power mode to manual first, request only the settings being changed.
+enum {
+  kOd8GfxclkFmax = 0, kOd8GfxclkFmin = 1, kOd8UclkFmax = 8, kOd8PowerPercentage = 9, kOd8UclkFmin = 34,
+  kOd8OptimizedPowerMode = 36, kOd8Count = 77,
+  kAdlOd8OptimizedGpuPowerMode = 1 << 16,
+};
+struct AdlAdapterInfoT {
+  int iSize, iAdapterIndex;
+  char strUDID[256];
+  int iBusNumber, iDeviceNumber, iFunctionNumber, iVendorID;
+  char strAdapterName[256], strDisplayName[256];
+  int iPresent, iExist;
+  char strDriverPath[256], strDriverPathExt[256], strPNPString[256];
+  int iOSDisplayIndex;
+};
+struct Od8SingleInit {
+  int featureID, minValue, maxValue, defaultValue;
+};
+struct Od8Init {  // ADLOD8InitSetting
+  int count;
+  int caps;
+  Od8SingleInit table[kOd8Count];
+};
+struct Od8Current {  // ADLOD8CurrentSetting
+  int count;
+  int table[kOd8Count];
+};
+struct Od8SingleSet {
+  int value, requested, reset;
+};
+struct Od8Set {  // ADLOD8SetSetting
+  int count;
+  Od8SingleSet table[kOd8Count];
+};
+void* __stdcall adl_alloc_t(int n) { return std::malloc(static_cast<size_t>(n)); }
+
+// The fixed-size Overdrive8 calls (the caller sets count = OD8_COUNT): the X2 variants return ADL_ERR_NULL_POINTER
+// on RDNA4 with Adrenalin 25.x, the fixed-size ones work.
+struct AdlOd8 {
+  DynLib lib;
+  void* ctx = nullptr;
+  int (*init_get)(void*, int, Od8Init*) = nullptr;
+  int (*cur_get)(void*, int, Od8Current*) = nullptr;
+  int (*set)(void*, int, Od8Set*, Od8Current*) = nullptr;
+  std::map<int, int> adapter_by_bus;  // first adapter per PCI bus with Overdrive8
+  bool ready = false;
+
+  AdlOd8() {
+    if (!lib.open("atiadlxx.dll")) return;
+    int (*create)(void* (__stdcall*)(int), int, void**) = nullptr;
+    int (*num)(void*, int*) = nullptr;
+    int (*info)(void*, AdlAdapterInfoT*, int) = nullptr;
+    if (!lib.sym("ADL2_Main_Control_Create", create) || !lib.sym("ADL2_Adapter_NumberOfAdapters_Get", num) ||
+        !lib.sym("ADL2_Adapter_AdapterInfo_Get", info) || !lib.sym("ADL2_Overdrive8_Init_Setting_Get", init_get) ||
+        !lib.sym("ADL2_Overdrive8_Current_Setting_Get", cur_get) || !lib.sym("ADL2_Overdrive8_Setting_Set", set))
+      return;
+    if (create(adl_alloc_t, 1, &ctx) != 0) return;
+    int n = 0;
+    num(ctx, &n);
+    if (n <= 0) return;
+    std::vector<AdlAdapterInfoT> ai(static_cast<size_t>(n));
+    for (auto& a : ai) a.iSize = sizeof(AdlAdapterInfoT);
+    if (info(ctx, ai.data(), static_cast<int>(sizeof(AdlAdapterInfoT) * ai.size())) != 0) return;
+    for (const auto& a : ai) {
+      if (adapter_by_bus.count(a.iBusNumber)) continue;
+      auto init = std::make_unique<Od8Init>();
+      init->count = kOd8Count;
+      if (init_get(ctx, a.iAdapterIndex, init.get()) == 0 && init->caps != 0) adapter_by_bus[a.iBusNumber] = a.iAdapterIndex;
+    }
+    ready = true;
+  }
+  // Ranges/defaults and current values; false if the adapter has no Overdrive8.
+  bool read(int adapter, int& caps, std::vector<Od8SingleInit>& init, std::vector<int>& cur) {
+    auto i = std::make_unique<Od8Init>();
+    auto c = std::make_unique<Od8Current>();
+    i->count = kOd8Count;
+    c->count = kOd8Count;
+    if (init_get(ctx, adapter, i.get()) != 0 || cur_get(ctx, adapter, c.get()) != 0 || i->caps == 0) return false;
+    caps = i->caps;
+    init.assign(i->table, i->table + kOd8Count);
+    cur.assign(c->table, c->table + kOd8Count);
+    return true;
+  }
+  // Requests the given (id, value) pairs; reset ids go back to their defaults.
+  int apply(int adapter, const std::vector<std::pair<int, int>>& values, const std::vector<int>& reset_ids,
+            const std::vector<Od8SingleInit>& init) {
+    Od8Set s{};
+    Od8Current out{};
+    s.count = kOd8Count;
+    out.count = kOd8Count;
+    for (auto [id, v] : values) {
+      s.table[id].requested = 1;
+      s.table[id].value = v;
+    }
+    for (int id : reset_ids) {
+      s.table[id].requested = 1;
+      s.table[id].reset = 1;
+      s.table[id].value = id < static_cast<int>(init.size()) ? init[id].defaultValue : 0;
+    }
+    return set(ctx, adapter, &s, &out);
+  }
+};
+#endif
+
 #ifndef _WIN32
 // ---------------------------------------------------------------- amdgpu sysfs
 std::string read_line(const std::string& path) {
@@ -151,7 +259,9 @@ struct Tuner::Impl {
   std::unique_ptr<NvmlTune> nvml;
   std::vector<std::function<void()>> undo;  // run in reverse order on restore
   std::mutex mu;
-#ifndef _WIN32
+#ifdef _WIN32
+  std::unique_ptr<AdlOd8> od8;
+#else
   std::map<int, std::string> amd_dev;
 #endif
 };
@@ -166,6 +276,50 @@ void Tuner::restore() {
   for (auto it = impl_->undo.rbegin(); it != impl_->undo.rend(); ++it) (*it)();
   impl_->undo.clear();
   info("TUNE", "GPU clocks, offsets and power limits restored");
+}
+
+void Tuner::report(size_t index) {
+  if (index >= impl_->devs.size()) return;
+  const DeviceInfo& d = impl_->devs[index];
+  const std::string unit = unit_name(index) + " " + d.name;
+  if (d.vendor == Vendor::Nvidia) {
+    if (!impl_->nvml) impl_->nvml = std::make_unique<NvmlTune>();
+    NvmlTune& N = *impl_->nvml;
+    auto hit = N.by_bus.find(d.pci_bus);
+    if (!N.ready || hit == N.by_bus.end()) return warn("TUNE", unit + ": NVML not available");
+    unsigned cur = 0, def = 0, lo = 0, hi = 0;
+    if (N.get_pl) N.get_pl(hit->second, &cur);
+    if (N.get_pl_default) N.get_pl_default(hit->second, &def);
+    if (N.get_pl_range) N.get_pl_range(hit->second, &lo, &hi);
+    char buf[160];
+    std::snprintf(buf, sizeof buf, ": power limit %.0f W (default %.0f, range %.0f-%.0f W)", cur / 1e3, def / 1e3, lo / 1e3, hi / 1e3);
+    return info("TUNE", unit + buf);
+  }
+#ifdef _WIN32
+  if (!impl_->od8) impl_->od8 = std::make_unique<AdlOd8>();
+  AdlOd8& A = *impl_->od8;
+  auto at = A.adapter_by_bus.find(d.pci_bus);
+  int caps = 0;
+  std::vector<Od8SingleInit> init;
+  std::vector<int> cur;
+  if (!A.ready || at == A.adapter_by_bus.end() || !A.read(at->second, caps, init, cur))
+    return warn("TUNE", unit + ": AMD Overdrive (ADL) not available");
+  char buf[64];
+  std::snprintf(buf, sizeof buf, ": Overdrive8 caps 0x%08x, %zu settings", static_cast<unsigned>(caps), init.size());
+  info("TUNE", unit + buf);
+  const std::pair<int, const char*> shown[] = {{kOd8GfxclkFmax, "core clock offset MHz"}, {kOd8GfxclkFmin, "min core clock MHz"},
+                                               {kOd8UclkFmax, "max memory clock MHz"}, {kOd8PowerPercentage, "power limit % offset"},
+                                               {kOd8UclkFmin, "min memory clock MHz"}, {kOd8OptimizedPowerMode, "power mode (3 = manual)"}};
+  for (auto [id, name] : shown) {
+    if (id >= static_cast<int>(init.size())) continue;
+    char line[160];
+    std::snprintf(line, sizeof line, "  %-26s current %6d  default %6d  range %6d to %6d", name,
+                  id < static_cast<int>(cur.size()) ? cur[id] : 0, init[id].defaultValue, init[id].minValue, init[id].maxValue);
+    info("TUNE", line);
+  }
+#else
+  info("TUNE", unit + ": amdgpu sysfs (power1_cap, pp_od_clk_voltage)");
+#endif
 }
 
 bool Tuner::apply(size_t index, const TuneRequest& req) {
@@ -263,8 +417,64 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
   }
 
 #ifdef _WIN32
-  warn("TUNE", unit + ": AMD tuning on Windows is not supported yet; set clocks and power in AMD Adrenalin");
-  return false;
+  if (!impl_->od8) impl_->od8 = std::make_unique<AdlOd8>();
+  AdlOd8& A = *impl_->od8;
+  auto at = A.adapter_by_bus.find(d.pci_bus);
+  int caps = 0;
+  std::vector<Od8SingleInit> init;
+  std::vector<int> cur;
+  if (!A.ready || at == A.adapter_by_bus.end() || !A.read(at->second, caps, init, cur)) {
+    warn("TUNE", unit + ": AMD Overdrive (ADL) not available, tuning skipped");
+    return false;
+  }
+  const int adapter = at->second;
+  // Power: Overdrive8 takes a percentage offset from the default board power (Adrenalin's "Power Limit %").
+  std::vector<std::pair<int, int>> want;
+  auto in_range = [&](int id, int v, const char* what) {
+    if (id >= static_cast<int>(init.size()) || init[id].minValue > v || init[id].maxValue < v) {
+      fail(what, "out of range (" + std::to_string(id < static_cast<int>(init.size()) ? init[id].minValue : 0) + " to " +
+                     std::to_string(id < static_cast<int>(init.size()) ? init[id].maxValue : 0) + ")");
+      return false;
+    }
+    return true;
+  };
+  if (req.power_w) warn("TUNE", unit + ": AMD power limits are a percentage of default; use e.g. --gpu-plimit 70%");
+  if (req.power_pct) {
+    int off = static_cast<int>(std::lround(*req.power_pct - 100.0));
+    if (in_range(kOd8PowerPercentage, off, "power limit")) want.push_back({kOd8PowerPercentage, off});
+  }
+  // RDNA3/4 Overdrive: the core setting is an offset to the max clock (Adrenalin "Max Frequency Offset"); memory is
+  // an absolute max clock. There is no core clock lock or memory offset.
+  if (req.core_offset_mhz && in_range(kOd8GfxclkFmax, *req.core_offset_mhz, "core clock offset"))
+    want.push_back({kOd8GfxclkFmax, *req.core_offset_mhz});
+  if (req.mem_lock_mhz && in_range(kOd8UclkFmax, *req.mem_lock_mhz, "max memory clock"))
+    want.push_back({kOd8UclkFmax, *req.mem_lock_mhz});
+  if (req.core_lock_mhz) warn("TUNE", unit + ": AMD Overdrive has no core clock lock; use --gpu-coffset (max clock offset)");
+  if (req.mem_offset_mhz) warn("TUNE", unit + ": AMD Overdrive has no memory offset; use --gpu-mclock (max memory clock)");
+  if (want.empty()) return false;
+  std::vector<int> ids;
+  for (auto& w : want) ids.push_back(w.first);
+  if (caps & kAdlOd8OptimizedGpuPowerMode) {
+    int prev = kOd8OptimizedPowerMode < static_cast<int>(cur.size()) ? cur[kOd8OptimizedPowerMode] : 0;
+    if (prev != 3 && A.apply(adapter, {{kOd8OptimizedPowerMode, 3}}, {}, init) == 0)  // 3 = manual tuning
+      impl_->undo.push_back([&A, adapter, prev, init] { A.apply(adapter, {{kOd8OptimizedPowerMode, prev}}, {}, init); });
+  }
+  int rc = A.apply(adapter, want, {}, init);
+  if (rc != 0) {
+    fail("Overdrive settings", "ADL error " + std::to_string(rc));
+    return false;
+  }
+  std::vector<std::pair<int, int>> previous;
+  std::string msg;
+  for (auto [id, v] : want) {
+    previous.push_back({id, id < static_cast<int>(cur.size()) ? cur[id] : init[id].defaultValue});
+    msg += id == kOd8PowerPercentage ? " power " + std::to_string(100 + v) + "%"
+           : id == kOd8GfxclkFmax    ? " core offset " + std::to_string(v) + " MHz"
+                                     : " max memory " + std::to_string(v) + " MHz";
+  }
+  ok("Overdrive" + msg);
+  impl_->undo.push_back([&A, adapter, previous, init] { A.apply(adapter, previous, {}, init); });
+  return applied;
 #else
   if (impl_->amd_dev.empty()) impl_->amd_dev = amdgpu_devices();
   auto it = impl_->amd_dev.find(d.pci_bus);

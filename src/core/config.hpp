@@ -33,6 +33,7 @@ struct Config {
   std::vector<std::string> intensity;  // work size per launch; empty / 0 = auto (see usage())
   std::vector<std::string> cclock, mclock, coffset, moffset, plimit;  // MHz / MHz / MHz / MHz / W or N%
   bool list_devices = false;
+  bool tune_info = false;             // --gpu-tune-info: show tunable ranges and current values, then exit
   bool list_algorithms = false;
   bool benchmark = false;             // hash locally without a pool (no shares submitted)
   int benchmark_seconds = 60;

@@ -175,6 +175,8 @@ std::optional<std::string> parse_args(int argc, char** argv, Config& c) {
     } else if (a == "--intensity" || a == "--gpu-intensity") {
       if (!(v = value())) return a + " needs a value";
       if (auto e = parse_gpu_list(*v, 0, 64, false, c.intensity)) return a + ": " + *e;
+    } else if (a == "--gpu-tune-info") {
+      c.tune_info = true;
     } else if (a == "--gpu-cclock" || a == "--cclk") {
       if (!(v = value())) return a + " needs a value";
       if (auto e = parse_gpu_list(*v, 100, 4000, false, c.cclock)) return a + ": " + *e;
@@ -215,12 +217,13 @@ std::string usage() {
        "  --gpu-intensity <list>     work per launch (0 = auto). pearlhash: N x 1024 columns per pass (8-64,\n"
        "                             auto 32); noid: 2^N nonces per launch (18-26, auto 22)\n\n"
        "GPU tuning (applied at start, restored on exit; one value for all GPUs or a comma list, '-' = skip)\n"
-       "  --gpu-cclock <MHz>         lock the core clock          (NVIDIA; AMD Linux: overdrive max core)\n"
-       "  --gpu-mclock <MHz>         lock the memory clock        (NVIDIA; AMD Linux: overdrive max memory)\n"
-       "  --gpu-coffset <MHz>        core clock offset            (NVIDIA)\n"
-       "  --gpu-moffset <MHz>        memory clock offset          (NVIDIA)\n"
-       "  --gpu-plimit <W|N%>        power limit in watts, or a percentage of the default (NVIDIA, AMD Linux)\n"
-       "                             Needs administrator / root. AMD on Windows: use Adrenalin for now.\n\n"
+       "  --gpu-cclock <MHz>         lock the core clock             (NVIDIA; AMD Linux: Overdrive max core)\n"
+       "  --gpu-mclock <MHz>         lock / cap the memory clock     (NVIDIA lock; AMD: Overdrive max memory)\n"
+       "  --gpu-coffset <MHz>        core clock offset               (NVIDIA; AMD Windows: max clock offset)\n"
+       "  --gpu-moffset <MHz>        memory clock offset             (NVIDIA)\n"
+       "  --gpu-plimit <W|N%>        power limit in watts or % of default (AMD Windows: % only, e.g. 70%)\n"
+       "                             NVIDIA and AMD Linux need administrator / root.\n"
+       "  --gpu-tune-info            show tunable ranges and current values for each GPU, then exit\n\n"
        "Monitoring\n"
        "  --api-port <port>          HTTP API and web dashboard port (default 21550)\n"
        "  --api-host <ip>            bind address (default 127.0.0.1; 0.0.0.0 for LAN access)\n"

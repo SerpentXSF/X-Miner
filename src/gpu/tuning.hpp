@@ -33,6 +33,8 @@ class Tuner {
   // Applies req to devices[index]; logs each change or why it could not be made. Returns false if nothing applied.
   bool apply(size_t index, const TuneRequest& req);
   void restore();  // safe to call more than once
+  // Prints what can be tuned on devices[index] and the current values (read-only).
+  void report(size_t index);
 
  private:
   struct Impl;

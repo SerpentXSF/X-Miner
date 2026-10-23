@@ -203,6 +203,16 @@ int main(int argc, char** argv) {
     return failed ? 1 : 0;
   }
 
+  if (cfg.tune_info) {  // read-only: what each GPU lets X-Miner tune
+    print_section("GPU TUNING");
+    auto all = gpu::all_devices();
+    gpu::Tuner probe(all);
+    for (size_t i = 0; i < all.size(); ++i)
+      if (cfg.gpu_ids.empty() || std::find(cfg.gpu_ids.begin(), cfg.gpu_ids.end(), int(i)) != cfg.gpu_ids.end())
+        probe.report(i);
+    return 0;
+  }
+
   const AlgorithmInfo* algo = find_algorithm(cfg.algorithm);
   if (!algo) {
     error("ALGO", cfg.algorithm.empty() ? "no --algorithm given (see --list-algorithms)"
