@@ -60,7 +60,7 @@ non-zero code; the launchers restart it.
 |---|---|---|
 | RX 9070 XT (-30% power, ~237 W) | 101.1 TH/s | 17.5 MH/s |
 | RX 9070 XT (stock power, ~340 W) | 115.0 TH/s | |
-| RTX 3060 (170 W) | 41.3 TH/s | 8.7 MH/s |
+| RTX 3060 (170 W / 127 W) | 41.5 / 36.7 TH/s | 8.7 MH/s |
 
 The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share
 difficulty x 2^32 for Pearl) per hour and per run. That is what the pool should credit, so it is the number to compare

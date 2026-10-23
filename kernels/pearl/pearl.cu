@@ -35,10 +35,23 @@ constexpr int STAGE_A = BM * BK, STAGE_B = BN * BK, STAGE_BYTES = STAGE_A + STAG
 // Tuned on the RTX 3060 (TH/s at 127 W): BK 64 x 3 stages 39.5 / 64 x 4 38.4 / 128 x 2 41.8; at 170 W:
 // warp tiles 64x64 (8 warps) 46.3 vs 32x64 (16 warps, 127 registers) 43.5.
 // group rows 4 39.1 / 8 39.5 / 16 38.4 (at BK 64).
+// Bare-harness timings at a locked 1500 MHz (2026-10-23, 16384x32768 pass; peak 43.0 TMAC/s): baseline 35.0 TMAC/s;
+// copies spread over the first 3 k32 steps 35.75 (all 4: 33.1); without any copies 37.9 and also without the BLAKE3
+// epilogue 39.2 (diagnostics); L2 prefetch of stage kt+2..4 33.2-33.7; BK 64 x 3/4 stages 31.4-31.6; folding each
+// sum before its next-chunk mma instead of snapshots 33.7.
 // 12 warps (block 192x256, BK 64 x 3 stages, 168-register cap): 18 TH/s - ~45 registers spill, the spills miss L1
 // (84 KB of shared memory) and double DRAM traffic. Group rows 4/8/16 at BK 128: equal within noise.
 #ifndef XM_PEARL_STAGES
 #define XM_PEARL_STAGES 2
+#endif
+#ifndef XM_PEARL_DIAG_NOLOAD
+#define XM_PEARL_DIAG_NOLOAD 0  // developer timing only: skip the global -> shared copies (wrong results)
+#endif
+#ifndef XM_PEARL_DIAG_NOHASH
+#define XM_PEARL_DIAG_NOHASH 0
+#endif
+#ifndef XM_PEARL_SPREAD
+#define XM_PEARL_SPREAD 3  // N > 0: issue the next stage's copies spread over the first N k32 steps; 0: all at once
 #endif
 #ifndef XM_PEARL_GROUP
 #define XM_PEARL_GROUP 8
@@ -104,7 +117,7 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
   const int by = first + in % rows, bx = in / rows;
 
   // A' and B'^T are tiled (pearl_common.h tiled_offset): row block rb, k-slab s at (rb * K/128 + s) * 16 KB.
-  static_assert(BK == 128 && BM % 128 == 0 && BN % 128 == 0, "tiled layout assumes 128-k stages and 128-row blocks");
+  static_assert((BK == 128 || BK == 64) && BM % 128 == 0 && BN % 128 == 0, "tiled layout: 64/128-k stages, 128-row blocks");
   const size_t SLAB = 16384, RB_BYTES = (size_t)(K / 128) * SLAB;
   const int8_t* gA = A + (size_t)by * (BM / 128) * RB_BYTES;
   const int8_t* gB = B + (size_t)bx * (BN / 128) * RB_BYTES;
@@ -118,14 +131,30 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
   const size_t cp_goff = (size_t)cp_row * 128 + cp_ch * 16;
   // Row r of a block lives in row block r / 128 at slab row r % 128.
   auto row_off = [&](int r) { return (size_t)(r >> 7) * RB_BYTES + (size_t)(r & 127) * 128; };
+  // Part p of KS: copies [p*TOT/KS, (p+1)*TOT/KS) of the stage's A (first NA) and B copies; no commit.
+  constexpr int NA = BM / RPP, TOT = NA + BN / RPP;
+  auto load_part = [&](int stage, int kt, int p) {
+    const unsigned sa = sbase + stage * STAGE_BYTES + cp_soff, sb = sa + STAGE_A;
+    const size_t koff = (size_t)(kt * BK / 128) * SLAB + (kt * BK) % 128;  // slab, then k bytes inside it
+    const int8_t* ga = gA + cp_goff + koff;
+    const int8_t* gb = gB + cp_goff + koff;
+#pragma unroll
+    for (int c = 0; c < TOT; ++c) {
+      constexpr int PARTS = XM_PEARL_SPREAD;  // copies spread over the first PARTS k32 steps
+      if (p >= PARTS || c < p * TOT / PARTS || c >= (p + 1) * TOT / PARTS) continue;
+      if (c < NA) cp_async16(sa + c * RPP * BK, ga + row_off(c * RPP));
+      else cp_async16(sb + (c - NA) * RPP * BK, gb + row_off((c - NA) * RPP));
+    }
+  };
   auto load_stage = [&](int stage, int kt) {
     const unsigned sa = sbase + stage * STAGE_BYTES + cp_soff, sb = sa + STAGE_A;
-    const int8_t* ga = gA + cp_goff + (size_t)kt * SLAB;
-    const int8_t* gb = gB + cp_goff + (size_t)kt * SLAB;
+    const size_t koff = (size_t)(kt * BK / 128) * SLAB + (kt * BK) % 128;  // slab, then k bytes inside it
+    const int8_t* ga = gA + cp_goff + koff;
+    const int8_t* gb = gB + cp_goff + koff;
 #pragma unroll
-    for (int i = 0; i < BM / RPP; ++i) cp_async16(sa + i * RPP * BK, ga + row_off(i * RPP));
+    for (int i = 0; i < BM / RPP; ++i) if (!XM_PEARL_DIAG_NOLOAD) cp_async16(sa + i * RPP * BK, ga + row_off(i * RPP));
 #pragma unroll
-    for (int i = 0; i < BN / RPP; ++i) cp_async16(sb + i * RPP * BK, gb + row_off(i * RPP));
+    for (int i = 0; i < BN / RPP; ++i) if (!XM_PEARL_DIAG_NOLOAD) cp_async16(sb + i * RPP * BK, gb + row_off(i * RPP));
     cp_async_commit();
   };
 
@@ -167,16 +196,24 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
 #pragma unroll
   for (int s = 0; s < STAGES - 1; ++s) load_stage(s, s);
   unsigned x = 0;  // XOR of this lane's running sums, produced during the last k-step of each chunk
+  auto fold_word = [&](unsigned v) {  // fold one finished chunk's tile XOR into transcript word chunk % 16
+    const unsigned r = R[chunk & 15];
+    R[chunk & 15] = ((r << 13) | (r >> 19)) ^ v;
+    ++chunk;
+  };
   auto stage = [&](int kt, int half) {  // half: position of this stage inside the 128-k chunk (0..SPC-1)
     const int st = kt % STAGES;
     cp_async_wait<STAGES - 2>();           // stage kt has landed (one newer group may still be in flight)
     __syncthreads();                       // stage kt visible; everyone is done with stage kt-1
-    if (kt + STAGES - 1 < nk) load_stage((kt + STAGES - 1) % STAGES, kt + STAGES - 1);
-    else cp_async_commit();                // keep the group count uniform for wait_group
+    if (!XM_PEARL_SPREAD) {
+      if (kt + STAGES - 1 < nk) load_stage((kt + STAGES - 1) % STAGES, kt + STAGES - 1);
+      else cp_async_commit();              // keep the group count uniform for wait_group
+    }
     const unsigned sA = sbase + st * STAGE_BYTES, sB = sA + STAGE_A;
 #pragma unroll
     for (int ks = 0; ks < KS; ++ks) {      // k32 steps of this stage
       const int pos = half * KS + ks;      // k32 step inside the 128-k chunk (0..3)
+      if (XM_PEARL_SPREAD && kt + STAGES - 1 < nk) load_part((kt + STAGES - 1) % STAGES, kt + STAGES - 1, ks);
       unsigned af[MT][4], bf[8][2];
       // A: matrix q = lane/8 -> rows +0/+8 (q&1), k-bytes +0/+16 (q>>1) = registers a0..a3 of the m16k32 fragment.
       const unsigned pa = sA + a_off[ks];
@@ -214,17 +251,13 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
           for (int j = 0; j < 8; ++j) mma_s8(acc[i][j], af[i], bf[j][0], bf[j][1]);
       }
     }
+    if (XM_PEARL_SPREAD) cp_async_commit();  // one group per stage, also past the last load
   };
-  auto fold = [&]() {  // 128 k done: x (filled during the last k-step) is this lane's tile XOR
-      const unsigned r = R[chunk & 15];
-      R[chunk & 15] = ((r << 13) | (r >> 19)) ^ x;
-      ++chunk;
-    };
-  // SPC stages per iteration = one 128-k Pearl chunk; the fold runs unconditionally at the end of it.
+  // SPC stages per iteration = one 128-k Pearl chunk; with snapshots the fold runs at the end of each chunk.
   for (int kt = 0; kt < nk; kt += SPC) {
 #pragma unroll
     for (int h = 0; h < SPC; ++h) stage(kt + h, h);
-    fold();
+    fold_word(x);
   }
 
   // Epilogue: every lane holds its tile's complete transcript.
@@ -236,6 +269,10 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
     for (int w = 0; w < 16; ++w) out[idx * 16 + w] = R[w];
     return;
   }
+#if XM_PEARL_DIAG_NOHASH  // developer timing only: no BLAKE3 epilogue
+  if ((R[0] ^ R[7] ^ R[15]) == 0x1234567u) found[0] = 1;
+  return;
+#endif
   uint32_t words[16];  // separate copy: taking R's address would push it to local memory for the whole kernel
 #pragma unroll
   for (int w = 0; w < 16; ++w) words[w] = R[w];

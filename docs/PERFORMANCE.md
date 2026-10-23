@@ -56,6 +56,11 @@ NVIDIA findings (RTX 3060):
   (35.0 TMAC/s, 81% of peak) natively and under WSL2 alike, and register-only IMMA (100% of peak), streaming reads
   (341 GB/s) and random gathers match too, with 4 KB/64 KB or 2 MB (VMM) pages. The WSL2 figures elsewhere in
   this file remain valid for comparisons with each other, not as absolute rates. Real gap to SRBMiner: ~17%.
+- Where the time goes (bare harness, locked 1500 MHz, kernel shape kept, 2026-10-23): register-only IMMA with 8 warps
+  of 4x8 accumulators 99.6% of peak; + ldmatrix from shared memory 99.6%; + a barrier per 128 k 97.3%; + the XOR fold
+  92.3%; real kernel 81.4%, of which the global -> shared copies cost ~7.7% even when the data sits in L2 (so not
+  DRAM) and the BLAKE3 epilogue ~1%. Spreading each stage's copies over its first 3 k32 steps: 81.4 -> 83.3%
+  (native Windows, same hour, 170 W: 40.44 -> 41.28 TH/s). L2 prefetch, BK 64 stages, and a deferred fold lose.
 - (Superseded by the correction above.) Windows gap: at the same clock (~1.78 GHz) the same kernel does 22.8K MAC/clk on Windows vs 25.6K under WSL; not
   the wait mode, the PTX JIT (XM_FORCE_PTX), pass size, carveout, TLB or L2 aliasing. SRBMiner does 49.9 TH/s
   (~97% per clock) on Windows at 170 W, so Windows is not the limit. Open.
