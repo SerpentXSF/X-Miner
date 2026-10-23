@@ -34,7 +34,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   gpu::Sensors sensors(devs);
   for (size_t d = 0; d < devs.size(); ++d) {
     auto dev = gpu::open(devs[d]);
-    uint32_t bm = 16384, bn = 32768;
+    uint32_t bm = 16384, bn = pass_columns(cfg.intensity_for(d));
     if (const char* e = std::getenv("XM_PEARL_MN")) std::sscanf(e, "%ux%u", &bm, &bn);  // developer tuning
     Engine eng(*dev, bm, bn, 0x5eed0000 + d);
     std::string err;

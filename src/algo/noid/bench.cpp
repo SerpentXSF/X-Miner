@@ -38,7 +38,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       continue;
     }
     info("BENCH", "GPU " + std::to_string(d) + " " + devs[d].name + ": noid, " + std::to_string(cfg.benchmark_seconds) + " s");
-    const uint32_t batch = 1u << 22;
+    const uint32_t batch = batch_nonces(cfg.intensity_for(d));
     auto t0 = std::chrono::steady_clock::now(), last = t0;
     double total = 0, window = 0, watts = 0;
     int samples = 0;

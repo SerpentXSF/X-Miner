@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "gpu/tuning.hpp"
+
 namespace xm {
 
 struct PoolEndpoint {
@@ -27,7 +29,9 @@ struct Config {
   uint16_t api_port = 21550;
   bool color = true;
   std::string log_file;
-  int intensity = 0;                  // 0 = auto
+  // Per-GPU settings: one value for every selected GPU, or a comma list in --gpu-id order ("-" = leave alone).
+  std::vector<std::string> intensity;  // work size per launch; empty / 0 = auto (see usage())
+  std::vector<std::string> cclock, mclock, coffset, moffset, plimit;  // MHz / MHz / MHz / MHz / W or N%
   bool list_devices = false;
   bool list_algorithms = false;
   bool benchmark = false;             // hash locally without a pool (no shares submitted)
@@ -40,6 +44,8 @@ struct Config {
   bool version = false;
 
   std::string login() const;          // wallet[.worker]
+  int intensity_for(size_t gpu) const;               // 0 = auto
+  gpu::TuneRequest tune_for(size_t gpu) const;      // index into the selected GPUs
 };
 
 // Parses argv. Returns an error message on bad input (nullopt on success).

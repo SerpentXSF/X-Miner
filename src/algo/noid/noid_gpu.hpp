@@ -28,6 +28,12 @@ struct Share {
   double work = 0;  // hashes a pool credits for this share: 2^256 / share target
 };
 
+// --gpu-intensity N: 2^N nonces per launch (18-26); 0 = auto (22: ~0.25 s on an RX 9070 XT, ~0.45 s on an RTX 3060;
+// shorter launches lose fewer shares to a new block).
+inline uint32_t batch_nonces(int intensity) {
+  return 1u << (intensity <= 0 ? 22 : intensity < 18 ? 18 : intensity > 26 ? 26 : intensity);
+}
+
 class Engine {
  public:
   Engine(gpu::Device& dev, uint64_t seed);

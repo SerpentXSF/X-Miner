@@ -137,3 +137,19 @@ TEST(gzip_crc32_and_framing) {
     std::ofstream(std::string(d) + "/raw.bin.gz", std::ios::binary).write(reinterpret_cast<const char*>(gz.data()), gz.size());
   }
 }
+
+TEST(config_gpu_tuning_lists) {
+  const char* argv[] = {"x-miner", "--gpu-plimit", "127,70%,-", "--gpu-cclock", "1500", "--gpu-intensity", "24,-,40"};
+  xm::Config c;
+  CHECK(!xm::parse_args(7, const_cast<char**>(argv), c));
+  CHECK(c.tune_for(0).power_w && *c.tune_for(0).power_w == 127.0);
+  CHECK(c.tune_for(1).power_pct && *c.tune_for(1).power_pct == 70.0);
+  CHECK(!c.tune_for(2).power_w && !c.tune_for(2).power_pct);
+  CHECK(c.tune_for(2).core_lock_mhz && *c.tune_for(2).core_lock_mhz == 1500);  // single value: every GPU
+  CHECK_EQ(c.intensity_for(0), 24);
+  CHECK_EQ(c.intensity_for(1), 0);
+  CHECK_EQ(c.intensity_for(2), 40);
+  const char* bad[] = {"x-miner", "--gpu-plimit", "5000"};
+  xm::Config d;
+  CHECK(xm::parse_args(3, const_cast<char**>(bad), d).has_value());
+}

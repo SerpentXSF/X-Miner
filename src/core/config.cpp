@@ -57,6 +57,61 @@ std::optional<std::string> parse_pool_list(const std::string& text, std::vector<
   return std::nullopt;
 }
 
+// "v" or "v1,v2,-,v4": integers in [lo, hi], "-" or empty to skip a GPU, optionally "N%" (percent 10-200).
+std::optional<std::string> parse_gpu_list(const std::string& text, long lo, long hi, bool allow_pct,
+                                          std::vector<std::string>& out) {
+  out.clear();
+  size_t start = 0;
+  while (true) {
+    size_t comma = text.find(',', start);
+    std::string item = text.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+    long n = 0;
+    if (!item.empty() && item != "-") {
+      if (allow_pct && item.back() == '%') {
+        if (!parse_int(item.substr(0, item.size() - 1), 10, 200, n)) return "bad percentage '" + item + "'";
+      } else if (!parse_int(item, lo, hi, n)) {
+        return "bad value '" + item + "' (expected " + std::to_string(lo) + " to " + std::to_string(hi) + ")";
+      }
+    }
+    out.push_back(item == "-" ? std::string() : item);
+    if (comma == std::string::npos) break;
+    start = comma + 1;
+  }
+  return std::nullopt;
+}
+
+namespace {
+// Value for GPU i: a single value applies to every GPU; a list gives one per GPU.
+std::string pick(const std::vector<std::string>& v, size_t i) {
+  if (v.empty()) return {};
+  if (v.size() == 1) return v[0];
+  return i < v.size() ? v[i] : std::string();
+}
+std::optional<int> pick_int(const std::vector<std::string>& v, size_t i) {
+  std::string s = pick(v, i);
+  if (s.empty()) return std::nullopt;
+  return std::atoi(s.c_str());
+}
+}  // namespace
+
+int Config::intensity_for(size_t gpu) const { return pick_int(intensity, gpu).value_or(0); }
+
+gpu::TuneRequest Config::tune_for(size_t gpu) const {
+  gpu::TuneRequest r;
+  r.core_lock_mhz = pick_int(cclock, gpu);
+  r.mem_lock_mhz = pick_int(mclock, gpu);
+  r.core_offset_mhz = pick_int(coffset, gpu);
+  r.mem_offset_mhz = pick_int(moffset, gpu);
+  std::string pl = pick(plimit, gpu);
+  if (!pl.empty()) {
+    if (pl.back() == '%')
+      r.power_pct = std::atof(pl.c_str());
+    else
+      r.power_w = std::atof(pl.c_str());
+  }
+  return r;
+}
+
 std::optional<std::string> parse_args(int argc, char** argv, Config& c) {
   auto need = [&](int& i, const std::string& flag) -> std::optional<std::string> {
     if (i + 1 >= argc) return std::nullopt;
@@ -118,9 +173,23 @@ std::optional<std::string> parse_args(int argc, char** argv, Config& c) {
       if (!(v = value())) return a + " needs a value";
       c.log_file = *v;
     } else if (a == "--intensity" || a == "--gpu-intensity") {
-      long n = 0;
-      if (!(v = value()) || !parse_int(*v, 0, 64, n)) return a + " needs a number 0-64";
-      c.intensity = static_cast<int>(n);
+      if (!(v = value())) return a + " needs a value";
+      if (auto e = parse_gpu_list(*v, 0, 64, false, c.intensity)) return a + ": " + *e;
+    } else if (a == "--gpu-cclock" || a == "--cclk") {
+      if (!(v = value())) return a + " needs a value";
+      if (auto e = parse_gpu_list(*v, 100, 4000, false, c.cclock)) return a + ": " + *e;
+    } else if (a == "--gpu-mclock" || a == "--mclk") {
+      if (!(v = value())) return a + " needs a value";
+      if (auto e = parse_gpu_list(*v, 100, 20000, false, c.mclock)) return a + ": " + *e;
+    } else if (a == "--gpu-coffset" || a == "--coff") {
+      if (!(v = value())) return a + " needs a value";
+      if (auto e = parse_gpu_list(*v, -1000, 1000, false, c.coffset)) return a + ": " + *e;
+    } else if (a == "--gpu-moffset" || a == "--moff") {
+      if (!(v = value())) return a + " needs a value";
+      if (auto e = parse_gpu_list(*v, -3000, 3000, false, c.moffset)) return a + ": " + *e;
+    } else if (a == "--gpu-plimit" || a == "--pl") {
+      if (!(v = value())) return a + " needs a value";
+      if (auto e = parse_gpu_list(*v, 10, 1000, true, c.plimit)) return a + ": " + *e;
     } else if (a == "--benchmark-time") {
       long n = 0;
       if (!(v = value()) || !parse_int(*v, 5, 86400, n)) return a + " needs seconds (5-86400)";
@@ -143,7 +212,15 @@ std::string usage() {
        "  --worker <name>            worker name (sent as wallet.worker)\n"
        "  --password, -p <text>      pool password (default x)\n"
        "  --gpu-id, -d <list>        GPUs to use, e.g. 0,2 (default: all supported; see --list-devices)\n"
-       "  --intensity <0-64>         work size per launch (0 = auto)\n\n"
+       "  --gpu-intensity <list>     work per launch (0 = auto). pearlhash: N x 1024 columns per pass (8-64,\n"
+       "                             auto 32); noid: 2^N nonces per launch (18-26, auto 22)\n\n"
+       "GPU tuning (applied at start, restored on exit; one value for all GPUs or a comma list, '-' = skip)\n"
+       "  --gpu-cclock <MHz>         lock the core clock          (NVIDIA; AMD Linux: overdrive max core)\n"
+       "  --gpu-mclock <MHz>         lock the memory clock        (NVIDIA; AMD Linux: overdrive max memory)\n"
+       "  --gpu-coffset <MHz>        core clock offset            (NVIDIA)\n"
+       "  --gpu-moffset <MHz>        memory clock offset          (NVIDIA)\n"
+       "  --gpu-plimit <W|N%>        power limit in watts, or a percentage of the default (NVIDIA, AMD Linux)\n"
+       "                             Needs administrator / root. AMD on Windows: use Adrenalin for now.\n\n"
        "Monitoring\n"
        "  --api-port <port>          HTTP API and web dashboard port (default 21550)\n"
        "  --api-host <ip>            bind address (default 127.0.0.1; 0.0.0.0 for LAN access)\n"

@@ -5,7 +5,7 @@
 //     static constexpr const char* kName;                 // --algorithm name, also the dev-fee key
 //     static constexpr bool kCpuRejectIsError;            // a CPU re-check failure means a bad GPU result
 //     using Pool; using Job; using Share; using Engine;   // Pool: ResultFn, start/stop/job/submit/connected/endpoint
-//     static std::unique_ptr<Engine> make_engine(gpu::Device&, uint64_t seed);
+//     static std::unique_ptr<Engine> make_engine(gpu::Device&, uint64_t seed, int intensity);  // 0 = auto
 //     static double iterate(Engine&, std::vector<Share>&, std::string& err);  // hashes done, 0 = error
 //     static bool is_stale(const std::string& pool_error);
 //     static void submit(Pool&, const Share&, int unit, double unit_rate);
@@ -107,7 +107,7 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       auto dev = gpu::open(devs[i]);
       const uint64_t seed = 0x9e3779b97f4a7c15ull ^ (uint64_t(i) << 40) ^
                             static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
-      auto eng = T::make_engine(*dev, seed);
+      auto eng = T::make_engine(*dev, seed, cfg.intensity_for(i));
       std::string err;
       if (!eng->init(err)) {
         error("GPU", unit + " " + devs[i].name + ": " + err);

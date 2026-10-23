@@ -14,13 +14,15 @@ struct NoidTraits {
   using Pool = NoidPool;
   using Job = noid::Job;
   using Share = noid::Share;
-  using Engine = noid::Engine;
-  static std::unique_ptr<Engine> make_engine(gpu::Device& dev, uint64_t seed) {
-    return std::make_unique<Engine>(dev, seed);
+  struct Engine : noid::Engine {  // the engine plus its launch size
+    Engine(gpu::Device& dev, uint64_t seed, uint32_t b) : noid::Engine(dev, seed), batch(b) {}
+    uint32_t batch;
+  };
+  static std::unique_ptr<Engine> make_engine(gpu::Device& dev, uint64_t seed, int intensity) {
+    return std::make_unique<Engine>(dev, seed, noid::batch_nonces(intensity));
   }
   static double iterate(Engine& e, std::vector<Share>& shares, std::string& err) {
-    // ~0.25 s on an RX 9070 XT, ~0.45 s on an RTX 3060: a share found in a batch that straddles a new block is stale.
-    return e.iterate(1u << 22, shares, err);
+    return e.iterate(e.batch, shares, err);
   }
   static bool is_stale(const std::string& err) {
     return err.find("tale") != std::string::npos || err.find("expired") != std::string::npos ||

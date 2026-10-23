@@ -14,8 +14,8 @@ struct PearlTraits {
   using Job = pearl::Job;
   using Share = pearl::Share;
   using Engine = pearl::Engine;
-  static std::unique_ptr<Engine> make_engine(gpu::Device& dev, uint64_t seed) {
-    return std::make_unique<Engine>(dev, 16384, 32768, seed);  // 16384 x 32768 x 4096 MAC per pass
+  static std::unique_ptr<Engine> make_engine(gpu::Device& dev, uint64_t seed, int intensity) {
+    return std::make_unique<Engine>(dev, 16384, pearl::pass_columns(intensity), seed);
   }
   static double iterate(Engine& e, std::vector<Share>& shares, std::string& err) { return e.iterate(shares, err); }
   static bool is_stale(const std::string& err) {

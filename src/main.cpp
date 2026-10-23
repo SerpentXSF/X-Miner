@@ -1,4 +1,8 @@
 #include <algorithm>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 #include <chrono>
 #include <cstdio>
 #include <memory>
@@ -8,6 +12,7 @@
 #include <thread>
 
 #include "algo/registry.hpp"
+#include "gpu/tuning.hpp"
 #include "algo/selftest.hpp"
 #include "api/api.hpp"
 #include "core/devfee.hpp"
@@ -154,6 +159,18 @@ int ui_demo(const Config& cfg) {
 
 }  // namespace
 
+namespace {
+xm::gpu::Tuner* g_tuner = nullptr;
+#ifdef _WIN32
+// Closing the console window ends the process within a few seconds: restore GPU tuning first.
+BOOL WINAPI on_console_event(DWORD type) {
+  if ((type == CTRL_CLOSE_EVENT || type == CTRL_LOGOFF_EVENT || type == CTRL_SHUTDOWN_EVENT) && g_tuner)
+    g_tuner->restore();
+  return FALSE;  // let the default handling (and Ctrl+C's signal path) continue
+}
+#endif
+}  // namespace
+
 int main(int argc, char** argv) {
   Config cfg;
   if (auto err = parse_args(argc, argv, cfg)) {
@@ -201,6 +218,19 @@ int main(int argc, char** argv) {
     error("GPU", "no GPU selected (see --list-devices)");
     return 1;
   }
+  gpu::Tuner tuner(devs);
+  g_tuner = &tuner;
+#ifdef _WIN32
+  SetConsoleCtrlHandler(on_console_event, TRUE);
+#endif
+  for (size_t i = 0; i < devs.size(); ++i) tuner.apply(i, cfg.tune_for(i));
+  struct Restore {
+    gpu::Tuner& t;
+    ~Restore() {
+      t.restore();
+      g_tuner = nullptr;
+    }
+  } restore{tuner};
   if (std::string(algo->name) == "noid") {
     if (cfg.benchmark) {
       print_section("BENCHMARK");
