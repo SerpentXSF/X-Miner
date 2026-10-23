@@ -10,3 +10,5 @@
 | Parano1d PoW constants (generated) | src/algo/noid/noid_consts.hpp | Apache-2.0 (Paranoid Zero) | https://github.com/ignotusnemo/parano1d @5302b3f; see NOTICE |
 | Parano1d digest vectors | tests/vectors/noid_vectors.txt | Apache-2.0 | https://github.com/gacanga/NoidMiner tests/vectors.txt (generated from the official crates) |
 | Parano1d GF(2^128) arithmetic and permutation (ported) | kernels/noid/noid_math.h, noid_perm.h | Apache-2.0 (gacanga) | https://github.com/gacanga/NoidMiner @31fa4a8, modified for HIP |
+| ADL structure layouts and IDs (AdapterInfo, PMLog, Overdrive8) | src/gpu/sensors.cpp, src/gpu/tuning.cpp | MIT (Copyright (c) Advanced Micro Devices, Inc.) | https://github.com/GPUOpen-LibrariesAndSDKs/display-library include/adl_defines.h, adl_structures.h |
+| NVML function signatures and nvmlClockOffset_t layout | src/gpu/sensors.cpp, src/gpu/tuning.cpp | NVIDIA NVML API (no code copied; runtime library ships with the driver) | NVML API reference |
