@@ -13,6 +13,7 @@ namespace xm::pearl {
 namespace {
 
 // Must match XM_PEARL_STAGES / XM_PEARL_BK in kernels/pearl/pearl.cu (dynamic shared memory size).
+constexpr unsigned kNvRowPad = 128;  // = XM_ROW_PAD
 constexpr unsigned kNvStages = 2, kNvBk = 128, kNvBm = 128, kNvBn = 384 - kNvBm;  // + XM_PEARL_BM
 
 struct Key8 {
@@ -83,8 +84,10 @@ bool Engine::init(std::string& err) {
   fill_random(bt_.data(), sb);
   d_a_ = dev_.alloc(sa);
   d_bt_ = dev_.alloc(sb);
-  d_ap_ = dev_.alloc(sa);
-  d_bp_ = dev_.alloc(sb);
+  // NVIDIA A'/B' rows are padded by kNvRowPad bytes (L2 set aliasing, see kernels/pearl/pearl_common.h).
+  const size_t pad = dev_.info().vendor == gpu::Vendor::Nvidia ? kNvRowPad : 0;
+  d_ap_ = dev_.alloc(sa + size_t(m_) * pad);
+  d_bp_ = dev_.alloc(sb + size_t(n_) * pad);
   d_uni_ = dev_.alloc(size_t(std::max(m_, n_)) * r);
   d_pairs_ = dev_.alloc(size_t(k) * 2 * 4);
   d_cvs_ = dev_.alloc(std::max(sa, sb) / 1024 * 32);

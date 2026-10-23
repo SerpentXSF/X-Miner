@@ -96,8 +96,9 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
   const int rows = min(gy - first, G), in = pid % per;
   const int by = first + in % rows, bx = in / rows;
 
-  const int8_t* gA = A + (size_t)by * BM * K;
-  const int8_t* gB = B + (size_t)bx * BN * K;
+  const size_t LD = (size_t)K + XM_ROW_PAD;  // padded row stride of A' and B'^T
+  const int8_t* gA = A + (size_t)by * BM * LD;
+  const int8_t* gB = B + (size_t)bx * BN * LD;
   const unsigned sbase = (unsigned)__cvta_generic_to_shared(&smem[0]);
 
   // Each thread copies 16-byte chunks: chunk q = tid + 256*i -> row q/CH (+256/CH rows per i), chunk q%CH. The
@@ -105,7 +106,7 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
   constexpr int RPP = THREADS / CH;  // rows per copy pass
   const int cp_row = tid / CH, cp_ch = tid % CH;
   const unsigned cp_soff = swz(cp_row, cp_ch);
-  const size_t cp_goff = (size_t)cp_row * K + cp_ch * 16, cp_gstep = (size_t)RPP * K;
+  const size_t cp_goff = (size_t)cp_row * LD + cp_ch * 16, cp_gstep = (size_t)RPP * LD;
   auto load_stage = [&](int stage, int kt) {
     const unsigned sa = sbase + stage * STAGE_BYTES + cp_soff, sb = sa + STAGE_A;
     const int8_t* ga = gA + cp_goff + (size_t)kt * BK;

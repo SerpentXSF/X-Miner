@@ -2829,8 +2829,8 @@ $L__BB2_9:
 {
 	.reg .pred 	%p<2>;
 	.reg .b16 	%rs<41>;
-	.reg .b32 	%r<73>;
-	.reg .b64 	%rd<65>;
+	.reg .b32 	%r<74>;
+	.reg .b64 	%rd<67>;
 
 
 	ld.param.u64 	%rd1, [xm_apply_noise_param_0];
@@ -2978,10 +2978,13 @@ $L__BB2_9:
 	ld.global.nc.u8 	%rs39, [%rd63];
 	sub.s16 	%rs40, %rs38, %rs39;
 	cvt.u32.u16 	%r70, %rs40;
-	add.s64 	%rd64, %rd6, %rd9;
-	prmt.b32 	%r71, %r70, %r68, 1620;
-	prmt.b32 	%r72, %r60, %r58, 1620;
-	st.global.v2.u32 	[%rd64], {%r72, %r71};
+	add.s32 	%r71, %r3, 128;
+	mul.wide.u32 	%rd64, %r10, %r71;
+	add.s64 	%rd65, %rd64, %rd8;
+	add.s64 	%rd66, %rd6, %rd65;
+	prmt.b32 	%r72, %r70, %r68, 1620;
+	prmt.b32 	%r73, %r60, %r58, 1620;
+	st.global.v2.u32 	[%rd66], {%r73, %r72};
 
 $L__BB3_2:
 	ret;
@@ -3968,7 +3971,7 @@ $L__BB4_12:
 {
 	.reg .pred 	%p<15>;
 	.reg .b32 	%r<3690>;
-	.reg .b64 	%rd<61>;
+	.reg .b64 	%rd<69>;
 
 
 	ld.param.u64 	%rd3, [xm_pearl_gemm_param_0];
@@ -3997,6 +4000,8 @@ $L__BB4_12:
 	mul.lo.s32 	%r393, %r6, %r390;
 	sub.s32 	%r394, %r392, %r393;
 	add.s32 	%r5, %r394, %r387;
+	cvt.s64.s32 	%rd19, %r336;
+	add.s64 	%rd20, %rd19, 128;
 	shr.u32 	%r395, %r376, 29;
 	add.s32 	%r396, %r374, %r395;
 	shr.s32 	%r397, %r396, 3;
@@ -4004,43 +4009,46 @@ $L__BB4_12:
 	sub.s32 	%r399, %r374, %r398;
 	and.b32  	%r400, %r397, 7;
 	xor.b32  	%r401, %r400, %r399;
-	mul.wide.s32 	%rd19, %r336, %r397;
+	cvt.s64.s32 	%rd21, %r397;
+	mul.lo.s64 	%rd22, %rd20, %rd21;
 	shl.b32 	%r402, %r399, 4;
-	cvt.s64.s32 	%rd20, %r402;
-	add.s64 	%rd1, %rd19, %rd20;
+	cvt.s64.s32 	%rd23, %r402;
+	add.s64 	%rd1, %rd22, %rd23;
 	shl.b32 	%r403, %r378, 4;
 	and.b32  	%r7, %r403, -64;
 	shl.b32 	%r8, %r380, 6;
 	shl.b32 	%r404, %r401, 4;
 	shl.b32 	%r405, %r397, 7;
-	mul.wide.s32 	%rd21, %r5, %r336;
-	shl.b64 	%rd2, %rd21, 7;
-	mul.wide.s32 	%rd22, %r6, %r336;
-	shl.b64 	%rd23, %rd22, 8;
+	cvt.s64.s32 	%rd24, %r6;
+	cvt.s64.s32 	%rd25, %r5;
+	mul.lo.s64 	%rd26, %rd25, %rd20;
+	shl.b64 	%rd2, %rd26, 7;
+	mul.lo.s64 	%rd27, %rd24, %rd20;
+	shl.b64 	%rd28, %rd27, 8;
 	add.s32 	%r406, %r404, %r405;
-	mul.wide.s32 	%rd24, %r336, 32;
-	add.s64 	%rd25, %rd2, %rd1;
+	shl.b64 	%rd29, %rd20, 5;
+	add.s64 	%rd30, %rd2, %rd1;
 	mov.u32 	%r407, smem;
 	add.s32 	%r346, %r406, %r407;
-	add.s64 	%rd7, %rd3, %rd25;
+	add.s64 	%rd7, %rd3, %rd30;
 	// begin inline asm
 	cp.async.cg.shared.global [%r346], [%rd7], 16;
 
 	// end inline asm
 	add.s32 	%r347, %r346, 4096;
-	add.s64 	%rd8, %rd7, %rd24;
+	add.s64 	%rd8, %rd7, %rd29;
 	// begin inline asm
 	cp.async.cg.shared.global [%r347], [%rd8], 16;
 
 	// end inline asm
 	add.s32 	%r348, %r346, 8192;
-	add.s64 	%rd9, %rd8, %rd24;
+	add.s64 	%rd9, %rd8, %rd29;
 	// begin inline asm
 	cp.async.cg.shared.global [%r348], [%rd9], 16;
 
 	// end inline asm
 	add.s32 	%r349, %r346, 12288;
-	add.s64 	%rd10, %rd9, %rd24;
+	add.s64 	%rd10, %rd9, %rd29;
 	// begin inline asm
 	cp.async.cg.shared.global [%r349], [%rd10], 16;
 
@@ -4049,51 +4057,51 @@ $L__BB4_12:
 	shr.u32 	%r409, %r408, 25;
 	add.s32 	%r410, %r336, %r409;
 	shr.s32 	%r14, %r410, 7;
-	add.s64 	%rd26, %rd23, %rd1;
+	add.s64 	%rd31, %rd28, %rd1;
 	add.s32 	%r350, %r346, 16384;
-	add.s64 	%rd11, %rd4, %rd26;
+	add.s64 	%rd11, %rd4, %rd31;
 	// begin inline asm
 	cp.async.cg.shared.global [%r350], [%rd11], 16;
 
 	// end inline asm
 	add.s32 	%r351, %r346, 20480;
-	add.s64 	%rd12, %rd11, %rd24;
+	add.s64 	%rd12, %rd11, %rd29;
 	// begin inline asm
 	cp.async.cg.shared.global [%r351], [%rd12], 16;
 
 	// end inline asm
 	add.s32 	%r352, %r346, 24576;
-	add.s64 	%rd13, %rd12, %rd24;
+	add.s64 	%rd13, %rd12, %rd29;
 	// begin inline asm
 	cp.async.cg.shared.global [%r352], [%rd13], 16;
 
 	// end inline asm
 	add.s32 	%r353, %r346, 28672;
-	add.s64 	%rd14, %rd13, %rd24;
+	add.s64 	%rd14, %rd13, %rd29;
 	// begin inline asm
 	cp.async.cg.shared.global [%r353], [%rd14], 16;
 
 	// end inline asm
 	add.s32 	%r354, %r346, 32768;
-	add.s64 	%rd15, %rd14, %rd24;
+	add.s64 	%rd15, %rd14, %rd29;
 	// begin inline asm
 	cp.async.cg.shared.global [%r354], [%rd15], 16;
 
 	// end inline asm
 	add.s32 	%r355, %r346, 36864;
-	add.s64 	%rd16, %rd15, %rd24;
+	add.s64 	%rd16, %rd15, %rd29;
 	// begin inline asm
 	cp.async.cg.shared.global [%r355], [%rd16], 16;
 
 	// end inline asm
 	add.s32 	%r356, %r346, 40960;
-	add.s64 	%rd17, %rd16, %rd24;
+	add.s64 	%rd17, %rd16, %rd29;
 	// begin inline asm
 	cp.async.cg.shared.global [%r356], [%rd17], 16;
 
 	// end inline asm
 	add.s32 	%r357, %r346, 45056;
-	add.s64 	%rd18, %rd17, %rd24;
+	add.s64 	%rd18, %rd17, %rd29;
 	// begin inline asm
 	cp.async.cg.shared.global [%r357], [%rd18], 16;
 
@@ -4298,79 +4306,79 @@ $L__BB5_4:
 	and.b32  	%r570, %r569, 1;
 	mad.lo.s32 	%r557, %r570, 49152, %r346;
 	add.s32 	%r571, %r3671, 1;
-	mul.wide.u32 	%rd39, %r571, 128;
-	add.s64 	%rd40, %rd39, %rd1;
-	add.s64 	%rd41, %rd40, %rd2;
-	add.s64 	%rd27, %rd3, %rd41;
+	mul.wide.u32 	%rd44, %r571, 128;
+	add.s64 	%rd45, %rd44, %rd1;
+	add.s64 	%rd46, %rd45, %rd2;
+	add.s64 	%rd32, %rd3, %rd46;
 	// begin inline asm
-	cp.async.cg.shared.global [%r557], [%rd27], 16;
+	cp.async.cg.shared.global [%r557], [%rd32], 16;
 
 	// end inline asm
 	add.s32 	%r558, %r557, 4096;
-	add.s64 	%rd28, %rd27, %rd24;
+	add.s64 	%rd33, %rd32, %rd29;
 	// begin inline asm
-	cp.async.cg.shared.global [%r558], [%rd28], 16;
+	cp.async.cg.shared.global [%r558], [%rd33], 16;
 
 	// end inline asm
 	add.s32 	%r559, %r557, 8192;
-	add.s64 	%rd29, %rd28, %rd24;
+	add.s64 	%rd34, %rd33, %rd29;
 	// begin inline asm
-	cp.async.cg.shared.global [%r559], [%rd29], 16;
+	cp.async.cg.shared.global [%r559], [%rd34], 16;
 
 	// end inline asm
 	add.s32 	%r560, %r557, 12288;
-	add.s64 	%rd30, %rd29, %rd24;
+	add.s64 	%rd35, %rd34, %rd29;
 	// begin inline asm
-	cp.async.cg.shared.global [%r560], [%rd30], 16;
+	cp.async.cg.shared.global [%r560], [%rd35], 16;
 
 	// end inline asm
-	add.s64 	%rd45, %rd40, %rd23;
+	add.s64 	%rd53, %rd45, %rd28;
 	add.s32 	%r561, %r557, 16384;
-	add.s64 	%rd31, %rd4, %rd45;
+	add.s64 	%rd36, %rd4, %rd53;
 	// begin inline asm
-	cp.async.cg.shared.global [%r561], [%rd31], 16;
+	cp.async.cg.shared.global [%r561], [%rd36], 16;
 
 	// end inline asm
 	add.s32 	%r562, %r557, 20480;
-	add.s64 	%rd32, %rd31, %rd24;
+	add.s64 	%rd37, %rd36, %rd29;
 	// begin inline asm
-	cp.async.cg.shared.global [%r562], [%rd32], 16;
+	cp.async.cg.shared.global [%r562], [%rd37], 16;
 
 	// end inline asm
 	add.s32 	%r563, %r557, 24576;
-	add.s64 	%rd33, %rd32, %rd24;
+	add.s64 	%rd38, %rd37, %rd29;
 	// begin inline asm
-	cp.async.cg.shared.global [%r563], [%rd33], 16;
+	cp.async.cg.shared.global [%r563], [%rd38], 16;
 
 	// end inline asm
 	add.s32 	%r564, %r557, 28672;
-	add.s64 	%rd34, %rd33, %rd24;
+	add.s64 	%rd39, %rd38, %rd29;
 	// begin inline asm
-	cp.async.cg.shared.global [%r564], [%rd34], 16;
+	cp.async.cg.shared.global [%r564], [%rd39], 16;
 
 	// end inline asm
 	add.s32 	%r565, %r557, 32768;
-	add.s64 	%rd35, %rd34, %rd24;
+	add.s64 	%rd40, %rd39, %rd29;
 	// begin inline asm
-	cp.async.cg.shared.global [%r565], [%rd35], 16;
+	cp.async.cg.shared.global [%r565], [%rd40], 16;
 
 	// end inline asm
 	add.s32 	%r566, %r557, 36864;
-	add.s64 	%rd36, %rd35, %rd24;
+	add.s64 	%rd41, %rd40, %rd29;
 	// begin inline asm
-	cp.async.cg.shared.global [%r566], [%rd36], 16;
+	cp.async.cg.shared.global [%r566], [%rd41], 16;
 
 	// end inline asm
 	add.s32 	%r567, %r557, 40960;
-	add.s64 	%rd37, %rd36, %rd24;
+	add.s64 	%rd42, %rd41, %rd29;
 	// begin inline asm
-	cp.async.cg.shared.global [%r567], [%rd37], 16;
+	cp.async.cg.shared.global [%r567], [%rd42], 16;
 
 	// end inline asm
 	add.s32 	%r568, %r557, 45056;
-	add.s64 	%rd38, %rd37, %rd24;
+	add.s64 	%rd43, %rd42, %rd29;
 	// begin inline asm
-	cp.async.cg.shared.global [%r568], [%rd38], 16;
+	cp.async.cg.shared.global [%r568], [%rd43], 16;
 
 	// end inline asm
 	// begin inline asm
@@ -5240,7 +5248,7 @@ $L__BB5_5:
 	@%p2 bra 	$L__BB5_2;
 
 $L__BB5_6:
-	ld.param.u64 	%rd59, [xm_pearl_gemm_param_2];
+	ld.param.u64 	%rd67, [xm_pearl_gemm_param_2];
 	and.b32  	%r2702, %r374, 31;
 	shr.u32 	%r2703, %r2702, 2;
 	add.s32 	%r2704, %r7, %r2703;
@@ -5251,46 +5259,46 @@ $L__BB5_6:
 	add.s32 	%r2708, %r8, %r2707;
 	shl.b32 	%r2709, %r6, 8;
 	add.s32 	%r307, %r2708, %r2709;
-	setp.eq.s64 	%p4, %rd59, 0;
+	setp.eq.s64 	%p4, %rd67, 0;
 	@%p4 bra 	$L__BB5_8;
 
 	ld.param.u32 	%r3517, [xm_pearl_gemm_param_4];
-	ld.param.u64 	%rd60, [xm_pearl_gemm_param_2];
+	ld.param.u64 	%rd68, [xm_pearl_gemm_param_2];
 	shr.u32 	%r2710, %r306, 3;
 	and.b32  	%r2711, %r306, 7;
 	add.s32 	%r2712, %r2710, %r2711;
-	cvt.u64.u32 	%rd46, %r2712;
+	cvt.u64.u32 	%rd54, %r2712;
 	shr.s32 	%r2713, %r3517, 31;
 	shr.u32 	%r2714, %r2713, 29;
 	add.s32 	%r2715, %r3517, %r2714;
 	shr.s32 	%r2716, %r2715, 3;
-	cvt.s64.s32 	%rd47, %r2716;
-	mul.lo.s64 	%rd48, %rd46, %rd47;
+	cvt.s64.s32 	%rd55, %r2716;
+	mul.lo.s64 	%rd56, %rd54, %rd55;
 	and.b32  	%r2717, %r307, 6;
 	shr.u32 	%r2718, %r2717, 1;
 	shr.u32 	%r2719, %r307, 4;
 	add.s32 	%r2720, %r2718, %r2719;
-	cvt.u64.u32 	%rd49, %r2720;
-	add.s64 	%rd50, %rd48, %rd49;
-	cvta.to.global.u64 	%rd51, %rd60;
-	shl.b64 	%rd52, %rd50, 6;
-	add.s64 	%rd53, %rd51, %rd52;
-	st.global.u32 	[%rd53], %r3687;
-	st.global.u32 	[%rd53+4], %r3686;
-	st.global.u32 	[%rd53+8], %r3685;
-	st.global.u32 	[%rd53+12], %r3684;
-	st.global.u32 	[%rd53+16], %r3683;
-	st.global.u32 	[%rd53+20], %r3682;
-	st.global.u32 	[%rd53+24], %r3681;
-	st.global.u32 	[%rd53+28], %r3680;
-	st.global.u32 	[%rd53+32], %r3679;
-	st.global.u32 	[%rd53+36], %r3678;
-	st.global.u32 	[%rd53+40], %r3677;
-	st.global.u32 	[%rd53+44], %r3676;
-	st.global.u32 	[%rd53+48], %r3675;
-	st.global.u32 	[%rd53+52], %r3674;
-	st.global.u32 	[%rd53+56], %r3673;
-	st.global.u32 	[%rd53+60], %r3672;
+	cvt.u64.u32 	%rd57, %r2720;
+	add.s64 	%rd58, %rd56, %rd57;
+	cvta.to.global.u64 	%rd59, %rd68;
+	shl.b64 	%rd60, %rd58, 6;
+	add.s64 	%rd61, %rd59, %rd60;
+	st.global.u32 	[%rd61], %r3687;
+	st.global.u32 	[%rd61+4], %r3686;
+	st.global.u32 	[%rd61+8], %r3685;
+	st.global.u32 	[%rd61+12], %r3684;
+	st.global.u32 	[%rd61+16], %r3683;
+	st.global.u32 	[%rd61+20], %r3682;
+	st.global.u32 	[%rd61+24], %r3681;
+	st.global.u32 	[%rd61+28], %r3680;
+	st.global.u32 	[%rd61+32], %r3679;
+	st.global.u32 	[%rd61+36], %r3678;
+	st.global.u32 	[%rd61+40], %r3677;
+	st.global.u32 	[%rd61+44], %r3676;
+	st.global.u32 	[%rd61+48], %r3675;
+	st.global.u32 	[%rd61+52], %r3674;
+	st.global.u32 	[%rd61+56], %r3673;
+	st.global.u32 	[%rd61+60], %r3672;
 	bra.uni 	$L__BB5_19;
 
 $L__BB5_8:
@@ -6141,33 +6149,33 @@ $L__BB5_16:
 
 $L__BB5_17:
 	ld.param.u32 	%r3508, [xm_pearl_gemm_param_9];
-	ld.param.u64 	%rd58, [xm_pearl_gemm_param_8];
-	cvta.to.global.u64 	%rd54, %rd58;
-	atom.global.add.u32 	%r334, [%rd54], 1;
+	ld.param.u64 	%rd66, [xm_pearl_gemm_param_8];
+	cvta.to.global.u64 	%rd62, %rd66;
+	atom.global.add.u32 	%r334, [%rd62], 1;
 	setp.ge.u32 	%p14, %r334, %r3508;
 	@%p14 bra 	$L__BB5_19;
 
 	mul.lo.s32 	%r3507, %r334, 18;
-	mul.wide.u32 	%rd56, %r3507, 4;
-	add.s64 	%rd57, %rd54, %rd56;
-	st.global.u32 	[%rd57+4], %r306;
-	st.global.u32 	[%rd57+8], %r307;
-	st.global.u32 	[%rd57+12], %r3687;
-	st.global.u32 	[%rd57+16], %r3686;
-	st.global.u32 	[%rd57+20], %r3685;
-	st.global.u32 	[%rd57+24], %r3684;
-	st.global.u32 	[%rd57+28], %r3683;
-	st.global.u32 	[%rd57+32], %r3682;
-	st.global.u32 	[%rd57+36], %r3681;
-	st.global.u32 	[%rd57+40], %r3680;
-	st.global.u32 	[%rd57+44], %r3679;
-	st.global.u32 	[%rd57+48], %r3678;
-	st.global.u32 	[%rd57+52], %r3677;
-	st.global.u32 	[%rd57+56], %r3676;
-	st.global.u32 	[%rd57+60], %r3675;
-	st.global.u32 	[%rd57+64], %r3674;
-	st.global.u32 	[%rd57+68], %r3673;
-	st.global.u32 	[%rd57+72], %r3672;
+	mul.wide.u32 	%rd64, %r3507, 4;
+	add.s64 	%rd65, %rd62, %rd64;
+	st.global.u32 	[%rd65+4], %r306;
+	st.global.u32 	[%rd65+8], %r307;
+	st.global.u32 	[%rd65+12], %r3687;
+	st.global.u32 	[%rd65+16], %r3686;
+	st.global.u32 	[%rd65+20], %r3685;
+	st.global.u32 	[%rd65+24], %r3684;
+	st.global.u32 	[%rd65+28], %r3683;
+	st.global.u32 	[%rd65+32], %r3682;
+	st.global.u32 	[%rd65+36], %r3681;
+	st.global.u32 	[%rd65+40], %r3680;
+	st.global.u32 	[%rd65+44], %r3679;
+	st.global.u32 	[%rd65+48], %r3678;
+	st.global.u32 	[%rd65+52], %r3677;
+	st.global.u32 	[%rd65+56], %r3676;
+	st.global.u32 	[%rd65+60], %r3675;
+	st.global.u32 	[%rd65+64], %r3674;
+	st.global.u32 	[%rd65+68], %r3673;
+	st.global.u32 	[%rd65+72], %r3672;
 
 $L__BB5_19:
 	ret;
