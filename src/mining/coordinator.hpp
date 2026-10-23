@@ -16,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -98,6 +99,22 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     }
   }
 
+  // Watchdog: exit (so the launcher's restart loop recovers the GPU) after kMaxGpuErrors consecutive GPU errors, when
+  // a GPU makes no progress for kStallSeconds while there is work, or when no GPU could be started.
+  constexpr int kMaxGpuErrors = 10;
+  constexpr int kStallSeconds = 120;
+  std::atomic<int> exit_code{0}, init_failed{0};
+  auto steady_s = [] {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  };
+  std::vector<std::atomic<double>> last_progress(devs.size());  // steady seconds; 0 = not started / waiting
+  for (auto& t : last_progress) t = 0;
+  auto give_up = [&](int code, const std::string& why) {
+    error("WDOG", why + "; exiting so the launcher can restart X-Miner");
+    exit_code = code;
+    stop = true;
+  };
+
   std::vector<std::thread> workers;
   std::vector<std::atomic<double>> rates(devs.size());
   for (auto& r : rates) r = 0;
@@ -111,9 +128,16 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       std::string err;
       if (!eng->init(err)) {
         error("GPU", unit + " " + devs[i].name + ": " + err);
+        ++init_failed;
         return;
       }
-      uint64_t have = 0, rejects_seen = 0;
+      int errors = 0;  // consecutive
+      auto gpu_error = [&](const std::string& e) {
+        error("GPU", unit + ": " + e);
+        if (++errors >= kMaxGpuErrors) give_up(3, unit + ": " + std::to_string(errors) + " GPU errors in a row");
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      };
+      uint64_t have = 0, rejects_seen = 0, wd_passes = 0;
       bool job_fee = false;
       double rate = 0;
       while (!stop) {
@@ -121,13 +145,14 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
         uint64_t ver = 0;
         bool fee = false;
         if (!router.job(job, ver, fee)) {
+          last_progress[i] = 0;  // waiting for work is not a stall
           std::this_thread::sleep_for(std::chrono::milliseconds(200));
           continue;
         }
+        if (last_progress[i] == 0) last_progress[i] = steady_s();
         if (ver != have) {
           if (!eng->set_job(job, err)) {
-            error("GPU", unit + ": " + err);
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            gpu_error(err);
             continue;
           }
           have = ver;
@@ -136,12 +161,18 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
         std::vector<Share> shares;
         auto t0 = std::chrono::steady_clock::now();
         double h = T::iterate(*eng, shares, err);
+        static const char* wd_test = std::getenv("XM_WDOG_TEST");  // developer: "errors" or "stall" after 3 passes
+        if (wd_test && ++wd_passes > 3) {
+          if (wd_test[0] == 'e') h = 0, err = "simulated GPU error (XM_WDOG_TEST)";
+          if (wd_test[0] == 's') std::this_thread::sleep_for(std::chrono::hours(1));
+        }
         double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         if (h == 0) {
-          error("GPU", unit + ": " + err);
-          std::this_thread::sleep_for(std::chrono::seconds(1));
+          gpu_error(err);
           continue;
         }
+        errors = 0;
+        last_progress[i] = steady_s();
         stats.add_hashes(static_cast<int>(i), h, dt);
         rate = rate == 0 ? h / dt : 0.9 * rate + 0.1 * (h / dt);
         rates[i] = rate;
@@ -174,6 +205,16 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       total += rates[i];
     }
     T::report_rate(pool, total);
+    if (init_failed == static_cast<int>(devs.size())) give_up(4, "no GPU could be started");
+    for (size_t i = 0; i < devs.size(); ++i) {
+      double t = last_progress[i];
+      if (t > 0 && steady_s() - t > kStallSeconds) {
+        // A kernel that never returns cannot be joined: restore GPU tuning (main's quick-exit handler) and exit now.
+        error("WDOG", "unit " + std::to_string(i) + ": no GPU progress for " + std::to_string(kStallSeconds) +
+                          " s; exiting so the launcher can restart X-Miner");
+        std::quick_exit(3);
+      }
+    }
     {
       std::lock_guard<std::mutex> lk(rs_mu);
       rs.connected = router.connected();
@@ -192,7 +233,7 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   for (auto& w : workers) w.join();
   pool.stop();
   if (api) api->stop();
-  return 0;
+  return exit_code;
 }
 
 }  // namespace xm

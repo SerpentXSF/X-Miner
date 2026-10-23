@@ -21,6 +21,28 @@ x-miner --algorithm pearlhash --pool prl.kryptex.network:7048 --wallet krxXXXXXX
 x-miner --algorithm noid --pool na.rplant.xyz:17185 --wallet o1... --worker rig1
 ```
 
+## GPU tuning
+
+Clocks, offsets, power limits and intensity can be set per GPU on the command line (one value for every GPU or a
+comma list in `--gpu-id` order, `-` to skip a GPU). Everything is restored when X-Miner exits.
+
+| Option | NVIDIA (Windows / Linux) | AMD Windows | AMD Linux |
+|---|---|---|---|
+| `--gpu-plimit 150` / `--gpu-plimit 70%` | watts or % of default | % only (Adrenalin's power slider) | watts or % |
+| `--gpu-cclock 1500` | locks the core clock | - | Overdrive max core |
+| `--gpu-mclock 7000` | locks the memory clock | max memory clock | Overdrive max memory |
+| `--gpu-coffset 100` | core clock offset | max clock offset | - |
+| `--gpu-moffset 500` | memory clock offset | - | - |
+| `--gpu-intensity 32` | work per launch (pearlhash: N x 1024 columns, noid: 2^N nonces; 0 = auto) | same | same |
+
+`--gpu-tune-info` lists what each GPU allows and its current values. NVIDIA tuning and AMD Linux tuning need
+administrator / root rights (HiveOS runs miners as root).
+
+## Watchdog
+
+If a GPU returns 10 errors in a row, makes no progress for 2 minutes, or no GPU can be started, X-Miner exits with a
+non-zero code; the launchers restart it.
+
 ## Supported hardware
 
 | Vendor | Pearl | Parano1d | Requirement |

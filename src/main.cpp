@@ -230,6 +230,9 @@ int main(int argc, char** argv) {
   }
   gpu::Tuner tuner(devs);
   g_tuner = &tuner;
+  std::at_quick_exit([] {  // watchdog exit with a hung GPU: still put clocks and power back
+    if (g_tuner) g_tuner->restore();
+  });
 #ifdef _WIN32
   SetConsoleCtrlHandler(on_console_event, TRUE);
 #endif
