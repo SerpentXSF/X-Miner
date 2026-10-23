@@ -96,9 +96,11 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
   const int rows = min(gy - first, G), in = pid % per;
   const int by = first + in % rows, bx = in / rows;
 
-  const size_t LD = (size_t)K + XM_ROW_PAD;  // padded row stride of A' and B'^T
-  const int8_t* gA = A + (size_t)by * BM * LD;
-  const int8_t* gB = B + (size_t)bx * BN * LD;
+  // A' and B'^T are tiled (pearl_common.h tiled_offset): row block rb, k-slab s at (rb * K/128 + s) * 16 KB.
+  static_assert(BK == 128 && BM % 128 == 0 && BN % 128 == 0, "tiled layout assumes 128-k stages and 128-row blocks");
+  const size_t SLAB = 16384, RB_BYTES = (size_t)(K / 128) * SLAB;
+  const int8_t* gA = A + (size_t)by * (BM / 128) * RB_BYTES;
+  const int8_t* gB = B + (size_t)bx * (BN / 128) * RB_BYTES;
   const unsigned sbase = (unsigned)__cvta_generic_to_shared(&smem[0]);
 
   // Each thread copies 16-byte chunks: chunk q = tid + 256*i -> row q/CH (+256/CH rows per i), chunk q%CH. The
@@ -106,15 +108,17 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
   constexpr int RPP = THREADS / CH;  // rows per copy pass
   const int cp_row = tid / CH, cp_ch = tid % CH;
   const unsigned cp_soff = swz(cp_row, cp_ch);
-  const size_t cp_goff = (size_t)cp_row * LD + cp_ch * 16, cp_gstep = (size_t)RPP * LD;
+  const size_t cp_goff = (size_t)cp_row * 128 + cp_ch * 16;
+  // Row r of a block lives in row block r / 128 at slab row r % 128.
+  auto row_off = [&](int r) { return (size_t)(r >> 7) * RB_BYTES + (size_t)(r & 127) * 128; };
   auto load_stage = [&](int stage, int kt) {
     const unsigned sa = sbase + stage * STAGE_BYTES + cp_soff, sb = sa + STAGE_A;
-    const int8_t* ga = gA + cp_goff + (size_t)kt * BK;
-    const int8_t* gb = gB + cp_goff + (size_t)kt * BK;
+    const int8_t* ga = gA + cp_goff + (size_t)kt * SLAB;
+    const int8_t* gb = gB + cp_goff + (size_t)kt * SLAB;
 #pragma unroll
-    for (int i = 0; i < BM / RPP; ++i) cp_async16(sa + i * RPP * BK, ga + i * cp_gstep);
+    for (int i = 0; i < BM / RPP; ++i) cp_async16(sa + i * RPP * BK, ga + row_off(i * RPP));
 #pragma unroll
-    for (int i = 0; i < BN / RPP; ++i) cp_async16(sb + i * RPP * BK, gb + i * cp_gstep);
+    for (int i = 0; i < BN / RPP; ++i) cp_async16(sb + i * RPP * BK, gb + row_off(i * RPP));
     cp_async_commit();
   };
 

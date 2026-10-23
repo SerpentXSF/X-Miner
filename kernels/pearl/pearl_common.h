@@ -148,13 +148,12 @@ XM_DEV size_t packed_offset(uint32_t row, uint32_t k, uint32_t K) {
   return ((size_t)rb * (K >> 5) + kp) * 512 + lane * 16 + half * 8 + (kk & 7);
 }
 
-// NVIDIA row-major A'/B' rows are padded: a power-of-two row stride (K = 4096) makes the rows a tile streams at the
-// same k offset collide in a few L2 sets. Must match kNvRowPad in src/algo/pearl/pearl_gpu.cpp.
-#ifdef XM_PEARL_ROWMAJOR
-#define XM_ROW_PAD 128
-#else
-#define XM_ROW_PAD 0
-#endif
+// NVIDIA tiled layout: rows in blocks of 128, each block stored as K/128 contiguous 16 KB slabs of 128 rows x 128
+// k-bytes. A GEMM stage (128 k) then reads whole slabs instead of 128-384 rows 4 KB apart: fewer pages and DRAM
+// rows per stage. Must match the GEMM in pearl.cu.
+XM_DEV size_t tiled_offset(uint32_t row, uint32_t k, uint32_t K) {
+  return ((size_t)(row >> 7) * (K >> 7) + (k >> 7)) * 16384 + (row & 127) * 128 + (k & 127);
+}
 
 // X' = X + U[row][p0[l]] - U[row][p1[l]], written in the packed layout. One thread per (row, 8 consecutive k).
 extern "C" __global__ void xm_apply_noise(const int8_t* __restrict__ sig, const int8_t* __restrict__ uni,
@@ -179,7 +178,7 @@ extern "C" __global__ void xm_apply_noise(const int8_t* __restrict__ sig, const 
     out[i >> 2] |= v << (8 * (i & 3));
   }
 #ifdef XM_PEARL_ROWMAJOR
-  int8_t* dst = packed + (size_t)row * (K + XM_ROW_PAD) + k0;  // NVIDIA: row-major (K-major), padded rows
+  int8_t* dst = packed + tiled_offset(row, k0, K);  // NVIDIA: tiled K-major slabs (k0..k0+7 in one slab row)
 #else
   // k0..k0+7 stay inside one 8-byte-aligned run of the packed layout.
   int8_t* dst = packed + packed_offset(row, k0, K);
