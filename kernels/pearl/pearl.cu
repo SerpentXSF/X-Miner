@@ -154,11 +154,12 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
     for (int j = 0; j < 8; ++j)
 #pragma unroll
       for (int v = 0; v < 4; ++v) acc[i][j][v] = 0;
-  // This lane's tile transcript. R is kept rotated so the word updated by the current 128-k chunk is always R[0]:
-  // after N chunks, word w is R[(w - N) mod 16].
+  // This lane's tile transcript. Chunk c updates only word c % 16, so R lives in (L1-cached) local memory with a
+  // dynamic index: one load and one store per 128 k instead of 16 registers and a 16-move rotation.
   unsigned R[16];
 #pragma unroll
   for (int w = 0; w < 16; ++w) R[w] = 0;
+  int chunk = 0;
 
   const int nk = K / BK;
 #pragma unroll
@@ -213,10 +214,9 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
     }
   };
   auto fold = [&]() {  // 128 k done: x (filled during the last k-step) is this lane's tile XOR
-      unsigned r0 = ((R[0] << 13) | (R[0] >> 19)) ^ x;
-#pragma unroll
-      for (int w = 0; w < 15; ++w) R[w] = R[w + 1];
-      R[15] = r0;
+      const unsigned r = R[chunk & 15];
+      R[chunk & 15] = ((r << 13) | (r >> 19)) ^ x;
+      ++chunk;
     };
   // SPC stages per iteration = one 128-k Pearl chunk; the fold runs unconditionally at the end of it.
   for (int kt = 0; kt < nk; kt += SPC) {
@@ -226,7 +226,6 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
   }
 
   // Epilogue: every lane holds its tile's complete transcript.
-  // K / 128 is a multiple of 16 (K % 2048 == 0), so after the last chunk R[w] is word w again.
   const uint32_t t_rows = (uint32_t)(by * BM + wm * WM + (lane >> 2));
   const uint32_t t_cols = (uint32_t)(bx * BN + wn * WN + 2 * (lane & 3));
   if (out) {
