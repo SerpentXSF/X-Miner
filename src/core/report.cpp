@@ -51,6 +51,7 @@ nlohmann::json build_summary(const Snapshot& s, const RunState& r) {
               {"fee", {{"percent", r.fee_percent}, {"in_window", r.fee_window}, {"next_window_s", r.fee_next_s},
                        {"shares_accepted", s.fee_accepted}}},
               {"hr", {{"now", s.hr_now}, {"1m", s.hr_1m}, {"15m", s.hr_15m}, {"1h", s.hr_1h}}},
+              {"effective", {{"1h", s.eff_1h}, {"24h", s.eff_24h}, {"total", s.eff_total}}},
               {"shares", {{"accepted", s.accepted}, {"rejected", s.rejected}, {"stale", s.stale}}},
               {"devices", devices},
               {"log", log}};
@@ -121,7 +122,10 @@ void print_stats_table(const Snapshot& s, const RunState& r) {
           {Tone::Hud, "│"}});
   c.line({{Tone::Hud, "  └───────────────────────────────────┴───────────────┴─────────┴───────────────────────────────────────┘"}});
   c.line({{Tone::Dim, "  " + std::string(fee) + " · shares " + std::to_string(s.accepted) + " accepted / " +
-                          std::to_string(s.rejected + s.stale) + " rejected"}});
+                          std::to_string(s.rejected + s.stale) + " rejected" +
+                          (s.eff_total > 0 ? " · pool-credited 1h " + format_hashrate(s.eff_1h) + ", run " +
+                                                 format_hashrate(s.eff_total)
+                                           : std::string())}});
 }
 
 }  // namespace xm

@@ -147,7 +147,9 @@ async function tick() {
   $("fee").title = x.fee.in_window ? "Mining for the developer now" : `Next fee window in ${dur(x.fee.next_window_s)}`;
   $("pool").textContent = x.pool || "no pool";
   const [v, u] = split(x.hr.now); $("hr").textContent = v.toFixed(2); $("hru").textContent = u;
-  $("avg").textContent = `1m ${fmt(x.hr["1m"])} · 15m ${fmt(x.hr["15m"])} · 1h ${fmt(x.hr["1h"])}`;
+  $("avg").textContent = `1m ${fmt(x.hr["1m"])} · 15m ${fmt(x.hr["15m"])} · 1h ${fmt(x.hr["1h"])}` +
+    (x.effective && x.effective.total > 0 ? ` · pool-credited 1h ${fmt(x.effective["1h"])}` : "");
+  $("avg").title = "Pool-credited = work of your accepted shares; compare with the pool dashboard (noisy for the first hour)";
   $("acc").textContent = x.shares.accepted; $("rej").textContent = x.shares.rejected + x.shares.stale;
   let watts = 0; x.devices.forEach(d => { if (d.power > 0) watts += d.power; });
   $("pow").textContent = watts ? watts.toFixed(0) + " W" : "—";

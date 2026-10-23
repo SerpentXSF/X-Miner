@@ -29,12 +29,19 @@ void Stats::add_hashes(int dev, double hashes, double seconds) {
   while (!s.empty() && now - s.front().t > std::chrono::hours(1)) s.pop_front();
 }
 
-void Stats::share(int dev, bool accepted, bool stale, bool fee_window) {
+void Stats::share(int dev, bool accepted, bool stale, bool fee_window, double work) {
   std::lock_guard<std::mutex> lk(mu_);
   auto& d = devs_.at(dev);
   if (accepted) {
     ++d.accepted;
-    if (fee_window) ++fee_accepted_;
+    if (fee_window) {
+      ++fee_accepted_;
+    } else if (work > 0) {
+      auto now = Clock::now();
+      credited_.push_back({now, work});
+      credited_total_ += work;
+      while (!credited_.empty() && now - credited_.front().first > std::chrono::hours(24)) credited_.pop_front();
+    }
   } else if (stale) {
     ++d.stale;
   } else {
@@ -74,6 +81,16 @@ Snapshot Stats::snapshot() const {
   Snapshot out;
   out.uptime_s = std::chrono::duration<double>(now - start_).count();
   out.fee_accepted = fee_accepted_;
+  auto credited = [&](double window_s) {
+    auto cutoff = now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(window_s));
+    double w = 0;
+    for (auto it = credited_.rbegin(); it != credited_.rend() && it->first > cutoff; ++it) w += it->second;
+    double span = std::min(window_s, out.uptime_s);
+    return span > 0 ? w / span : 0.0;
+  };
+  out.eff_1h = credited(3600);
+  out.eff_24h = credited(86400);
+  out.eff_total = out.uptime_s > 0 ? credited_total_ / out.uptime_s : 0.0;
   for (size_t i = 0; i < devs_.size(); ++i) {
     const auto& d = devs_[i];
     DeviceSnapshot ds;

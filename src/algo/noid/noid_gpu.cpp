@@ -1,5 +1,6 @@
 #include "algo/noid/noid_gpu.hpp"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -68,6 +69,9 @@ bool Engine::set_job(const Job& job, std::string&) {
   hi32_ = static_cast<uint32_t>(splitmix(rng_));
   lo32_ = 0;
   have_job_ = true;
+  double t = 0;
+  for (int i = 31; i >= 0; --i) t = t * 256.0 + job.share_target[i];
+  share_work_ = t > 0 ? std::ldexp(1.0, 256) / t : 0.0;
   return true;
 }
 
@@ -116,6 +120,7 @@ double Engine::iterate(uint32_t batch, std::vector<Share>& shares, std::string& 
     s.nonce = nonce;
     s.digest = d;
     s.is_block = have_block && less_le256(d, job_.block_target.data());
+    s.work = share_work_;
     shares.push_back(s);
   }
   return batch;

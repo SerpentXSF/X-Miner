@@ -76,7 +76,7 @@ void PearlPool::submit(const pearl::Share& s, int tag, double hashrate) {
             {"params", {{"worker", login_}, {"job_id", s.job_id},
                         {"plain_proof", gzip_ ? pearl::base64(gzip_compress(s.proof.data(), s.proof.size())) : s.proof_b64},
                         {"hs", static_cast<uint64_t>(hashrate)}}}};
-  pending_[id] = {s.job_id, tag};
+  pending_[id] = {s.job_id, tag, s.work};
   outbox_.push_back(m.dump());
 }
 
@@ -161,7 +161,7 @@ void PearlPool::handle(const std::string& line) {
     p = it->second;
     pending_.erase(it);
   }
-  on_result_(ok, err, p.job_id, p.tag);
+  on_result_(ok, err, p.job_id, p.tag, p.work);
 }
 
 bool PearlPool::session(const PoolEndpoint& ep) {
@@ -212,7 +212,7 @@ bool PearlPool::session(const PoolEndpoint& ep) {
   conn_.close();
   // Shares in flight are lost with the connection.
   std::lock_guard<std::mutex> lk(mu_);
-  for (auto& [id, p] : pending_) on_result_(false, "connection lost", p.job_id, p.tag);
+  for (auto& [id, p] : pending_) on_result_(false, "connection lost", p.job_id, p.tag, p.work);
   pending_.clear();
   outbox_.clear();
   return true;

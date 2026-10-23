@@ -27,6 +27,9 @@ struct Snapshot {
   uint64_t accepted = 0, rejected = 0, stale = 0;
   uint64_t fee_accepted = 0;
   double uptime_s = 0;
+  // Pool-credited ("effective") hashrate: work of the user's accepted shares over the window (or the uptime if
+  // shorter). Compare with the pool's dashboard; it is noisy until a few dozen shares are in.
+  double eff_1h = 0, eff_24h = 0, eff_total = 0;
 };
 
 class Stats {
@@ -36,7 +39,8 @@ class Stats {
   void set_name(int dev, std::string name, int bus = -1);
   // Report that `hashes` hashes were completed on device `dev` during the last `seconds` of work.
   void add_hashes(int dev, double hashes, double seconds);
-  void share(int dev, bool accepted, bool stale, bool fee_window);
+  // work = hashes the pool credits for this share (2^256 / share target); fee-window shares are not counted.
+  void share(int dev, bool accepted, bool stale, bool fee_window, double work = 0);
   void sensors(int dev, double power_w, double temp_c, double fan_pct, double core_mhz);
   Snapshot snapshot() const;
 
@@ -58,6 +62,8 @@ class Stats {
   mutable std::mutex mu_;
   std::vector<Dev> devs_;
   uint64_t fee_accepted_ = 0;
+  std::deque<std::pair<Clock::time_point, double>> credited_;  // accepted user shares, up to 24 h
+  double credited_total_ = 0;
   Clock::time_point start_ = Clock::now();
 };
 

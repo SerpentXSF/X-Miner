@@ -63,9 +63,9 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   if (!plan.enabled) warn("FEE", "no developer wallet in this build: the dev fee is off");
 
   auto on_result = [&](bool fee) {
-    return [&, fee](bool ok, const std::string& err, const std::string& job, int dev) {
+    return [&, fee](bool ok, const std::string& err, const std::string& job, int dev, double work) {
       const bool stale = !ok && T::is_stale(err);
-      stats.share(dev, ok, stale, fee);
+      stats.share(dev, ok, stale, fee, work);
       const std::string who = fee ? "dev fee share" : "share", unit = "unit " + std::to_string(dev);
       if (ok) {
         log_line(Tone::Ok, "LOCK", who + " accepted  " + unit + "  job " + job);

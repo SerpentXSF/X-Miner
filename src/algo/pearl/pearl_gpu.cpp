@@ -1,6 +1,7 @@
 #include "algo/pearl/pearl_gpu.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -256,6 +257,11 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
       s.proof = serialize(p);
       s.proof_b64 = base64(s.proof);
       s.is_block = U256::from_le_bytes(f.hash.data()) <= block_bound;
+      {
+        const double mant = job_.share_nbits & 0x7fffff;
+        const int e = static_cast<int>(job_.share_nbits >> 24);
+        s.work = mant > 0 ? std::ldexp(1.0, 256 - 8 * (e - 3)) / mant : 0.0;
+      }
       shares.push_back(std::move(s));
     }
   }

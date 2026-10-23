@@ -32,6 +32,7 @@ struct Share {
   std::string proof_b64;        // base64(bincode PlainProof)
   std::vector<uint8_t> proof;   // bincode PlainProof (gzip sessions compress this)
   bool is_block = false;      // also meets the header's block target
+  double work = 0;            // MAC a pool credits for this share: 2^256 / share target
 };
 
 class Engine {

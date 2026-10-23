@@ -93,12 +93,12 @@ void NoidPool::submit(const noid::Share& s, int tag) {
   std::lock_guard<std::mutex> lk(mu_);
   auto wd = work_domain_.find(s.job_id);
   if (wd == work_domain_.end()) {
-    on_result_(false, "job expired before submit", s.job_id, tag);
+    on_result_(false, "job expired before submit", s.job_id, tag, s.work);
     return;
   }
   int id = next_id_++;
   json m = {{"id", id}, {"method", "mining.submit"}, {"params", {s.job_id, noid_nonce_hex(s.nonce), wd->second}}};
-  pending_[id] = {s.job_id, tag};
+  pending_[id] = {s.job_id, tag, s.work};
   outbox_.push_back(m.dump());
 }
 
@@ -193,7 +193,7 @@ void NoidPool::handle(const std::string& line) {
     pd = it->second;
     pending_.erase(it);
   }
-  on_result_(ok, err, pd.job_id, pd.tag);
+  on_result_(ok, err, pd.job_id, pd.tag, pd.work);
 }
 
 bool NoidPool::session(const PoolEndpoint& ep) {
@@ -244,7 +244,7 @@ bool NoidPool::session(const PoolEndpoint& ep) {
   std::lock_guard<std::mutex> lk(mu_);
   have_job_ = false;  // the nonce prefix belongs to this session
   work_domain_.clear();
-  for (auto& [id, p] : pending_) on_result_(false, "connection lost", p.job_id, p.tag);
+  for (auto& [id, p] : pending_) on_result_(false, "connection lost", p.job_id, p.tag, p.work);
   pending_.clear();
   outbox_.clear();
   return true;

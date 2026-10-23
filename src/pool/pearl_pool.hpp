@@ -27,7 +27,8 @@ namespace xm {
 class PearlPool {
  public:
   // Called with (accepted, error text, submitted job id, user tag) when the pool answers a submit.
-  using ResultFn = std::function<void(bool, const std::string&, const std::string&, int)>;
+  // (accepted, error, job id, tag, work credited for the share)
+  using ResultFn = std::function<void(bool, const std::string&, const std::string&, int, double)>;
 
   PearlPool(std::vector<PoolEndpoint> pools, std::string login, std::string password, ResultFn on_result);
   ~PearlPool();
@@ -67,6 +68,7 @@ class PearlPool {
   struct Pending {
     std::string job_id;
     int tag;
+    double work;
   };
   std::map<int, Pending> pending_;
   std::vector<std::string> outbox_;
