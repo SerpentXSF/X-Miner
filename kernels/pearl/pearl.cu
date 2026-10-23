@@ -3,8 +3,8 @@
 //
 // GEMM: C = A' * B'^T with A' (M x K) and B'^T (N x K) both row-major int8 ("K-major"), int32 accumulation.
 //   Block 128x256, 8 warps in 2x4, warp tile 64x64 = 4 (m16) x 8 (n8) mma.sync.m16n8k32 accumulators.
-//   K advances 64 per stage through a cp.async 3-stage shared-memory pipeline; fragments come from ldmatrix.x4 on
-//   XOR-swizzled 64-byte rows (conflict-free).
+//   K advances BK (128) per stage through a cp.async 2-stage shared-memory pipeline; fragments come from
+//   ldmatrix.x4 on XOR-swizzled BK-byte rows (conflict-free).
 // Hash tiles follow the accumulator layout: rows {0, 8, ..., 56} x cols {0, 1, 8, 9, ..., 56, 57} (h = 8, w = 16;
 //   the host's NVIDIA mining configuration), i.e. exactly the 128 accumulators one lane owns in its warp tile.
 //   Every 128 k each lane XORs its 128 running sums into a word x and folds t[c % 16] = rotl(t[c % 16], 13) ^ x,
@@ -15,22 +15,32 @@
 
 namespace {
 
-constexpr int BM = 128, BN = 256, BK = 64, THREADS = 256;
+#ifndef XM_PEARL_BK
+#define XM_PEARL_BK 128
+#endif
+constexpr int BM = 128, BN = 256, BK = XM_PEARL_BK, THREADS = 256;  // BK: k bytes per pipeline stage (64 or 128)
+constexpr int CH = BK / 16;     // 16-byte chunks per stage row
+constexpr int KS = BK / 32;     // mma k32 steps per stage
+constexpr int SPC = 128 / BK;   // stages per 128-k Pearl chunk
 constexpr int WM = 64, WN = 64;  // 8 warps: 2 (m) x 4 (n)
 constexpr int MT = WM / 16;      // m16 fragments per warp
-constexpr int STAGE_A = BM * BK, STAGE_B = BN * BK, STAGE_BYTES = STAGE_A + STAGE_B;  // 8 + 16 KB
-// Tuned on the RTX 3060 (TH/s at 127 W): stages 3 39.5 / 4 38.4; group rows 4 39.1 / 8 39.5 / 16 38.4.
+constexpr int STAGE_A = BM * BK, STAGE_B = BN * BK, STAGE_BYTES = STAGE_A + STAGE_B;  // 24 KB per 64 k
+// Tuned on the RTX 3060 (TH/s at 127 W): BK 64 x 3 stages 39.5 / 64 x 4 38.4 / 128 x 2 41.8;
+// group rows 4 39.1 / 8 39.5 / 16 38.4 (at BK 64).
 #ifndef XM_PEARL_STAGES
-#define XM_PEARL_STAGES 3
+#define XM_PEARL_STAGES 2
 #endif
 #ifndef XM_PEARL_GROUP
 #define XM_PEARL_GROUP 8
 #endif
-constexpr int STAGES = XM_PEARL_STAGES;  // cp.async pipeline depth: STAGES x 24 KB of dynamic shared memory
+constexpr int STAGES = XM_PEARL_STAGES;  // cp.async pipeline depth: STAGES x STAGE_BYTES of dynamic shared memory
 
-// Byte offset of (row, 16-byte chunk) inside a 64-byte-row stage, with an XOR swizzle so the 8 row addresses of
+// Byte offset of (row, 16-byte chunk) inside a BK-byte-row stage, with an XOR swizzle so the 8 row addresses of
 // an ldmatrix hit 32 distinct banks.
-__device__ __forceinline__ unsigned swz(int row, int chunk) { return row * 64 + ((chunk ^ ((row >> 1) & 3)) << 4); }
+__device__ __forceinline__ unsigned swz(int row, int chunk) {
+  if constexpr (BK == 64) return row * 64 + ((chunk ^ ((row >> 1) & 3)) << 4);
+  else return row * BK + ((chunk ^ (row & 7)) << 4);
+}
 
 __device__ __forceinline__ void cp_async16(unsigned smem, const void* gmem) {
   asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" ::"r"(smem), "l"(gmem));
@@ -64,7 +74,7 @@ __device__ __forceinline__ void mma_s8_oop(int* d, const int* c, const unsigned*
 
 }  // namespace
 
-// Grid (N/256, M/128), block 256, 72 KB dynamic shared memory. Requirements: M % 128 == 0, N % 256 == 0,
+// Grid (N/256, M/128), block 256, STAGES x 48 KB = 96 KB of dynamic shared memory (BK 128). Requirements: M % 128 == 0, N % 256 == 0,
 // K % 2048 == 0.
 // out != nullptr: debug path writing 16 transcript words per lane tile instead of the check, at index
 //   ((t_rows / 64) * 8 + t_rows % 8) * (N / 8) + (t_cols / 64) * 4 + (t_cols % 8) / 2.
@@ -86,29 +96,33 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
   const int8_t* gB = B + (size_t)bx * BN * K;
   const unsigned sbase = (unsigned)__cvta_generic_to_shared(&smem[0]);
 
-  // Each thread copies 2 x 16 bytes of A and 4 x 16 bytes of B per stage: chunk q = tid + 256*i -> row q/4
-  // (+64 per i), 16-byte chunk q%4. The swizzle depends on (row >> 1) & 3, which +64 rows does not change, so the
-  // per-lane shared and global offsets are computed once.
-  const int cp_row = tid >> 2, cp_ch = tid & 3;
+  // Each thread copies 16-byte chunks: chunk q = tid + 256*i -> row q/CH (+256/CH rows per i), chunk q%CH. The
+  // swizzle term does not change with +256/CH rows, so the per-lane shared and global offsets are computed once.
+  constexpr int RPP = THREADS / CH;  // rows per copy pass
+  const int cp_row = tid / CH, cp_ch = tid % CH;
   const unsigned cp_soff = swz(cp_row, cp_ch);
-  const size_t cp_goff = (size_t)cp_row * K + cp_ch * 16, cp_gstep = (size_t)64 * K;
+  const size_t cp_goff = (size_t)cp_row * K + cp_ch * 16, cp_gstep = (size_t)RPP * K;
   auto load_stage = [&](int stage, int kt) {
     const unsigned sa = sbase + stage * STAGE_BYTES + cp_soff, sb = sa + STAGE_A;
     const int8_t* ga = gA + cp_goff + (size_t)kt * BK;
     const int8_t* gb = gB + cp_goff + (size_t)kt * BK;
 #pragma unroll
-    for (int i = 0; i < 2; ++i) cp_async16(sa + i * 64 * 64, ga + i * cp_gstep);
+    for (int i = 0; i < BM / RPP; ++i) cp_async16(sa + i * RPP * BK, ga + i * cp_gstep);
 #pragma unroll
-    for (int i = 0; i < 4; ++i) cp_async16(sb + i * 64 * 64, gb + i * cp_gstep);
+    for (int i = 0; i < BN / RPP; ++i) cp_async16(sb + i * RPP * BK, gb + i * cp_gstep);
     cp_async_commit();
   };
 
-  // ldmatrix addresses: per-lane base (row within the 16/8-row group and swizzled chunk), plus constants per
-  // fragment. ks (0/1) selects k-bytes 0-31 or 32-63 of the 64-byte row: chunk index XOR 2.
+  // ldmatrix addresses: per-lane base (row within the 16/8-row group and swizzled chunk) for each k32 step ks of
+  // a stage (k bytes 32ks..32ks+31 = chunks 2ks, 2ks+1), plus constants per fragment.
   const int a_row = wm * WM + (lane & 7) + ((lane >> 3) & 1) * 8;
-  const unsigned a_off0 = swz(a_row, lane >> 4), a_off1 = swz(a_row, 2 + (lane >> 4));
   const int b_row = wn * WN + (lane & 7) + (lane >> 4) * 8;
-  const unsigned b_off0 = swz(b_row, (lane >> 3) & 1), b_off1 = swz(b_row, 2 + ((lane >> 3) & 1));
+  unsigned a_off[KS], b_off[KS];
+#pragma unroll
+  for (int ks = 0; ks < KS; ++ks) {
+    a_off[ks] = swz(a_row, 2 * ks + (lane >> 4));
+    b_off[ks] = swz(b_row, 2 * ks + ((lane >> 3) & 1));
+  }
 
   // Two accumulator sets: the running sums live in acc, except across a chunk boundary, where the last k-step
   // writes them into snap (out of place). The fold reads snap while the next chunk's first k-step reads snap and
@@ -136,7 +150,7 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
 #pragma unroll
   for (int s = 0; s < STAGES - 1; ++s) load_stage(s, s);
   unsigned x = 0;  // XOR of this lane's running sums, produced during the last k-step of each chunk
-  auto stage = [&](int kt, bool chunk_end) {  // chunk_end: 2nd stage of the 128-k chunk; else the 1st
+  auto stage = [&](int kt, int half) {  // half: position of this stage inside the 128-k chunk (0..SPC-1)
     const int st = kt % STAGES;
     cp_async_wait<STAGES - 2>();           // stage kt has landed (one newer group may still be in flight)
     __syncthreads();                       // stage kt visible; everyone is done with stage kt-1
@@ -144,23 +158,24 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
     else cp_async_commit();                // keep the group count uniform for wait_group
     const unsigned sA = sbase + st * STAGE_BYTES, sB = sA + STAGE_A;
 #pragma unroll
-    for (int ks = 0; ks < 2; ++ks) {       // two k32 steps per 64-k stage
+    for (int ks = 0; ks < KS; ++ks) {      // k32 steps of this stage
+      const int pos = half * KS + ks;      // k32 step inside the 128-k chunk (0..3)
       unsigned af[MT][4], bf[8][2];
       // A: matrix q = lane/8 -> rows +0/+8 (q&1), k-bytes +0/+16 (q>>1) = registers a0..a3 of the m16k32 fragment.
-      const unsigned pa = sA + (ks ? a_off1 : a_off0);
+      const unsigned pa = sA + a_off[ks];
 #pragma unroll
-      for (int i = 0; i < MT; ++i) ldmatrix_x4(af[i][0], af[i][1], af[i][2], af[i][3], pa + i * 16 * 64);
+      for (int i = 0; i < MT; ++i) ldmatrix_x4(af[i][0], af[i][1], af[i][2], af[i][3], pa + i * 16 * BK);
       // B: matrices (n-tile j, k 0-15), (n-tile j, k 16-31), (n-tile j+1, k 0-15), (n-tile j+1, k 16-31).
-      const unsigned pb = sB + (ks ? b_off1 : b_off0);
+      const unsigned pb = sB + b_off[ks];
 #pragma unroll
-      for (int j = 0; j < 8; j += 2) ldmatrix_x4(bf[j][0], bf[j][1], bf[j + 1][0], bf[j + 1][1], pb + j * 8 * 64);
-      if (!chunk_end && ks == 0) {
+      for (int j = 0; j < 8; j += 2) ldmatrix_x4(bf[j][0], bf[j][1], bf[j + 1][0], bf[j + 1][1], pb + j * 8 * BK);
+      if (pos == 0) {
         // First k-step of a chunk: read the snapshot, write the running sums back to acc.
 #pragma unroll
         for (int i = 0; i < MT; ++i)
 #pragma unroll
           for (int j = 0; j < 8; ++j) mma_s8_oop(acc[i][j], snap[i][j], af[i], bf[j][0], bf[j][1]);
-      } else if (chunk_end && ks == 1) {
+      } else if (pos == 3) {
         // Last k-step: write the chunk's sums to snap, and XOR each row as soon as the next row has been issued.
         auto xor_row = [&](int i) {
 #pragma unroll
@@ -189,10 +204,10 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
       for (int w = 0; w < 15; ++w) R[w] = R[w + 1];
       R[15] = r0;
     };
-  // Two 64-k stages per iteration = one 128-k Pearl chunk; the fold runs unconditionally at the end of it.
-  for (int kt = 0; kt < nk; kt += 2) {
-    stage(kt, false);
-    stage(kt + 1, true);
+  // SPC stages per iteration = one 128-k Pearl chunk; the fold runs unconditionally at the end of it.
+  for (int kt = 0; kt < nk; kt += SPC) {
+#pragma unroll
+    for (int h = 0; h < SPC; ++h) stage(kt + h, h);
     fold();
   }
 

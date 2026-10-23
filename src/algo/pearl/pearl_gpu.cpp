@@ -12,7 +12,8 @@ namespace xm::pearl {
 
 namespace {
 
-constexpr unsigned kNvStages = 3;  // must match XM_PEARL_STAGES in kernels/pearl/pearl.cu
+// Must match XM_PEARL_STAGES / XM_PEARL_BK in kernels/pearl/pearl.cu (dynamic shared memory size).
+constexpr unsigned kNvStages = 2, kNvBk = 128;
 
 struct Key8 {
   uint32_t w[8];
@@ -193,7 +194,7 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   std::vector<uint32_t> found(1 + kMaxFound * kRecWords);
   // AMD: 128x128 blocks of 4 waves. NVIDIA: 128x256 blocks of 8 warps with 72 KB of dynamic shared memory.
   const bool nv = dev_.info().vendor == gpu::Vendor::Nvidia;
-  const unsigned bn = nv ? 256 : 128, threads = nv ? 256 : 128, shared = nv ? kNvStages * (128 + 256) * 64 : 0;
+  const unsigned bn = nv ? 256 : 128, threads = nv ? 256 : 128, shared = nv ? kNvStages * (128 + 256) * kNvBk : 0;
   if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_pearl_gemm", n_ / bn, m_ / 128, 1, threads, 1, 1, shared, g)) {
     err = dev_.last_error();
     return 0;
