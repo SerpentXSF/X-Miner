@@ -35,6 +35,8 @@ constexpr int STAGE_A = BM * BK, STAGE_B = BN * BK, STAGE_BYTES = STAGE_A + STAG
 // Tuned on the RTX 3060 (TH/s at 127 W): BK 64 x 3 stages 39.5 / 64 x 4 38.4 / 128 x 2 41.8; at 170 W:
 // warp tiles 64x64 (8 warps) 46.3 vs 32x64 (16 warps, 127 registers) 43.5.
 // group rows 4 39.1 / 8 39.5 / 16 38.4 (at BK 64).
+// 12 warps (block 192x256, BK 64 x 3 stages, 168-register cap): 18 TH/s - ~45 registers spill, the spills miss L1
+// (84 KB of shared memory) and double DRAM traffic. Group rows 4/8/16 at BK 128: equal within noise.
 #ifndef XM_PEARL_STAGES
 #define XM_PEARL_STAGES 2
 #endif
