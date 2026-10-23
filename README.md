@@ -80,6 +80,13 @@ Pool certificates are not verified, as with other miners (pools use self-signed 
 - Parano1d: rplant (`na.rplant.xyz:17185`, plain or TLS on the same port), InnovLab
   (`stratum+ssl://us.innovlab.cc:19601`) and other `parano1d-stratum-v1` pools.
 
+## Antivirus warnings
+
+Windows Defender and other antivirus tools flag most cryptocurrency miners, X-Miner included, as "potentially
+unwanted" because miners are often installed without the owner's consent. X-Miner is open source: build it yourself
+if you prefer, check the release's `.sha256` file, and add an exclusion for the X-Miner folder if your antivirus
+quarantines `x-miner.exe`.
+
 ## Building from source
 
 Windows (VS 2022): `.\build.ps1`. Linux (gcc 11+, CMake, Ninja): `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build`.

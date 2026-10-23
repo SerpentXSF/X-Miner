@@ -25,7 +25,17 @@ Get-ChildItem launchers\windows\*.bat | ForEach-Object {
 & $exe --version
 $zip = Join-Path $root "dist\$name.zip"
 if (Test-Path $zip) { Remove-Item $zip }
-Compress-Archive -Path $stage -DestinationPath $zip
+# ZipArchive directly: Windows PowerShell's Compress-Archive writes '\' separators, which other unzip tools reject.
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+$archive = [System.IO.Compression.ZipFile]::Open($zip, [System.IO.Compression.ZipArchiveMode]::Create)
+try {
+  $base = (Resolve-Path (Join-Path $stage "..")).Path.TrimEnd('\') + '\'
+  foreach ($f in Get-ChildItem $stage -Recurse -File) {
+    $entry = $f.FullName.Substring($base.Length).Replace('\', '/')
+    [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $f.FullName, $entry,
+      [System.IO.Compression.CompressionLevel]::Optimal)
+  }
+} finally { $archive.Dispose() }
 $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
 "$hash  $name.zip" | Set-Content -Encoding ascii "$zip.sha256"
 Write-Host "packed $zip"
