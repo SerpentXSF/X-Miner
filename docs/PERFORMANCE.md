@@ -43,6 +43,15 @@ NVIDIA findings (RTX 3060):
 - 128-byte k stages with a 2-stage pipeline (96 KB): 39.5 -> 41.8 TH/s (half the barriers per MAC). Fragment
   double-buffering, L2::128B prefetch hints, other rasterization groups and 256x128 blocks: no gain or worse.
 - Noise apply rewritten (32-bit indexing, 8-byte vector access): 1.8 -> 0.65 ms per pass, 42.3 TH/s.
+- Nsight Compute (2026-10-22, 16384x32768 pass, Windows): tensor pipe 81% busy, 2 warps per scheduler (223 registers
+  and 96 KB shared memory allow one block per SM), stalls per issue: math-pipe throttle 8.7, fixed-latency wait 2.9,
+  MIO 0.9, LG 0.5, barrier 0.2. L2 hit 54%, DRAM ~11 GB per pass. The idle 19% is latency that 2 warps cannot hide.
+- 128-byte row padding (L2 aliasing) +1.6%; tiled A'/B' layout (16 KB slabs, replaces the padding) +2%:
+  46.3 TH/s at 170 W under WSL Linux, 41.3 natively on Windows. Persistent blocks: worse (L2 hit 38%).
+- Windows gap: at the same clock (~1.78 GHz) the same kernel does 22.8K MAC/clk on Windows vs 25.6K under WSL; not
+  the wait mode, the PTX JIT (XM_FORCE_PTX), pass size, carveout, TLB or L2 aliasing. SRBMiner does 49.9 TH/s
+  (~97% per clock) on Windows at 170 W, so Windows is not the limit. Open.
+- SRBMiner cannot be profiled (it exits under Nsight).
 - SRBMiner sustains ~97% of the int8 tensor peak per clock (48.7 TH/s at 1755 MHz = 28.7K MAC/clk x 0.97) and still
   holds 1755 MHz inside 127 W, so its energy per MAC is ~25% lower than ours. Our loop is already lean (128 IMMA vs
   ~200 other instructions per 128 k, most of them the fold's XORs); finding the rest needs a profiler (Nsight).

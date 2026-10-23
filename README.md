@@ -37,7 +37,8 @@ x-miner --algorithm noid --pool na.rplant.xyz:17185 --wallet o1... --worker rig1
 | Card | Pearl | Parano1d |
 |---|---|---|
 | RX 9070 XT (-30% power, ~237 W) | 100.8 TH/s | 17.5 MH/s |
-| RTX 3060 (127 W), Linux | 42.3 TH/s | 9.6 MH/s |
+| RTX 3060 (127 W / 170 W), Linux | 42.3 / 46.3 TH/s | 9.6 MH/s |
+| RTX 3060 (170 W), Windows | 41.3 TH/s | 8.7 MH/s |
 
 The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share
 difficulty x 2^32 for Pearl) per hour and per run. That is what the pool should credit, so it is the number to compare
