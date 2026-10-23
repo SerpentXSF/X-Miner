@@ -18,7 +18,10 @@ namespace {
 #ifndef XM_PEARL_BK
 #define XM_PEARL_BK 128
 #endif
-constexpr int BM = 128, BN = 256, BK = XM_PEARL_BK, THREADS = 256;  // BK: k bytes per pipeline stage (64 or 128)
+#ifndef XM_PEARL_BM
+#define XM_PEARL_BM 128
+#endif
+constexpr int BM = XM_PEARL_BM, BN = 384 - XM_PEARL_BM, BK = XM_PEARL_BK, THREADS = 256;  // block 128x256 or 256x128  // BK: k bytes per pipeline stage (64 or 128)
 constexpr int CH = BK / 16;     // 16-byte chunks per stage row
 constexpr int KS = BK / 32;     // mma k32 steps per stage
 constexpr int SPC = 128 / BK;   // stages per 128-k Pearl chunk
@@ -84,7 +87,8 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
                                                                     uint32_t* __restrict__ found, uint32_t max_found) {
   extern __shared__ __align__(128) int8_t smem[];  // [stage][A (BM x 64) | B (BN x 64)]
   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
-  const int wm = warp >> 2, wn = warp & 3;  // wm 0..1, wn 0..3
+  constexpr int WARPS_N = BN / 64;
+  const int wm = warp / WARPS_N, wn = warp % WARPS_N;
 
   // Grouped rasterization (8 row-blocks per group) so concurrent blocks share A/B tiles in L2.
   const int gx = gridDim.x, gy = gridDim.y, pid = blockIdx.y * gx + blockIdx.x;

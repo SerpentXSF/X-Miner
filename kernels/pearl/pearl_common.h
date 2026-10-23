@@ -152,26 +152,31 @@ XM_DEV size_t packed_offset(uint32_t row, uint32_t k, uint32_t K) {
 extern "C" __global__ void xm_apply_noise(const int8_t* __restrict__ sig, const int8_t* __restrict__ uni,
                                           const uint32_t* __restrict__ pairs, int8_t* __restrict__ packed,
                                           uint32_t rows, uint32_t K, uint32_t rank) {
-  size_t t = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
-  uint32_t groups = K / 8;
-  if (t >= (size_t)rows * groups) return;
-  uint32_t row = (uint32_t)(t / groups), k0 = (uint32_t)(t % groups) * 8;
-  const int8_t* s = sig + (size_t)row * K + k0;
+  // 32-bit indexing (rows * K / 8 < 2^32 for any Pearl shape we use): a 64-bit division per thread is slow on GPUs.
+  const uint32_t t = blockIdx.x * blockDim.x + threadIdx.x, groups = K / 8;
+  if (t >= rows * groups) return;
+  const uint32_t row = t / groups, k0 = (t - row * groups) * 8;
+  const uint2 sv = *reinterpret_cast<const uint2*>(sig + (size_t)row * K + k0);  // 8 signal bytes at once
+  const uint4* pp = reinterpret_cast<const uint4*>(pairs + 2 * k0);              // their 8 (p0, p1) pairs
+  const uint4 q0 = pp[0], q1 = pp[1], q2 = pp[2], q3 = pp[3];
+  const uint32_t idx[16] = {q0.x, q0.y, q0.z, q0.w, q1.x, q1.y, q1.z, q1.w,
+                            q2.x, q2.y, q2.z, q2.w, q3.x, q3.y, q3.z, q3.w};
   const int8_t* u = uni + (size_t)row * rank;
-  int8_t v[8];
+  uint32_t out[2] = {0, 0};
 #pragma unroll
   for (int i = 0; i < 8; ++i) {
-    uint32_t l = k0 + i;
-    v[i] = (int8_t)(s[i] + u[pairs[2 * l]] - u[pairs[2 * l + 1]]);
+    const uint32_t sw = i < 4 ? sv.x : sv.y;
+    const int s = (int8_t)(sw >> (8 * (i & 3)));
+    const uint32_t v = (uint32_t)(uint8_t)(int8_t)(s + u[idx[2 * i]] - u[idx[2 * i + 1]]);
+    out[i >> 2] |= v << (8 * (i & 3));
   }
 #ifdef XM_PEARL_ROWMAJOR
   int8_t* dst = packed + (size_t)row * K + k0;  // NVIDIA: plain row-major (K-major), what mma.sync expects
 #else
-  // k0..k0+7 stay inside one 8-byte run of the packed layout.
+  // k0..k0+7 stay inside one 8-byte-aligned run of the packed layout.
   int8_t* dst = packed + packed_offset(row, k0, K);
 #endif
-#pragma unroll
-  for (int i = 0; i < 8; ++i) dst[i] = v[i];
+  *reinterpret_cast<uint2*>(dst) = make_uint2(out[0], out[1]);
 }
 
 XM_DEV bool u256_le(const uint32_t a[8], const U256w& b) {
