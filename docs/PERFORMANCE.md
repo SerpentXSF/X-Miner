@@ -11,7 +11,8 @@ runtime before 2026-10-22). One Pearl pass (16384x32768x4096) on the 9070 XT is 
 
 | Card | Power limit | X-Miner | Reference | Notes |
 |---|---|---|---|---|
-| RX 9070 XT (gfx1201) | -30% (~237 W) | 100.8 TH/s | SRBMiner 3.7.6: ~100.3 TH/s @ 244 W (2% fee) | per-lane hash tiles; Kryptex live: shares accepted |
+| RX 9070 XT (gfx1201) | -30% (~237 W) | 101.1 TH/s | SRBMiner 3.7.6: ~100.3 TH/s @ 244 W (2% fee) | per-lane hash tiles; Kryptex live: shares accepted |
+| RX 9070 XT (gfx1201) | stock (~340 W) | 115.0 TH/s | WildRig 0.51.3: 107.8 TH/s @ 311 W cap | 0.34 TH/s/W stock, 0.43 at -30% |
 | RTX 3060 (sm_86) | 127 W | 42.3 TH/s (Linux) | SRBMiner 3.7.1: 48.7 TH/s @ 127 W / 1755 MHz (re-measured 2026-10-22) | 128x256 blocks |
 
 AMD per-lane hash tiles (2026-10-22): with the gfx12 WMMA layout a lane owns rows 8*(lane/16) + 0..7 of column
@@ -56,6 +57,10 @@ NVIDIA findings (RTX 3060):
   same for the compute-bound Parano1d kernel (8.7 vs 9.6 MH/s), so it is not memory; raising the process's WDDM
   GPU scheduling priority class (normal/high/realtime) changes nothing. Next: a Nsight Systems WDDM trace.
 - SRBMiner cannot be profiled (it exits under Nsight).
+- Per clock (2026-10-23, Nsight Compute, 16384x32768x4096): X-Miner 25.2 TH/s per GHz at 1815 MHz (81% tensor pipe,
+  SM active = elapsed, 2.4 instructions per IMMA, issue 13%, stall mostly math-pipe throttle); SRBMiner 28.4 (~99%).
+  No change from group rows 4/8/16, IMMA order, or the transcript in local memory (kept: 223 -> 211 registers).
+  12 warps per block (192x256, BK 64 x 3, 168-register cap) spill ~45 registers past L1: 18 TH/s, DRAM traffic x2.
 - SRBMiner sustains ~97% of the int8 tensor peak per clock (48.7 TH/s at 1755 MHz = 28.7K MAC/clk x 0.97) and still
   holds 1755 MHz inside 127 W, so its energy per MAC is ~25% lower than ours. Our loop is already lean (128 IMMA vs
   ~200 other instructions per 128 k, most of them the fold's XORs); finding the rest needs a profiler (Nsight).
