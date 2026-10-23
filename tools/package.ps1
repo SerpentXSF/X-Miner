@@ -1,12 +1,11 @@
 # Builds a Release x-miner.exe and packs dist\X-Miner-<version>-win64.zip with the launchers and docs.
-#   .\tools\package.ps1 [-SkipBuild]
-param([switch]$SkipBuild)
+#   .\tools\package.ps1   (always builds: packing a stale build-release\x-miner.exe once shipped an old binary)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
 $version = (Select-String -Path src\core\version.hpp -Pattern '#define XM_VERSION "([^"]+)"').Matches[0].Groups[1].Value
-if (-not $SkipBuild) { & .\build.ps1 -Config Release -BuildDir build-release }
+& .\build.ps1 -Config Release -BuildDir build-release
 $exe = Join-Path $root 'build-release\x-miner.exe'
 if (-not (Test-Path $exe)) { throw "missing $exe (build first)" }
 
