@@ -13,7 +13,7 @@ runtime before 2026-10-22). One Pearl pass (16384x32768x4096) on the 9070 XT is 
 |---|---|---|---|---|
 | RX 9070 XT (gfx1201) | -30% (~237 W) | 101.1 TH/s | SRBMiner 3.7.6: ~100.3 TH/s @ 244 W (2% fee) | per-lane hash tiles; Kryptex live: shares accepted |
 | RX 9070 XT (gfx1201) | stock (~340 W) | 115.0 TH/s | WildRig 0.51.3: 107.8 TH/s @ 311 W cap | 0.34 TH/s/W stock, 0.43 at -30% |
-| RTX 3060 (sm_86) | 127 W | 42.3 TH/s (Linux) | SRBMiner 3.7.1: 48.7 TH/s @ 127 W / 1755 MHz (re-measured 2026-10-22) | 128x256 blocks |
+| RTX 3060 (sm_86) | 127 W | 38.1 TH/s (42.3 as measured under WSL2, whose clock runs 10% slow - see below) | SRBMiner 3.7.1: 48.7 TH/s @ 127 W / 1755 MHz (re-measured 2026-10-22) | 128x256 blocks |
 
 AMD per-lane hash tiles (2026-10-22): with the gfx12 WMMA layout a lane owns rows 8*(lane/16) + 0..7 of column
 lane%16 in each 16x16 accumulator, so the AMD configuration uses rows {0..7, 16..23, 32..39, 48..55} x cols
@@ -49,7 +49,14 @@ NVIDIA findings (RTX 3060):
   MIO 0.9, LG 0.5, barrier 0.2. L2 hit 54%, DRAM ~11 GB per pass. The idle 19% is latency that 2 warps cannot hide.
 - 128-byte row padding (L2 aliasing) +1.6%; tiled A'/B' layout (16 KB slabs, replaces the padding) +2%:
   46.3 TH/s at 170 W under WSL Linux, 41.3 natively on Windows. Persistent blocks: worse (L2 hit 38%).
-- Windows gap: at the same clock (~1.78 GHz) the same kernel does 22.8K MAC/clk on Windows vs 25.6K under WSL; not
+- **Correction (2026-10-23): there is no Windows gap.** On the test machine, WSL2's CLOCK_MONOTONIC runs at 0.900x
+  real time (a 30 s sleep takes 33.4 s; miscalibrated TSC clocksource), so every hashrate measured under WSL2 here
+  is 11% too high: 46.3 -> 41.7 TH/s, the same as native Windows (41.3). Proof: with the core locked at 1500 MHz,
+  X-Miner's GEMM timed with CUDA events in a bare driver-API process runs 62.8 ms per 16384x32768x4096 pass
+  (35.0 TMAC/s, 81% of peak) natively and under WSL2 alike, and register-only IMMA (100% of peak), streaming reads
+  (341 GB/s) and random gathers match too, with 4 KB/64 KB or 2 MB (VMM) pages. The WSL2 figures elsewhere in
+  this file remain valid for comparisons with each other, not as absolute rates. Real gap to SRBMiner: ~17%.
+- (Superseded by the correction above.) Windows gap: at the same clock (~1.78 GHz) the same kernel does 22.8K MAC/clk on Windows vs 25.6K under WSL; not
   the wait mode, the PTX JIT (XM_FORCE_PTX), pass size, carveout, TLB or L2 aliasing. SRBMiner does 49.9 TH/s
   (~97% per clock) on Windows at 170 W, so Windows is not the limit. Open.
   Further checks (2026-10-22): the gap is the same for short launches (4096x8192 passes, ~3 ms: 39.0 vs 42.8 TH/s),
