@@ -21,14 +21,19 @@ namespace {
 #ifndef XM_PEARL_BM
 #define XM_PEARL_BM 128
 #endif
-constexpr int BM = XM_PEARL_BM, BN = 384 - XM_PEARL_BM, BK = XM_PEARL_BK, THREADS = 256;  // block 128x256 or 256x128  // BK: k bytes per pipeline stage (64 or 128)
+#ifndef XM_PEARL_WM
+#define XM_PEARL_WM 64  // warp tile height: 64 (8 warps, ~220 registers) or 32 (16 warps, <= 128 registers)
+#endif
+constexpr int BM = XM_PEARL_BM, BN = 384 - XM_PEARL_BM, BK = XM_PEARL_BK;  // block 128x256 or 256x128  // BK: k bytes per pipeline stage (64 or 128)
 constexpr int CH = BK / 16;     // 16-byte chunks per stage row
 constexpr int KS = BK / 32;     // mma k32 steps per stage
 constexpr int SPC = 128 / BK;   // stages per 128-k Pearl chunk
-constexpr int WM = 64, WN = 64;  // 8 warps: 2 (m) x 4 (n)
+constexpr int WM = XM_PEARL_WM, WN = 64;
+constexpr int THREADS = (BM / WM) * (BN / WN) * 32;
 constexpr int MT = WM / 16;      // m16 fragments per warp
 constexpr int STAGE_A = BM * BK, STAGE_B = BN * BK, STAGE_BYTES = STAGE_A + STAGE_B;  // 24 KB per 64 k
-// Tuned on the RTX 3060 (TH/s at 127 W): BK 64 x 3 stages 39.5 / 64 x 4 38.4 / 128 x 2 41.8;
+// Tuned on the RTX 3060 (TH/s at 127 W): BK 64 x 3 stages 39.5 / 64 x 4 38.4 / 128 x 2 41.8; at 170 W:
+// warp tiles 64x64 (8 warps) 46.3 vs 32x64 (16 warps, 127 registers) 43.5.
 // group rows 4 39.1 / 8 39.5 / 16 38.4 (at BK 64).
 #ifndef XM_PEARL_STAGES
 #define XM_PEARL_STAGES 2

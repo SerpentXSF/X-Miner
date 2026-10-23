@@ -13,6 +13,7 @@ namespace xm::pearl {
 namespace {
 
 // Must match XM_PEARL_STAGES / XM_PEARL_BK in kernels/pearl/pearl.cu (dynamic shared memory size).
+constexpr unsigned kNvWm = 64;  // = XM_PEARL_WM (warp tile height: hash-tile rows and block size)
 constexpr unsigned kNvStages = 2, kNvBk = 128, kNvBm = 128, kNvBn = 384 - kNvBm;  // + XM_PEARL_BM
 
 struct Key8 {
@@ -39,7 +40,8 @@ Engine::Engine(gpu::Device& dev, uint32_t m, uint32_t n, uint64_t seed) : dev_(d
   // Hash tiles match each kernel's accumulator ownership, so each lane folds and hashes its own tile. NVIDIA: the 128 accumulators one lane owns in a 64x64 warp tile of m16n8 fragments, rows
   // {0, 8, ..., 56} x cols {0, 1, 8, 9, ..., 56, 57}, so the fold needs no cross-lane traffic (kernels/pearl/pearl.cu).
   if (dev_.info().vendor == gpu::Vendor::Nvidia) {
-    std::vector<uint32_t> rows = {0, 8, 16, 24, 32, 40, 48, 56}, cols;
+    std::vector<uint32_t> rows, cols;
+    for (uint32_t r = 0; r < kNvWm; r += 8) rows.push_back(r);
     for (uint32_t j = 0; j < 8; ++j) cols.insert(cols.end(), {8 * j, 8 * j + 1});
     Pattern::from_list(rows, cfg_.rows);
     Pattern::from_list(cols, cfg_.cols);
@@ -194,7 +196,7 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   std::vector<uint32_t> found(1 + kMaxFound * kRecWords);
   // AMD: 128x128 blocks of 4 waves. NVIDIA: 128x256 blocks of 8 warps with 72 KB of dynamic shared memory.
   const bool nv = dev_.info().vendor == gpu::Vendor::Nvidia;
-  const unsigned bm = nv ? kNvBm : 128, bn = nv ? kNvBn : 128, threads = nv ? 256 : 128;
+  const unsigned bm = nv ? kNvBm : 128, bn = nv ? kNvBn : 128, threads = nv ? (kNvBm / kNvWm) * (kNvBn / 64) * 32 : 128;
   const unsigned shared = nv ? kNvStages * (kNvBm + kNvBn) * kNvBk : 0;
   if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_pearl_gemm", n_ / bn, m_ / bm, 1, threads, 1, 1, shared, g)) {
     err = dev_.last_error();
