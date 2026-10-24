@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -34,7 +35,8 @@ struct FeePlan {
 
 // The fee plan for an algorithm. XM_DEV_FEE_TEST="<wallet>:<cycle seconds>[:<percent>]" exercises the routing
 // with a test wallet and a short cycle, and is honoured only by builds without a developer wallet (where the fee
-// is off).
+// is off). XM_DEV_FEE_CYCLE="<seconds>[:<percent>]" shortens the cycle in any build, for testing the routing with
+// the real fee wallet; the percentage can only be raised (up to 50), never lowered.
 inline FeePlan fee_plan(const std::string& algorithm) {
   FeePlan p;
   const FeeTarget* t = fee_target(algorithm);
@@ -55,6 +57,17 @@ inline FeePlan fee_plan(const std::string& algorithm) {
     std::snprintf(buf, sizeof buf, "XM_DEV_FEE_TEST: routing %.1f%% of every %.0f s to %s", p.percent, p.cycle_s,
                   wallet.c_str());
     warn("FEE", buf);
+  }
+  if (const char* e = std::getenv("XM_DEV_FEE_CYCLE")) {  // testing: shorter cycle, optionally a larger share
+    const char* colon = std::strchr(e, ':');
+    double c = std::atof(e), pct = colon ? std::atof(colon + 1) : 0;
+    if (c >= 60) {
+      p.cycle_s = c;
+      if (pct >= p.percent && pct <= 50) p.percent = pct;
+      char buf[96];
+      std::snprintf(buf, sizeof buf, "XM_DEV_FEE_CYCLE: %.1f%% of every %.0f s", p.percent, p.cycle_s);
+      warn("FEE", buf);
+    }
   }
   if (parse_pool_list(t->pool, p.pools) || p.pools.empty()) return p;
   p.login = wallet + "." + t->worker;

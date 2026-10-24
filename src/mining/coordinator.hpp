@@ -115,6 +115,11 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     stop = true;
   };
 
+  // Thermal pause (--gpu-off-temperature): a GPU at or above its off temperature stops launching work until it
+  // cools to its resume temperature. The sensor loop below sets the flags.
+  std::vector<std::atomic<bool>> hot(devs.size());
+  for (auto& h : hot) h = false;
+
   std::vector<std::thread> workers;
   std::vector<std::atomic<double>> rates(devs.size());
   for (auto& r : rates) r = 0;
@@ -141,6 +146,12 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       bool job_fee = false;
       double rate = 0;
       while (!stop) {
+        if (hot[i]) {
+          last_progress[i] = 0;  // paused, not stalled
+          rates[i] = rate = 0;
+          std::this_thread::sleep_for(std::chrono::milliseconds(250));
+          continue;
+        }
         Job job;
         uint64_t ver = 0;
         bool fee = false;
@@ -203,6 +214,18 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       auto r = sensors.read(i);
       stats.sensors(static_cast<int>(i), r.power_w, r.temp_c, r.fan_pct, r.core_mhz);
       total += rates[i];
+      const int off = cfg.off_temp_for(i), resume = cfg.resume_temp_for(i);
+      const std::string unit = "unit " + std::to_string(i);
+      if (off > 0 && r.temp_c >= off && !hot[i]) {
+        hot[i] = true;
+        warn("TEMP", unit + " at " + std::to_string(static_cast<int>(r.temp_c)) + " C: paused until " +
+                         std::to_string(resume) + " C");
+        record_event("TEMP", unit + " paused at " + std::to_string(static_cast<int>(r.temp_c)) + " C");
+      } else if (hot[i] && r.temp_c >= 0 && r.temp_c <= resume) {
+        hot[i] = false;
+        info("TEMP", unit + " cooled to " + std::to_string(static_cast<int>(r.temp_c)) + " C: mining again");
+        record_event("TEMP", unit + " resumed");
+      }
     }
     T::report_rate(pool, total);
     if (init_failed == static_cast<int>(devs.size())) give_up(4, "no GPU could be started");

@@ -109,7 +109,14 @@ gpu::TuneRequest Config::tune_for(size_t gpu) const {
     else
       r.power_w = std::atof(pl.c_str());
   }
+  r.fan_pct = pick_int(fan, gpu);
   return r;
+}
+
+int Config::off_temp_for(size_t gpu) const { return pick_int(off_temp, gpu).value_or(0); }
+int Config::resume_temp_for(size_t gpu) const {
+  int off = off_temp_for(gpu);
+  return pick_int(resume_temp, gpu).value_or(off > 10 ? off - 10 : 0);
 }
 
 std::optional<std::string> parse_args(int argc, char** argv, Config& c) {
@@ -192,6 +199,15 @@ std::optional<std::string> parse_args(int argc, char** argv, Config& c) {
     } else if (a == "--gpu-plimit" || a == "--pl") {
       if (!(v = value())) return a + " needs a value";
       if (auto e = parse_gpu_list(*v, 10, 1000, true, c.plimit)) return a + ": " + *e;
+    } else if (a == "--gpu-fan" || a == "--fan") {
+      if (!(v = value())) return a + " needs a value";
+      if (auto e = parse_gpu_list(*v, 0, 100, false, c.fan)) return a + ": " + *e;
+    } else if (a == "--gpu-off-temperature" || a == "--temp-stop") {
+      if (!(v = value())) return a + " needs a value";
+      if (auto e = parse_gpu_list(*v, 30, 120, false, c.off_temp)) return a + ": " + *e;
+    } else if (a == "--gpu-resume-temperature" || a == "--temp-start") {
+      if (!(v = value())) return a + " needs a value";
+      if (auto e = parse_gpu_list(*v, 20, 115, false, c.resume_temp)) return a + ": " + *e;
     } else if (a == "--benchmark-time") {
       long n = 0;
       if (!(v = value()) || !parse_int(*v, 5, 86400, n)) return a + " needs seconds (5-86400)";
@@ -222,8 +238,11 @@ std::string usage() {
        "  --gpu-coffset <MHz>        core clock offset               (NVIDIA; AMD Windows: max clock offset)\n"
        "  --gpu-moffset <MHz>        memory clock offset             (NVIDIA)\n"
        "  --gpu-plimit <W|N%>        power limit in watts or % of default (AMD Windows: % only, e.g. 70%)\n"
+       "  --gpu-fan <N>              fixed fan speed in % (NVIDIA; AMD: flat fan curve at N%)\n"
        "                             NVIDIA and AMD Linux need administrator / root.\n"
-       "  --gpu-tune-info            show tunable ranges and current values for each GPU, then exit\n\n"
+       "  --gpu-off-temperature <C>  pause a GPU when it reaches C degrees ...\n"
+       "  --gpu-resume-temperature <C>  ... and resume at or below C (default: off temperature - 10)\n"
+       "  --gpu-tune-info           show tunable ranges and current values for each GPU, then exit\n\n"
        "Monitoring\n"
        "  --api-port <port>          HTTP API and web dashboard port (default 21550)\n"
        "  --api-host <ip>            bind address (default 127.0.0.1; 0.0.0.0 for LAN access)\n"

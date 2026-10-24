@@ -23,4 +23,6 @@ Features
 - HTTP API and web dashboard, pool-credited hashrate, HiveOS custom-miner package.
 - No runtime dependencies beyond the GPU driver: static Windows exe, Linux binary for glibc 2.29+ (Ubuntu 20.04+).
 
-Dev fee: 1%, time-sliced and shown in the console and API. It is off in builds without developer wallets.
+Dev fee: 1%, time-sliced (60 s per 100 minutes of mining) and shown in the console and API.
+
+GPU control: --gpu-fan (fixed fan speed), --gpu-off-temperature / --gpu-resume-temperature (pause a hot GPU).

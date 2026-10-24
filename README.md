@@ -1,7 +1,7 @@
 # X-Miner
 
 Open-source GPU miner by SerpentX Tech for **Pearl (pearlhash)** and **Parano1d (noid)** on AMD and NVIDIA GPUs.
-MIT licensed. 1% dev fee (time-sliced, shown in the console and API; off in builds without developer wallets).
+MIT licensed. 1% dev fee (time-sliced: about 60 s per 100 minutes of mining, shown in the console and API).
 
 ## Quick start
 

@@ -58,6 +58,9 @@ struct NvmlTune {
   int (*set_mem_off)(H, int) = nullptr;
   int (*get_offsets)(H, NvmlClockOffset*) = nullptr;  // newer per-P-state API (preferred)
   int (*set_offsets)(H, NvmlClockOffset*) = nullptr;
+  int (*num_fans)(H, unsigned*) = nullptr;
+  int (*set_fan)(H, unsigned, unsigned) = nullptr;
+  int (*default_fan)(H, unsigned) = nullptr;
   std::map<int, H> by_bus;
   bool ready = false;
 
@@ -85,6 +88,9 @@ struct NvmlTune {
     lib.sym("nvmlDeviceSetMemClkVfOffset", set_mem_off);
     lib.sym("nvmlDeviceGetClockOffsets", get_offsets);
     lib.sym("nvmlDeviceSetClockOffsets", set_offsets);
+    lib.sym("nvmlDeviceGetNumFans", num_fans);
+    lib.sym("nvmlDeviceSetFanSpeed_v2", set_fan);
+    lib.sym("nvmlDeviceSetDefaultFanSpeed_v2", default_fan);
     if (init() != 0) return;
     unsigned n = 0;
     count(&n);
@@ -108,8 +114,10 @@ struct NvmlTune {
 // adl_structures.h; Copyright (c) Advanced Micro Devices, Inc., MIT licence). The set procedure follows the SDK's
 // Overdrive8 sample: switch the optimized power mode to manual first, request only the settings being changed.
 enum {
-  kOd8GfxclkFmax = 0, kOd8GfxclkFmin = 1, kOd8UclkFmax = 8, kOd8PowerPercentage = 9, kOd8UclkFmin = 34,
+  kOd8GfxclkFmax = 0, kOd8GfxclkFmin = 1, kOd8UclkFmax = 8, kOd8PowerPercentage = 9, kOd8FanMinSpeed = 10,
+  kOd8FanZeroRpm = 15, kOd8FanCurveTemp1 = 19, kOd8FanCurveSpeed1 = 20, kOd8FanCurvePoints = 5, kOd8UclkFmin = 34,
   kOd8OptimizedPowerMode = 36, kOd8Count = 77,
+  kAdlOd8FanSpeedMin = 1 << 5, kAdlOd8FanZeroRpmControl = 1 << 9, kAdlOd8FanCurve = 1 << 13,
   kAdlOd8OptimizedGpuPowerMode = 1 << 16,
 };
 struct AdlAdapterInfoT {
@@ -275,7 +283,7 @@ void Tuner::restore() {
   if (impl_->undo.empty()) return;
   for (auto it = impl_->undo.rbegin(); it != impl_->undo.rend(); ++it) (*it)();
   impl_->undo.clear();
-  info("TUNE", "GPU clocks, offsets and power limits restored");
+  info("TUNE", "GPU clocks, offsets, power limits and fans restored");
 }
 
 void Tuner::report(size_t index) {
@@ -292,7 +300,10 @@ void Tuner::report(size_t index) {
     if (N.get_pl_default) N.get_pl_default(hit->second, &def);
     if (N.get_pl_range) N.get_pl_range(hit->second, &lo, &hi);
     char buf[160];
-    std::snprintf(buf, sizeof buf, ": power limit %.0f W (default %.0f, range %.0f-%.0f W)", cur / 1e3, def / 1e3, lo / 1e3, hi / 1e3);
+    unsigned fans = 0;
+    if (N.num_fans) N.num_fans(hit->second, &fans);
+    std::snprintf(buf, sizeof buf, ": power limit %.0f W (default %.0f, range %.0f-%.0f W), %u fan(s)", cur / 1e3,
+                  def / 1e3, lo / 1e3, hi / 1e3, fans);
     return info("TUNE", unit + buf);
   }
 #ifdef _WIN32
@@ -309,7 +320,13 @@ void Tuner::report(size_t index) {
   info("TUNE", unit + buf);
   const std::pair<int, const char*> shown[] = {{kOd8GfxclkFmax, "core clock offset MHz"}, {kOd8GfxclkFmin, "min core clock MHz"},
                                                {kOd8UclkFmax, "max memory clock MHz"}, {kOd8PowerPercentage, "power limit % offset"},
-                                               {kOd8UclkFmin, "min memory clock MHz"}, {kOd8OptimizedPowerMode, "power mode (3 = manual)"}};
+                                               {kOd8UclkFmin, "min memory clock MHz"}, {kOd8OptimizedPowerMode, "power mode (3 = manual)"},
+                                               {kOd8FanMinSpeed, "fan min speed"}, {kOd8FanZeroRpm, "fan zero RPM"},
+                                               {kOd8FanCurveTemp1, "fan curve 1 temp C"}, {kOd8FanCurveSpeed1, "fan curve 1 speed %"},
+                                               {kOd8FanCurveTemp1 + 2, "fan curve 2 temp C"}, {kOd8FanCurveSpeed1 + 2, "fan curve 2 speed %"},
+                                               {kOd8FanCurveTemp1 + 4, "fan curve 3 temp C"}, {kOd8FanCurveSpeed1 + 4, "fan curve 3 speed %"},
+                                               {kOd8FanCurveTemp1 + 6, "fan curve 4 temp C"}, {kOd8FanCurveSpeed1 + 6, "fan curve 4 speed %"},
+                                               {kOd8FanCurveTemp1 + 8, "fan curve 5 temp C"}, {kOd8FanCurveSpeed1 + 8, "fan curve 5 speed %"}};
   for (auto [id, name] : shown) {
     if (id >= static_cast<int>(init.size())) continue;
     char line[160];
@@ -413,6 +430,20 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
         fail("memory clock lock", N.why(rc));
       }
     }
+    if (req.fan_pct) {
+      unsigned fans = 0;
+      int rc = (!N.num_fans || !N.set_fan || !N.default_fan) ? 3 : N.num_fans(h, &fans);
+      unsigned done = 0;
+      for (unsigned f = 0; rc == 0 && f < fans; ++f) {
+        if ((rc = N.set_fan(h, f, static_cast<unsigned>(*req.fan_pct))) != 0) break;
+        ++done;
+        impl_->undo.push_back([&N, h, f] { N.default_fan(h, f); });
+      }
+      if (rc == 0 && done)
+        ok("fan speed " + std::to_string(*req.fan_pct) + "% (" + std::to_string(done) + " fan" + (done > 1 ? "s)" : ")"));
+      else
+        fail("fan speed", rc == 0 ? "no controllable fans" : N.why(rc));
+    }
     return applied;
   }
 
@@ -451,6 +482,23 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
     want.push_back({kOd8UclkFmax, *req.mem_lock_mhz});
   if (req.core_lock_mhz) warn("TUNE", unit + ": AMD Overdrive has no core clock lock; use --gpu-coffset (max clock offset)");
   if (req.mem_offset_mhz) warn("TUNE", unit + ": AMD Overdrive has no memory offset; use --gpu-mclock (max memory clock)");
+  if (req.fan_pct) {
+    // RDNA3/4: a 5-point fan curve; a flat curve at N% (temperatures kept) is a fixed speed, with zero RPM off.
+    // Older Overdrive8 GPUs: the minimum fan speed.
+    if (caps & kAdlOd8FanCurve) {
+      bool good = true;
+      for (int k = 0; k < kOd8FanCurvePoints; ++k)
+        good = good && in_range(kOd8FanCurveSpeed1 + 2 * k, *req.fan_pct, "fan speed");
+      if (good) {
+        for (int k = 0; k < kOd8FanCurvePoints; ++k) want.push_back({kOd8FanCurveSpeed1 + 2 * k, *req.fan_pct});
+        if (caps & kAdlOd8FanZeroRpmControl) want.push_back({kOd8FanZeroRpm, 0});
+      }
+    } else if (caps & kAdlOd8FanSpeedMin) {
+      if (in_range(kOd8FanMinSpeed, *req.fan_pct, "fan speed")) want.push_back({kOd8FanMinSpeed, *req.fan_pct});
+    } else {
+      fail("fan speed", "this GPU has no Overdrive fan control");
+    }
+  }
   if (want.empty()) return false;
   std::vector<int> ids;
   for (auto& w : want) ids.push_back(w.first);
@@ -468,9 +516,10 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
   std::string msg;
   for (auto [id, v] : want) {
     previous.push_back({id, id < static_cast<int>(cur.size()) ? cur[id] : init[id].defaultValue});
-    msg += id == kOd8PowerPercentage ? " power " + std::to_string(100 + v) + "%"
-           : id == kOd8GfxclkFmax    ? " core offset " + std::to_string(v) + " MHz"
-                                     : " max memory " + std::to_string(v) + " MHz";
+    if (id == kOd8PowerPercentage) msg += " power " + std::to_string(100 + v) + "%";
+    else if (id == kOd8GfxclkFmax) msg += " core offset " + std::to_string(v) + " MHz";
+    else if (id == kOd8UclkFmax) msg += " max memory " + std::to_string(v) + " MHz";
+    else if (id == kOd8FanMinSpeed || id == kOd8FanCurveSpeed1) msg += " fan " + std::to_string(v) + "%";
   }
   ok("Overdrive" + msg);
   impl_->undo.push_back([&A, adapter, previous, init] { A.apply(adapter, previous, {}, init); });
@@ -516,6 +565,36 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
     }
   }
   if (req.core_offset_mhz || req.mem_offset_mhz) warn("TUNE", unit + ": clock offsets are NVIDIA-only for now");
+  if (req.fan_pct) {
+    // RDNA3/4: gpu_od/fan_ctrl/fan_curve ("<point> <temp> <speed%>", then "c"); older: hwmon pwm1 in manual mode.
+    const std::string curve = dev + "/gpu_od/fan_ctrl/fan_curve";
+    std::ifstream cf(curve);
+    std::vector<int> temps;
+    for (std::string line; std::getline(cf, line);) {
+      int pt = 0, t = 0, sp = 0;
+      if (std::sscanf(line.c_str(), "%d: %dC %d%%", &pt, &t, &sp) == 3) temps.push_back(t);
+    }
+    if (!temps.empty()) {
+      bool good = true;
+      for (size_t k = 0; k < temps.size(); ++k)
+        good = good && write_text(curve, std::to_string(k) + " " + std::to_string(temps[k]) + " " + std::to_string(*req.fan_pct));
+      good = good && write_text(curve, "c");
+      if (good) {
+        ok("fan curve flat at " + std::to_string(*req.fan_pct) + "%");
+        impl_->undo.push_back([curve] { write_text(curve, "r"); write_text(curve, "c"); });
+      } else {
+        fail("fan speed", "cannot write " + curve + " (needs root and overdrive enabled)");
+      }
+    } else {
+      const std::string en = hw + "/pwm1_enable", pwm = hw + "/pwm1", prev = read_line(en);
+      if (!prev.empty() && write_text(en, "1") && write_text(pwm, std::to_string(*req.fan_pct * 255 / 100))) {
+        ok("fan speed " + std::to_string(*req.fan_pct) + "%");
+        impl_->undo.push_back([en, prev] { write_text(en, prev); });
+      } else {
+        fail("fan speed", "cannot write " + pwm + " (needs root)");
+      }
+    }
+  }
   return applied;
 #endif
 }

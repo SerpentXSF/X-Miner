@@ -32,6 +32,8 @@ struct Config {
   // Per-GPU settings: one value for every selected GPU, or a comma list in --gpu-id order ("-" = leave alone).
   std::vector<std::string> intensity;  // work size per launch; empty / 0 = auto (see usage())
   std::vector<std::string> cclock, mclock, coffset, moffset, plimit;  // MHz / MHz / MHz / MHz / W or N%
+  std::vector<std::string> fan;                // fixed fan speed, %
+  std::vector<std::string> off_temp, resume_temp;  // pause a GPU at off_temp (C), resume at resume_temp
   bool list_devices = false;
   bool tune_info = false;             // --gpu-tune-info: show tunable ranges and current values, then exit
   bool list_algorithms = false;
@@ -47,6 +49,8 @@ struct Config {
   std::string login() const;          // wallet[.worker]
   int intensity_for(size_t gpu) const;               // 0 = auto
   gpu::TuneRequest tune_for(size_t gpu) const;      // index into the selected GPUs
+  int off_temp_for(size_t gpu) const;                // 0 = no thermal pause
+  int resume_temp_for(size_t gpu) const;             // default off_temp - 10
 };
 
 // Parses argv. Returns an error message on bad input (nullopt on success).

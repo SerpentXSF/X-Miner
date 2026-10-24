@@ -153,3 +153,19 @@ TEST(config_gpu_tuning_lists) {
   xm::Config d;
   CHECK(xm::parse_args(3, const_cast<char**>(bad), d).has_value());
 }
+
+TEST(config_fan_and_thermal_pause) {
+  const char* argv[] = {"x-miner", "--gpu-fan", "70,-", "--gpu-off-temperature", "85", "--gpu-resume-temperature", "-,70"};
+  xm::Config c;
+  CHECK(!xm::parse_args(7, const_cast<char**>(argv), c));
+  CHECK(c.tune_for(0).fan_pct && *c.tune_for(0).fan_pct == 70);
+  CHECK(!c.tune_for(1).fan_pct);
+  CHECK_EQ(c.off_temp_for(1), 85);
+  CHECK_EQ(c.resume_temp_for(0), 75);  // default: 10 below the off temperature
+  CHECK_EQ(c.resume_temp_for(1), 70);
+  xm::Config none;
+  CHECK_EQ(none.off_temp_for(0), 0);
+  const char* bad[] = {"x-miner", "--gpu-fan", "101"};
+  xm::Config d;
+  CHECK(xm::parse_args(3, const_cast<char**>(bad), d).has_value());
+}
