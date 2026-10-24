@@ -62,7 +62,7 @@ class Engine {
   std::mt19937_64 rng_;
   std::vector<int8_t> a_, bt_;  // host copies of the signal matrices
   gpu::DevPtr d_a_ = 0, d_bt_ = 0, d_ap_ = 0, d_bp_ = 0, d_uni_ = 0, d_pairs_ = 0, d_cvs_ = 0, d_out_ = 0,
-              d_found_ = 0;
+              d_found_ = 0, d_wave_ = 0;
   Job job_;
   bool have_job_ = false;
   Hash job_key_{};

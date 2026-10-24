@@ -1,5 +1,6 @@
 #include "algo/pearl/pearl_gpu.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -57,7 +58,7 @@ Engine::Engine(gpu::Device& dev, uint32_t m, uint32_t n, uint64_t seed) : dev_(d
 }
 
 Engine::~Engine() {
-  for (gpu::DevPtr p : {d_a_, d_bt_, d_ap_, d_bp_, d_uni_, d_pairs_, d_cvs_, d_out_, d_found_}) dev_.free(p);
+  for (gpu::DevPtr p : {d_a_, d_bt_, d_ap_, d_bp_, d_uni_, d_pairs_, d_cvs_, d_out_, d_found_, d_wave_}) dev_.free(p);
 }
 
 void Engine::fill_random(int8_t* p, size_t n) {
@@ -92,7 +93,8 @@ bool Engine::init(std::string& err) {
   d_cvs_ = dev_.alloc(std::max(sa, sb) / 1024 * 32);
   d_out_ = dev_.alloc(256);  // unused by the fused path; kept non-null for allocation checks
   d_found_ = dev_.alloc((1 + kMaxFound * kRecWords) * 4);
-  if (!d_a_ || !d_bt_ || !d_ap_ || !d_bp_ || !d_uni_ || !d_pairs_ || !d_cvs_ || !d_out_ || !d_found_) {
+  d_wave_ = dev_.alloc(4);  // NVIDIA: wave start counter of the persistent GEMM
+  if (!d_a_ || !d_bt_ || !d_ap_ || !d_bp_ || !d_uni_ || !d_pairs_ || !d_cvs_ || !d_out_ || !d_found_ || !d_wave_) {
     err = "out of GPU memory (" + dev_.last_error() + ")";
     return false;
   }
@@ -192,13 +194,21 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   U256w bw;
   for (int i = 0; i < 8; ++i) bw.w[i] = bound.w[i];
   gpu::DevPtr no_out = 0;  // fused jackpot check in the GEMM epilogue
-  void* g[] = {&d_ap_, &d_bp_, &no_out, &M, &N, &K, &seed, &bw, &d_found_, &maxf};
+  void* g[] = {&d_ap_, &d_bp_, &no_out, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_};
   std::vector<uint32_t> found(1 + kMaxFound * kRecWords);
-  // AMD: 128x128 blocks of 4 waves. NVIDIA: 128x256 blocks of 8 warps with 72 KB of dynamic shared memory.
+  // AMD: 128x128 blocks of 4 waves. NVIDIA: persistent, one block per SM (8 math warps + 1 copy warp) walking
+  // 128x256 tiles, 96 KB of dynamic shared memory.
   const bool nv = dev_.info().vendor == gpu::Vendor::Nvidia;
-  const unsigned bm = nv ? kNvBm : 128, bn = nv ? kNvBn : 128, threads = nv ? (kNvBm / kNvWm) * (kNvBn / 64) * 32 : 128;
-  const unsigned shared = nv ? kNvStages * (kNvBm + kNvBn) * kNvBk : 0;
-  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_pearl_gemm", n_ / bn, m_ / bm, 1, threads, 1, 1, shared, g)) {
+  bool ok = dev_.memset(d_found_, 0, 4);
+  if (nv) {
+    const unsigned tiles = (m_ / kNvBm) * (n_ / kNvBn), sms = static_cast<unsigned>(dev_.info().compute_units);
+    const unsigned grid = std::min(tiles, sms > 0 ? sms : 1u), threads = (kNvBm / kNvWm) * (kNvBn / 64) * 32 + 32;
+    const unsigned shared = kNvStages * (kNvBm + kNvBn) * kNvBk;
+    ok = ok && dev_.memset(d_wave_, 0, 4) && dev_.launch("xm_pearl_gemm", grid, 1, 1, threads, 1, 1, shared, g);
+  } else {
+    ok = ok && dev_.launch("xm_pearl_gemm", n_ / 128, m_ / 128, 1, 128, 1, 1, 0, g);
+  }
+  if (!ok) {
     err = dev_.last_error();
     return 0;
   }

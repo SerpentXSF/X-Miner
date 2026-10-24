@@ -13,7 +13,8 @@ runtime before 2026-10-22). One Pearl pass (16384x32768x4096) on the 9070 XT is 
 |---|---|---|---|---|
 | RX 9070 XT (gfx1201) | -30% (~237 W) | 101.1 TH/s | SRBMiner 3.7.6: ~100.3 TH/s @ 244 W (2% fee) | per-lane hash tiles; Kryptex live: shares accepted |
 | RX 9070 XT (gfx1201) | stock (~340 W) | 115.0 TH/s | WildRig 0.51.3: 107.8 TH/s @ 311 W cap | 0.34 TH/s/W stock, 0.43 at -30% |
-| RTX 3060 (sm_86) | 127 W | 38.1 TH/s (42.3 as measured under WSL2, whose clock runs 10% slow - see below) | SRBMiner 3.7.1: 48.7 TH/s @ 127 W / 1755 MHz (re-measured 2026-10-22) | 128x256 blocks |
+| RTX 3060 (sm_86) | stock (170 W) | 44.4 TH/s | SRBMiner 3.7.1: 49.8 TH/s @ 170 W / 1785 MHz | persistent blocks + copy warp; Kryptex live: shares accepted |
+| RTX 3060 (sm_86) | 127 W | 38.1 TH/s before the copy warp (42.3 as measured under WSL2, whose clock runs 10% slow - see below) | SRBMiner 3.7.1: 48.7 TH/s @ 127 W / 1755 MHz (re-measured 2026-10-22) | 128x256 blocks |
 
 AMD per-lane hash tiles (2026-10-22): with the gfx12 WMMA layout a lane owns rows 8*(lane/16) + 0..7 of column
 lane%16 in each 16x16 accumulator, so the AMD configuration uses rows {0..7, 16..23, 32..39, 48..55} x cols
@@ -62,12 +63,35 @@ NVIDIA findings (RTX 3060):
   DRAM) and the BLAKE3 epilogue ~1%. Spreading each stage's copies over its first 3 k32 steps: 81.4 -> 83.3%
   (native Windows, same hour, 170 W: 40.44 -> 41.28 TH/s). L2 prefetch, BK 64 stages, and a deferred fold lose.
 - Power is what limits the RTX 3060 (170 W cap at stock), so energy per MAC decides the hashrate. Board power at a
-  locked 1500 MHz (harness, constant data): full kernel 77 W; without the global -> shared copies 51 W; with the
+  locked 1500 MHz (harness, constant data; see the data note below for Pearl-like values): full kernel 77 W; without the global -> shared copies 51 W; with the
   data resident in L2 the copies still cost ~17 W, DRAM ~9 W more. Block grouping changes power (G 1: 87 W, G 4/8:
   77 W) but not speed. Bytes per MAC fall only with bigger block tiles, which 128-k double buffering caps at
   BM + BN <= 396 rows (99 KB of shared memory) and the register file at ~32K accumulators per SM. A change that
   is faster at a locked clock can be slower at the cap (an ordered-XOR fold: +1.6% at 1500 MHz, -1.2% at 170 W),
   so every kernel change is checked at stock settings too.
+- **Data, DRAM drift and a copy warp (2026-10-23 night).** The bare harness now fills A'/B' with Pearl-like values
+  (signal [-8, 7] plus the difference of two [-32, 31] noise terms); the constant pattern used before drew ~30% less
+  power. At a locked 1500 MHz the kernel draws 110 W on Pearl-like data and 65 W on all-zero matrices: operand
+  switching in the tensor cores and data paths is the largest variable cost, and it depends on the values (unsigned
+  [0, 15] data 86 W, [0, 127] 104 W), not something a kernel can avoid. Tensor cores + ldmatrix alone on Pearl-like
+  data reach 55.8 TMAC/s at 1942 MHz inside 170 W (+ the fold: 51.6), so SRBMiner's 49.8 is plausible; X-Miner sat
+  at 43.6 because feeding the tensor cores cost ~34 W at 1500 MHz, ~18 W of it DRAM (all data L2-resident: 110 -> 92
+  W). Nsight showed why DRAM was high: 8-10 GB per pass against a 4.4-5.0 GB minimum (L2 hit 64-70% instead of 81%),
+  varying from run to run, because the blocks that share A/B slabs drift apart in k as the grid runs. Changes:
+  - XOR fold in 4 independent chains instead of one 64-LOP3 dependency chain: +1.6% at the cap.
+  - Persistent blocks (one per SM, tiles in the same grouped order) with a 9th warp that issues every global ->
+    shared copy up to two stages ahead, across tile boundaries; mbarriers replace __syncthreads, so the math warps
+    no longer issue copies or wait for each other (+5% at a locked 1500 MHz). The copy warps start each wave of tiles
+    together (one global counter), which holds DRAM at 4.96 GB per pass (L2 hit 81.35%). Without that sync the copy
+    warp's bursts push DRAM to 12 GB and the gain at the cap disappears (persistent blocks without a copy warp were
+    already measured worse in 2026-10-22, L2 hit 38%).
+  - Result, native Windows, stock 170 W, same hour: 41.35 -> 44.4 TH/s (+7.4%, incl. a branch-free lane-0 mbarrier
+    arrive, +0.7%); --selftest, the official verifier
+    and live Kryptex shares pass. Group rows 4/16, copy-warp back-off sleeps and an earlier copy schedule: slower.
+  - Nine warps cap registers at 168 per thread (three warps share one scheduler's register file); the math warps fit
+    once the ldmatrix offsets are derived from one base (swz(row, 2ks + c) = swz(row, c) ^ (ks << 5)).
+  - Left: noise for A is 0.69 ms of a 49.9 ms pass (1.4%); the rest of the gap to SRBMiner (~12%) is per-clock
+    efficiency (tensor pipe ~89% busy at 1500 MHz) and the energy of the remaining L2 -> SM traffic.
 - Pearl allows no shortcut through the noise: E_A = E_AL x E_ARᵀ has rank r = 128, the same as the 128-k chunk
   that the transcript needs, so a low-rank product costs as many MACs as the direct one. r = 128 is also the
   optimum: larger ranks scale the share bound by 128/r, smaller ones fold more often.

@@ -14,7 +14,7 @@ GPUs
 
 Measured (see docs/PERFORMANCE.md)
 - RX 9070 XT: Pearl 115.0 TH/s at stock power (~340 W), 101.1 TH/s at -30% (~237 W); Parano1d 17.5 MH/s.
-- RTX 3060: Pearl 41.5 TH/s at 170 W (36.7 at 127 W); Parano1d 8.7 MH/s.
+- RTX 3060: Pearl 44.4 TH/s at stock 170 W; Parano1d 8.7 MH/s.
 
 Features
 - Pools: Pearl object stratum (Kryptex, HeroMiners), parano1d-stratum-v1 (rplant, InnovLab); TLS; failover lists.
