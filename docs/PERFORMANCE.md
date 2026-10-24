@@ -61,6 +61,16 @@ NVIDIA findings (RTX 3060):
   92.3%; real kernel 81.4%, of which the global -> shared copies cost ~7.7% even when the data sits in L2 (so not
   DRAM) and the BLAKE3 epilogue ~1%. Spreading each stage's copies over its first 3 k32 steps: 81.4 -> 83.3%
   (native Windows, same hour, 170 W: 40.44 -> 41.28 TH/s). L2 prefetch, BK 64 stages, and a deferred fold lose.
+- Power is what limits the RTX 3060 (170 W cap at stock), so energy per MAC decides the hashrate. Board power at a
+  locked 1500 MHz (harness, constant data): full kernel 77 W; without the global -> shared copies 51 W; with the
+  data resident in L2 the copies still cost ~17 W, DRAM ~9 W more. Block grouping changes power (G 1: 87 W, G 4/8:
+  77 W) but not speed. Bytes per MAC fall only with bigger block tiles, which 128-k double buffering caps at
+  BM + BN <= 396 rows (99 KB of shared memory) and the register file at ~32K accumulators per SM. A change that
+  is faster at a locked clock can be slower at the cap (an ordered-XOR fold: +1.6% at 1500 MHz, -1.2% at 170 W),
+  so every kernel change is checked at stock settings too.
+- Pearl allows no shortcut through the noise: E_A = E_AL x E_ARᵀ has rank r = 128, the same as the 128-k chunk
+  that the transcript needs, so a low-rank product costs as many MACs as the direct one. r = 128 is also the
+  optimum: larger ranks scale the share bound by 128/r, smaller ones fold more often.
 - (Superseded by the correction above.) Windows gap: at the same clock (~1.78 GHz) the same kernel does 22.8K MAC/clk on Windows vs 25.6K under WSL; not
   the wait mode, the PTX JIT (XM_FORCE_PTX), pass size, carveout, TLB or L2 aliasing. SRBMiner does 49.9 TH/s
   (~97% per clock) on Windows at 170 W, so Windows is not the limit. Open.
