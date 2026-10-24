@@ -38,7 +38,10 @@ constexpr int STAGE_A = BM * BK, STAGE_B = BN * BK, STAGE_BYTES = STAGE_A + STAG
 // Bare-harness timings at a locked 1500 MHz (2026-10-23, 16384x32768 pass; peak 43.0 TMAC/s): baseline 35.0 TMAC/s;
 // copies spread over the first 3 k32 steps 35.75 (all 4: 33.1); without any copies 37.9 and also without the BLAKE3
 // epilogue 39.2 (diagnostics); L2 prefetch of stage kt+2..4 33.2-33.7; BK 64 x 3/4 stages 31.4-31.6; folding each
-// sum before its next-chunk mma instead of snapshots 33.7.
+// sum before its next-chunk mma instead of snapshots 33.7; XOR of the snapshot during the next chunk's first k-step
+// (ordered lop3s) 36.4 at 1500 MHz but 41.0 vs 41.5 TH/s at the 170 W cap (32 bytes of spills cost power): at the
+// power cap, energy per MAC decides, so check every change at stock settings too.
+// Full-kernel costs at 1500 MHz: copies ~7.6%, fold ~4.6%, BLAKE3 epilogue ~1%; with all three removed 95.4%.
 // 12 warps (block 192x256, BK 64 x 3 stages, 168-register cap): 18 TH/s - ~45 registers spill, the spills miss L1
 // (84 KB of shared memory) and double DRAM traffic. Group rows 4/8/16 at BK 128: equal within noise.
 #ifndef XM_PEARL_STAGES
@@ -46,6 +49,9 @@ constexpr int STAGE_A = BM * BK, STAGE_B = BN * BK, STAGE_BYTES = STAGE_A + STAG
 #endif
 #ifndef XM_PEARL_DIAG_NOLOAD
 #define XM_PEARL_DIAG_NOLOAD 0  // developer timing only: skip the global -> shared copies (wrong results)
+#endif
+#ifndef XM_PEARL_DIAG_NOFOLD
+#define XM_PEARL_DIAG_NOFOLD 0
 #endif
 #ifndef XM_PEARL_DIAG_NOHASH
 #define XM_PEARL_DIAG_NOHASH 0
@@ -141,7 +147,7 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
 #pragma unroll
     for (int c = 0; c < TOT; ++c) {
       constexpr int PARTS = XM_PEARL_SPREAD;  // copies spread over the first PARTS k32 steps
-      if (p >= PARTS || c < p * TOT / PARTS || c >= (p + 1) * TOT / PARTS) continue;
+      if (XM_PEARL_DIAG_NOLOAD || p >= PARTS || c < p * TOT / PARTS || c >= (p + 1) * TOT / PARTS) continue;
       if (c < NA) cp_async16(sa + c * RPP * BK, ga + row_off(c * RPP));
       else cp_async16(sb + (c - NA) * RPP * BK, gb + row_off((c - NA) * RPP));
     }
@@ -223,7 +229,12 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
       const unsigned pb = sB + b_off[ks];
 #pragma unroll
       for (int j = 0; j < 8; j += 2) ldmatrix_x4(bf[j][0], bf[j][1], bf[j + 1][0], bf[j + 1][1], pb + j * 8 * BK);
-      if (pos == 0) {
+      if (XM_PEARL_DIAG_NOFOLD) {  // developer timing only: plain mmas, no snapshot or XOR (wrong results)
+#pragma unroll
+        for (int i = 0; i < MT; ++i)
+#pragma unroll
+          for (int j = 0; j < 8; ++j) mma_s8(acc[i][j], af[i], bf[j][0], bf[j][1]);
+      } else if (pos == 0) {
         // First k-step of a chunk: read the snapshot, write the running sums back to acc.
 #pragma unroll
         for (int i = 0; i < MT; ++i)
@@ -258,6 +269,12 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(const int8_t
 #pragma unroll
     for (int h = 0; h < SPC; ++h) stage(kt + h, h);
     fold_word(x);
+  }
+  if (XM_PEARL_DIAG_NOFOLD) {  // keep the accumulators live so the compiler cannot drop the mmas
+#pragma unroll
+    for (int i = 0; i < MT; ++i)
+#pragma unroll
+      for (int j = 0; j < 8; ++j) R[0] ^= (unsigned)(acc[i][j][0] ^ acc[i][j][1] ^ acc[i][j][2] ^ acc[i][j][3]);
   }
 
   // Epilogue: every lane holds its tile's complete transcript.
