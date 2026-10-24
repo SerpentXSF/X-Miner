@@ -147,3 +147,20 @@ There the LDS bandwidth ceiling is far away (~50 MH/s); the table multiply costs
 product), so the composite basis would save only ~5% on AMD (cheaper constant multiply, slightly dearer general
 multiply) against an estimated ~15% on NVIDIA. With NOID at ~$0.54 (~1.1 NOID/day for a 9070 XT at 17.5 MH/s on a
 656 GH/s network, 2026-10-22) this is parked behind Pearl work.
+
+## BLAKE2b (Bitcoin Knots RDTS)
+
+| Card | X-Miner | Reference |
+|---|---|---|
+| RX 9070 XT | 4.63 GH/s @ ~237 W (-30% power) | original Python/OpenCL X-Miner: ~4.2 GH/s |
+| RTX 3060 | 1.97 GH/s @ ~157 W | |
+
+One BLAKE2b compression per nonce (80-byte header); the host precomputes the three round-1 column steps that do not
+touch the nonce word, and the kernel forms only the first output word (the rest of the last round is dead code).
+Every candidate is re-checked on the CPU.
+
+RX 9070 XT: rotates written as shifts compiled to ~2.9 VALU instructions each; `v_alignbit_b32` per half brings them
+to 2 and the kernel from ~2500 to ~2215 VALU instructions per hash (3.83 -> 4.63 GH/s). At 4.63 GH/s that is
+~10.3 T lane-ops/s, the single-issue peak at the clocks this power limit allows; the remaining instructions (64-bit
+adds with carry, XORs, alignbits) have no VOPD dual-issue form. RTX 3060: ~2030 SASS instructions per hash (3-input
+IADD3 adds, SHF funnel rotates), bound by the integer pipe.

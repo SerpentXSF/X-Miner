@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "algo/blake2b/blake2b_gpu.hpp"
 #include "algo/noid/noid_gpu.hpp"
 #include "algo/pearl/pearl_gpu.hpp"
 #include "algo/registry.hpp"
@@ -93,6 +94,26 @@ bool noid_check(gpu::Device& dev, std::string& detail) {
   return shares.size() >= 128 && shares.size() <= 512 && eng.cpu_rejects() == 0;
 }
 
+// BLAKE2b: 2^24 nonces of a random header against target 2^240 (about 256 hits expected). Every GPU hit is re-hashed
+// with the CPU reference digest.
+bool blake2b_check(gpu::Device& dev, std::string& detail) {
+  b2b::Engine eng(dev, 0xb2b5e1f7);
+  b2b::Job job;
+  job.id = "selftest";
+  for (size_t i = 0; i < job.prevhash.size(); ++i) job.prevhash[i] = static_cast<uint8_t>(i * 37 + 11);
+  for (size_t i = 0; i < job.coinb1.size(); ++i) job.coinb1[i] = static_cast<uint8_t>(i * 91 + 5);
+  job.ntime[0] = 0x5a;
+  job.share_target[30] = 0x01;
+  auto t0 = std::chrono::steady_clock::now();
+  std::vector<b2b::Share> shares;
+  if (!eng.init(detail) || !eng.set_job(job, detail) || eng.iterate(1u << 24, shares, detail) == 0) return false;
+  char buf[128];
+  std::snprintf(buf, sizeof buf, "%zu hits verified by the CPU reference, %llu rejected (%.0f ms)", shares.size(),
+                static_cast<unsigned long long>(eng.cpu_rejects()), ms_since(t0));
+  detail = buf;
+  return shares.size() >= 128 && shares.size() <= 512;
+}
+
 void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int state, const std::string& detail) {
   static const char* kState[] = {"FAIL  ", "PASS  ", "SKIP  "};
   Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(i) + " ] "},
@@ -110,7 +131,7 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;

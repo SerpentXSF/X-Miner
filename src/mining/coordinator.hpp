@@ -61,7 +61,10 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   RunState rs;
   rs.algorithm = T::kName;
   FeePlan plan = fee_plan(T::kName);
-  if (!plan.enabled) warn("FEE", "no developer wallet in this build: the dev fee is off");
+  if (const FeeTarget* ft = fee_target(T::kName); ft && ft->percent <= 0)
+    info("FEE", std::string("no dev fee on ") + T::kName);
+  else if (!plan.enabled)
+    warn("FEE", "no developer wallet in this build: the dev fee is off");
 
   auto on_result = [&](bool fee) {
     return [&, fee](bool ok, const std::string& err, const std::string& job, int dev, double work) {

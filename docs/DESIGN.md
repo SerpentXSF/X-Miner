@@ -21,7 +21,7 @@ decompiled or decrypted closed miners (see "Clean room"); fee tricks the user ca
 |---|---|---|---|
 | `pearlhash` (Pearl, PRL) | RDNA4 first (gfx1201) | Ampere+ (sm_86 first) | Starts from our pearl-rdna4 kernel (~110 TH/s, bit-exact) |
 | `noid` (Parano1d, NOID) | RDNA4 first | Ampere+ | No working AMD miner exists today |
-| `blake2b` (Bitcoin Knots RDTS) | phase 2 | phase 2 | Port of the original X-Miner; 0% fee (lottery) |
+| `blake2b` (Bitcoin Knots RDTS) | RDNA4 | Ampere+ | Port of the original X-Miner; 0% fee (lottery) |
 
 Intel GPUs and CPU mining are out of scope for now.
 

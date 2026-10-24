@@ -21,6 +21,7 @@ const std::vector<AlgorithmInfo>& algorithms() {
   static const std::vector<AlgorithmInfo> list = {
       {"pearlhash", "pearl,pearlpow,prl", "Pearl (PRL)", "pearl", true},
       {"noid", "parano1d,poseidon2b", "Parano1d (NOID)", "noid", true},
+      {"blake2b", "rdts,btcb2,blake2b-rdts", "Bitcoin Knots BLAKE2b (RDTS)", "blake2b", true},
   };
   return list;
 }
