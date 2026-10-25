@@ -21,6 +21,7 @@ decompiled or decrypted closed miners (see "Clean room"); fee tricks the user ca
 |---|---|---|---|
 | `pearlhash` (Pearl, PRL) | RDNA4 first (gfx1201) | Ampere+ (sm_86 first) | Starts from our pearl-rdna4 kernel (~110 TH/s, bit-exact) |
 | `noid` (Parano1d, NOID) | RDNA4 first | Ampere+ | No working AMD miner exists today |
+| `quantus` (Quantus, QTC) | RDNA4 | Ampere+ | Poseidon2 / Goldilocks; Kryptex; 0% fee for now |
 | `blake2b` (Bitcoin Knots RDTS) | RDNA4 | Ampere+ | Port of the original X-Miner; 0% fee (lottery) |
 
 Intel GPUs and CPU mining are out of scope for now.
@@ -58,7 +59,7 @@ src/
   main.cpp            entry, signal handling, shutdown
   core/               cli + config, logging/console, stats, dev fee scheduler, job/share types
   net/                TCP (+ TLS later), line-delimited JSON-RPC stratum transport
-  pool/               per-coin pool dialects (pearl, noid) on top of the transport
+  pool/               per-coin pool dialects (pearl, noid, quantus, blake2b) on top of the transport
   api/                HTTP API (SRBMiner-like JSON) + embedded web dashboard
   gpu/                dynamic HIP and CUDA loaders, device discovery, sensors (ADL / NVML / sysfs)
   algo/<name>/        CPU reference implementation, host-side job prep, kernel launch glue

@@ -1,8 +1,8 @@
 # X-Miner
 
-Open-source GPU miner by SerpentX Tech for **Pearl (pearlhash)**, **Parano1d (noid)** and **Bitcoin Knots BLAKE2b
-(blake2b)** on AMD and NVIDIA GPUs. MIT licensed. 1% dev fee on Pearl and Parano1d (time-sliced: about 60 s per 100
-minutes of mining, shown in the console and API); no dev fee on blake2b.
+Open-source GPU miner by SerpentX Tech for **Pearl (pearlhash)**, **Parano1d (noid)**, **Quantus (quantus)** and
+**Bitcoin Knots BLAKE2b (blake2b)** on AMD and NVIDIA GPUs. MIT licensed. 1% dev fee on Pearl and Parano1d
+(time-sliced: about 60 s per 100 minutes of mining, shown in the console and API); no dev fee on Quantus and blake2b.
 
 ## Quick start
 
@@ -11,6 +11,7 @@ minutes of mining, shown in the console and API); no dev fee on blake2b.
    - `start-pearl-kryptex.bat` / `.sh`: Pearl on Kryptex (use your Kryptex `krx...` username)
    - `start-pearl-herominers.bat` / `.sh`: Pearl on HeroMiners (your PRL address)
    - `start-noid-rplant.bat` / `.sh`: Parano1d on rplant.xyz (your `o1...` NOID address)
+   - `start-quantus-kryptex.bat` / `.sh`: Quantus on Kryptex (your Kryptex `krx...` username)
    - `start-blake2b-alphapool.bat` / `.sh`: Bitcoin Knots BLAKE2b (RDTS) on AlphaPool (your RDTS address)
 3. Run it. The launcher restarts the miner if it ever exits.
 
@@ -21,6 +22,7 @@ Command line (all options: `x-miner --help`):
 ```
 x-miner --algorithm pearlhash --pool prl.kryptex.network:7048 --wallet krxXXXXXXX --worker rig1
 x-miner --algorithm noid --pool na.rplant.xyz:17185 --wallet o1... --worker rig1
+x-miner --algorithm quantus --pool qtc-us.kryptex.network:7049 --wallet krxXXXXXXX --worker rig1
 x-miner --algorithm blake2b --pool us1.alphapool.tech:5555 --wallet ADDRESS --worker rig1
 ```
 
@@ -36,7 +38,7 @@ comma list in `--gpu-id` order, `-` to skip a GPU). Everything is restored when 
 | `--gpu-mclock 7000` | locks the memory clock | max memory clock | Overdrive max memory |
 | `--gpu-coffset 100` | core clock offset | max clock offset | - |
 | `--gpu-moffset 500` | memory clock offset | - | - |
-| `--gpu-intensity 32` | work per launch (pearlhash: N x 1024 columns, noid / blake2b: 2^N nonces; 0 = auto) | same | same |
+| `--gpu-intensity 32` | work per launch (pearlhash: N x 1024 columns, noid / quantus / blake2b: 2^N nonces; 0 = auto) | same | same |
 
 `--gpu-tune-info` lists what each GPU allows and its current values. NVIDIA tuning and AMD Linux tuning need
 administrator / root rights (HiveOS runs miners as root).
@@ -48,22 +50,22 @@ non-zero code; the launchers restart it.
 
 ## Supported hardware
 
-| Vendor | Pearl | Parano1d | BLAKE2b | Requirement |
-|---|---|---|---|---|
-| AMD RDNA4 (RX 9070 / 9070 XT, gfx1201) | yes | yes | yes | Windows: Adrenalin driver (provides the HIP runtime); Linux: ROCm 6.x |
-| NVIDIA RTX 30xx / 40xx (sm_86 / sm_89) | yes | yes | yes | driver 555+ |
-| NVIDIA A100, RTX 50xx and newer | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | driver 555+ |
-| Other AMD, NVIDIA Turing and older | no | no | no | |
+| Vendor | Pearl | Parano1d | Quantus | BLAKE2b | Requirement |
+|---|---|---|---|---|---|
+| AMD RDNA4 (RX 9070 / 9070 XT, gfx1201) | yes | yes | yes | yes | Windows: Adrenalin driver (provides the HIP runtime); Linux: ROCm 6.x |
+| NVIDIA RTX 30xx / 40xx (sm_86 / sm_89) | yes | yes | yes | yes | driver 555+ |
+| NVIDIA A100, RTX 50xx and newer | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | driver 555+ |
+| Other AMD, NVIDIA Turing and older | no | no | no | no | |
 
 `x-miner --list-devices` shows each GPU and which algorithms it can run.
 
 ## Measured hashrates
 
-| Card | Pearl | Parano1d | BLAKE2b |
-|---|---|---|---|
-| RX 9070 XT (-30% power, ~237 W) | 101.1 TH/s | 17.5 MH/s | 4.63 GH/s |
-| RX 9070 XT (stock power, ~340 W) | 115.0 TH/s | | |
-| RTX 3060 (stock, 170 W) | 44.4 TH/s | 8.7 MH/s | 1.97 GH/s |
+| Card | Pearl | Parano1d | Quantus | BLAKE2b |
+|---|---|---|---|---|
+| RX 9070 XT (-30% power, ~237 W) | 101.1 TH/s | 17.5 MH/s | | 4.63 GH/s |
+| RX 9070 XT (stock power, ~300-340 W) | 115.0 TH/s | 18.7 MH/s | 182.9 MH/s | |
+| RTX 3060 (stock, 170 W) | 44.4 TH/s | 8.7 MH/s | 148.9 MH/s | 1.97 GH/s |
 
 The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share
 difficulty x 2^32 for Pearl) per hour and per run. That is what the pool should credit, so it is the number to compare
@@ -81,6 +83,7 @@ Pool certificates are not verified, as with other miners (pools use self-signed 
   the object-style Pearl stratum. Kryptex gets gzip-compressed share proofs (negotiated automatically).
 - Parano1d: rplant (`na.rplant.xyz:17185`, plain or TLS on the same port), InnovLab
   (`stratum+ssl://us.innovlab.cc:19601`) and other `parano1d-stratum-v1` pools.
+- Quantus: Kryptex (`qtc-us.kryptex.network:7049`, `qtc.kryptex.network:7049`; XMRig-style stratum).
 - BLAKE2b (Bitcoin Knots RDTS chain): the DATUM gateway's Sia-style stratum, solo through your own DATUM gateway
   or on AlphaPool (`us1.alphapool.tech:5555`). Pool difficulties are sized for Sia-class ASICs, so GPU mining here
   is a lottery.

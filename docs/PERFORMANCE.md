@@ -148,6 +148,28 @@ product), so the composite basis would save only ~5% on AMD (cheaper constant mu
 multiply) against an estimated ~15% on NVIDIA. With NOID at ~$0.54 (~1.1 NOID/day for a 9070 XT at 17.5 MH/s on a
 656 GH/s network, 2026-10-22) this is parked behind Pearl work.
 
+## Quantus (quantus)
+
+| Card | X-Miner | Reference |
+|---|---|---|
+| RX 9070 XT | 182.9 MH/s @ ~297 W (stock power) | SRBMiner 3.7.9: 221.5 MH/s @ ~316 W |
+| RTX 3060 | 148.9 MH/s @ 170 W | SRBMiner 3.7.9: 230 MH/s @ 170 W |
+
+The hash is a Poseidon2 sponge (Goldilocks, width 12, rate 8, 8 full + 22 partial rounds, x^7) with five
+permutations. The host absorbs everything that does not depend on the low 64 nonce bits once per job (the official
+miner's prestate split), so the kernel finishes permutation 3, runs permutation 4 and compares the top 64 bits of
+the first squeeze with the target: just under two permutations per nonce. Goldilocks products are reduced lazily: the
+folds skip corrections that occur with probability ~2^-32 (a slip can only lose a share), and every candidate is
+re-checked on the CPU with the exact arithmetic. AMD uses VCC carry chains (`v_add_co_u32` / `v_mad_co_u64_u32`),
+NVIDIA PTX `.cc` chains; on NVIDIA part of the reduction runs on the multiply pipe so the integer pipe is not the
+only one busy.
+
+RX 9070 XT: the per-hash cost model (ALU ops plus ~2.4 add slots per 64-bit multiply-add) matches the measured
+rate to 2%, so the kernel runs at the issue rate. RTX 3060: compute-bound per clock (0.076 MH/s per MHz); locking
+the core clock at 1500 MHz gives 113 MH/s at ~80 W, the better rate per watt. Tried and slower: several nonces per
+thread (register pressure), independent-product multiplies, linear layers on the multiply pipe, unrolling, other
+block sizes.
+
 ## BLAKE2b (Bitcoin Knots RDTS)
 
 | Card | X-Miner | Reference |
