@@ -10,4 +10,7 @@ Oumuamua Labs) and binius64 (Copyright (c) 2025 The Binius Developers, Copyright
 
 NoidMiner (https://github.com/gacanga/NoidMiner): Parano1d test vectors.
 
+Quantus Network (https://github.com/Quantus-Network): Poseidon2 constants from qp-poseidon, test vectors and the
+prestate split from quantus-miner pow-core, and the multiply-pipe Goldilocks reduction from quantus-miner engine-cuda.
+
 It also includes code and data under ISC, MIT, CC0 and Apache-2.0 licences listed in THIRD_PARTY.md.

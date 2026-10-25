@@ -32,8 +32,12 @@ namespace xm {
 int run_pearl(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_blake2b(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_quantus(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::b2b {
+int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+}
+namespace xm::qtc {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::noid {
@@ -263,6 +267,14 @@ int main(int argc, char** argv) {
     }
     print_section("MISSION START");
     return run_blake2b(cfg, devs);
+  }
+  if (std::string(algo->name) == "quantus") {
+    if (cfg.benchmark) {
+      print_section("BENCHMARK");
+      return qtc::benchmark(cfg, devs);
+    }
+    print_section("MISSION START");
+    return run_quantus(cfg, devs);
   }
   if (std::string(algo->name) == "pearlhash") {
     if (cfg.benchmark) {

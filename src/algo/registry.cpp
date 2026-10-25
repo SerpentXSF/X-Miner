@@ -22,6 +22,7 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"pearlhash", "pearl,pearlpow,prl", "Pearl (PRL)", "pearl", true},
       {"noid", "parano1d,poseidon2b", "Parano1d (NOID)", "noid", true},
       {"blake2b", "rdts,btcb2,blake2b-rdts", "Bitcoin Knots BLAKE2b (RDTS)", "blake2b", true},
+      {"quantus", "qtc,qpow,quantus-network", "Quantus (QTC)", "quantus", true},
   };
   return list;
 }
