@@ -36,6 +36,7 @@ Engine::~Engine() { dev_.free(d_found_); }
 bool Engine::init(std::string& err) {
   dev_.make_current();
   if (const char* e = std::getenv("XM_QTC_TPB")) tpb_ = static_cast<uint32_t>(std::atoi(e));  // developer tuning
+  if (const char* e = std::getenv("XM_QTC_NPT")) npt_ = static_cast<uint32_t>(std::atoi(e));  // must match the kernel
   if (!gpu::load_kernels(dev_, "quantus", err)) return false;
   d_found_ = dev_.alloc((1 + 2 * kMaxFound) * 4);
   if (!d_found_) {
@@ -78,7 +79,7 @@ double Engine::iterate(uint32_t batch, std::vector<Share>& shares, std::string& 
   uint32_t maxf = kMaxFound;
   void* args[] = {&a, &base, &d_found_, &maxf};
   std::vector<uint32_t> found(1 + 2 * kMaxFound);
-  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_quantus_search", batch / tpb_, 1, 1, tpb_, 1, 1, 0, args)) {
+  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_quantus_search", batch / (tpb_ * npt_), 1, 1, tpb_, 1, 1, 0, args)) {
     err = dev_.last_error();
     return 0;
   }

@@ -221,9 +221,9 @@ __device__ __forceinline__ u64 gadd(u64 a, u64 b) {
 }
 
 // Which reduction each call site uses (XM_QTC_MIX, bit 0: squares, bit 1: multiplies, bit 2: internal-layer
-// products; a set bit selects the multiply-pipe fold).
+// products; a set bit selects the multiply-pipe fold). 2 measured best on an RTX 3060 (148.9 vs 144.5 MH/s for 0).
 #ifndef XM_QTC_MIX
-#define XM_QTC_MIX 0
+#define XM_QTC_MIX 2
 #endif
 #define FOLD_SQ ((XM_QTC_MIX & 1) ? fold_fma : fold)
 #define FOLD_MUL ((XM_QTC_MIX & 2) ? fold_fma : fold)
@@ -324,24 +324,41 @@ __device__ __forceinline__ void internal(u64 s[12]) {
   }
 }
 
-// The rest of a permutation from just before the first S-box (initial linear layer and rc[0] already applied).
-__device__ __forceinline__ void permute_tail(u64 s[12]) {
-#pragma unroll 1
+// The rest of a permutation from just before the first S-box (initial linear layer and rc[0] already applied), for
+// N independent states side by side so the multiply-heavy and add-heavy stretches of different nonces can overlap.
+template <int N>
+__device__ __forceinline__ void permute_tail(u64 (&s)[N][12]) {
+#ifndef XM_QTC_FUNROLL
+#define XM_QTC_FUNROLL 1
+#endif
+#pragma unroll XM_QTC_FUNROLL
   for (int r = 0; r < 4; ++r) {
 #pragma unroll
-    for (int i = 0; i < 12; ++i) s[i] = sbox(s[i]);
-    external(s, r < 3 ? c_initial[r + 1] : nullptr);
+    for (int i = 0; i < 12; ++i)
+#pragma unroll
+      for (int n = 0; n < N; ++n) s[n][i] = sbox(s[n][i]);
+#pragma unroll
+    for (int n = 0; n < N; ++n) external(s[n], r < 3 ? c_initial[r + 1] : nullptr);
   }
-#pragma unroll 1
+#ifndef XM_QTC_IUNROLL
+#define XM_QTC_IUNROLL 1
+#endif
+#pragma unroll XM_QTC_IUNROLL
   for (int r = 0; r < 22; ++r) {
-    s[0] = sbox(gadd(s[0], c_internal[r]));
-    internal(s);
+#pragma unroll
+    for (int n = 0; n < N; ++n) {
+      s[n][0] = sbox(gadd(s[n][0], c_internal[r]));
+      internal(s[n]);
+    }
   }
-#pragma unroll 1
+#pragma unroll XM_QTC_FUNROLL
   for (int r = 0; r < 4; ++r) {
 #pragma unroll
-    for (int i = 0; i < 12; ++i) s[i] = sbox(gadd(s[i], c_terminal[r][i]));
-    external(s, nullptr);
+    for (int i = 0; i < 12; ++i)
+#pragma unroll
+      for (int n = 0; n < N; ++n) s[n][i] = sbox(gadd(s[n][i], c_terminal[r][i]));
+#pragma unroll
+    for (int n = 0; n < N; ++n) external(s[n], nullptr);
   }
 }
 
@@ -353,43 +370,49 @@ __device__ __forceinline__ u32 bswap32(u32 v) {
 #endif
 }
 
-// Grid of 1-D blocks, one nonce per thread: low 64 nonce bits = nonce_base + global thread index (the host keeps a
-// batch from carrying into bit 64). found[0] counts candidates; found[1 + 2k], found[2 + 2k] hold candidate k's
-// low 64 nonce bits, low word first.
+// Nonces per thread (XM_QTC_NPT; the host's launch must match, see quantus_gpu.cpp).
+#ifndef XM_QTC_NPT
+#define XM_QTC_NPT 1
+#endif
+
+// Grid of 1-D blocks, XM_QTC_NPT nonces per thread: low 64 nonce bits = nonce_base + global thread index * NPT + k
+// (the host keeps a batch from carrying into bit 64). found[0] counts candidates; found[1 + 2k], found[2 + 2k] hold
+// candidate k's low 64 nonce bits, low word first.
 extern "C" __global__ void xm_quantus_search(QtcJob job, u64 nonce_base, u32* __restrict__ found, u32 max_found) {
-  const u64 n = nonce_base + (u64)blockIdx.x * blockDim.x + threadIdx.x;
-  // Nonce bytes 56..63 big-endian are elements 6 and 7 (little-endian u32s); through M4 on the second group and the
-  // column sums they add [a+b, 3a+b, 2a+3b, a+2b] to groups 0 and 2 and twice that to group 1.
-  const u64 a = bswap32((u32)(n >> 32)), b = bswap32((u32)n);
-  const u64 c0 = a + b, c1 = 3 * a + b, c2 = 2 * a + 3 * b, c3 = a + 2 * b;
-  u64 s[12];
-  s[0] = gadd(job.pre[0], c0);
-  s[1] = gadd(job.pre[1], c1);
-  s[2] = gadd(job.pre[2], c2);
-  s[3] = gadd(job.pre[3], c3);
-  s[4] = gadd(job.pre[4], 2 * c0);
-  s[5] = gadd(job.pre[5], 2 * c1);
-  s[6] = gadd(job.pre[6], 2 * c2);
-  s[7] = gadd(job.pre[7], 2 * c3);
-  s[8] = gadd(job.pre[8], c0);
-  s[9] = gadd(job.pre[9], c1);
-  s[10] = gadd(job.pre[10], c2);
-  s[11] = gadd(job.pre[11], c3);
-  permute_tail(s);
+  constexpr int N = XM_QTC_NPT;
+  const u64 n0 = nonce_base + ((u64)blockIdx.x * blockDim.x + threadIdx.x) * N;
+  u64 s[N][12];
+#pragma unroll
+  for (int k = 0; k < N; ++k) {
+    // Nonce bytes 56..63 big-endian are elements 6 and 7 (little-endian u32s); through M4 on the second group and
+    // the column sums they add [a+b, 3a+b, 2a+3b, a+2b] to groups 0 and 2 and twice that to group 1.
+    const u64 n = n0 + k;
+    const u64 a = bswap32((u32)(n >> 32)), b = bswap32((u32)n);
+    const u64 c[4] = {a + b, 3 * a + b, 2 * a + 3 * b, a + 2 * b};
+#pragma unroll
+    for (int i = 0; i < 12; ++i) s[k][i] = gadd(job.pre[i], (i >= 4 && i < 8) ? 2 * c[i & 3] : c[i & 3]);
+  }
+  permute_tail<N>(s);
   // Permutation 4: absorb the terminator and padding elements, then a full permutation.
-  s[0] = gadd(s[0], 1);
-  s[1] = gadd(s[1], 1);
-  external(s, c_initial[0]);
-  permute_tail(s);
-  u64 h = s[0];
-  if (h >= 0xffffffff00000001ull) h -= 0xffffffff00000001ull;  // canonical (lazy values can sit in [p, 2^64))
-  // The first 8 output bytes are s0 little-endian; read big-endian that is bswap64(s0).
-  const u64 top = ((u64)bswap32((u32)h) << 32) | bswap32((u32)(h >> 32));
-  if (top <= job.target_hi) {
-    const u32 slot = atomicAdd(found, 1u);
-    if (slot < max_found) {
-      found[1 + 2 * slot] = (u32)n;
-      found[2 + 2 * slot] = (u32)(n >> 32);
+#pragma unroll
+  for (int k = 0; k < N; ++k) {
+    s[k][0] = gadd(s[k][0], 1);
+    s[k][1] = gadd(s[k][1], 1);
+    external(s[k], c_initial[0]);
+  }
+  permute_tail<N>(s);
+#pragma unroll
+  for (int k = 0; k < N; ++k) {
+    u64 h = s[k][0];
+    if (h >= 0xffffffff00000001ull) h -= 0xffffffff00000001ull;  // canonical (lazy values can sit in [p, 2^64))
+    // The first 8 output bytes are s0 little-endian; read big-endian that is bswap64(s0).
+    const u64 top = ((u64)bswap32((u32)h) << 32) | bswap32((u32)(h >> 32));
+    if (top <= job.target_hi) {
+      const u32 slot = atomicAdd(found, 1u);
+      if (slot < max_found) {
+        found[1 + 2 * slot] = (u32)(n0 + k);
+        found[2 + 2 * slot] = (u32)((n0 + k) >> 32);
+      }
     }
   }
 }

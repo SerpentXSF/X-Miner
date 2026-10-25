@@ -53,6 +53,7 @@ class Engine {
   bool have_job_ = false;
   uint64_t cpu_rejects_ = 0;
   uint32_t tpb_ = 256;
+  uint32_t npt_ = 1;  // nonces per thread, as compiled into the kernel (XM_QTC_NPT)
   static constexpr uint32_t kMaxFound = 1024;
 };
 
