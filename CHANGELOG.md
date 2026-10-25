@@ -8,7 +8,7 @@ Algorithms
   (Kryptex).
 - Parano1d (noid): GPU search with CPU re-verification.
 - Quantus (quantus, QTC): Poseidon2 / Goldilocks QPoW search with CPU re-verification, Kryptex stratum.
-  No dev fee for now. Checked against the official Quantus test vectors.
+  Checked against the official Quantus test vectors.
 - Bitcoin Knots BLAKE2b (blake2b, RDTS chain): GPU search with CPU re-verification, DATUM / AlphaPool stratum.
   No dev fee. Checked against the BLAKE2b activation block mined on Knots regtest.
 
@@ -29,7 +29,7 @@ Features
 - HTTP API and web dashboard, pool-credited hashrate, HiveOS custom-miner package.
 - No runtime dependencies beyond the GPU driver: static Windows exe, Linux binary for glibc 2.29+ (Ubuntu 20.04+).
 
-Dev fee: 1% on Pearl and Parano1d, time-sliced (60 s per 100 minutes of mining) and shown in the console and API;
-none on Quantus and BLAKE2b.
+Dev fee: 1% on Pearl, Parano1d and Quantus, time-sliced (60 s per 100 minutes of mining) and shown in the console
+and API; none on BLAKE2b.
 
 GPU control: --gpu-fan (fixed fan speed), --gpu-off-temperature / --gpu-resume-temperature (pause a hot GPU).

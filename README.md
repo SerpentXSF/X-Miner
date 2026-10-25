@@ -1,8 +1,8 @@
 # X-Miner
 
 Open-source GPU miner by SerpentX Tech for **Pearl (pearlhash)**, **Parano1d (noid)**, **Quantus (quantus)** and
-**Bitcoin Knots BLAKE2b (blake2b)** on AMD and NVIDIA GPUs. MIT licensed. 1% dev fee on Pearl and Parano1d
-(time-sliced: about 60 s per 100 minutes of mining, shown in the console and API); no dev fee on Quantus and blake2b.
+**Bitcoin Knots BLAKE2b (blake2b)** on AMD and NVIDIA GPUs. MIT licensed. 1% dev fee on Pearl, Parano1d and
+Quantus (time-sliced: about 60 s per 100 minutes of mining, shown in the console and API); no dev fee on blake2b.
 
 ## Quick start
 
