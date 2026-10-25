@@ -37,6 +37,7 @@ unsigned blocks(size_t threads, unsigned bs) { return static_cast<unsigned>((thr
 
 Engine::Engine(gpu::Device& dev, uint32_t m, uint32_t n, uint64_t seed) : dev_(dev), m_(m), n_(n), rng_(seed) {
   cfg_.k = 4096;
+  if (const char* e = std::getenv("XM_PEARL_K")) cfg_.k = static_cast<uint32_t>(std::atoi(e));  // developer A/B
   cfg_.rank = 128;
   // Hash tiles match each kernel's accumulator ownership, so each lane folds and hashes its own tile. NVIDIA: the 128 accumulators one lane owns in a 64x64 warp tile of m16n8 fragments, rows
   // {0, 8, ..., 56} x cols {0, 1, 8, 9, ..., 56, 57}, so the fold needs no cross-lane traffic (kernels/pearl/pearl.cu).

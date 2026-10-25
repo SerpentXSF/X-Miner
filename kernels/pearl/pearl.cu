@@ -57,6 +57,11 @@ constexpr int STAGES = XM_PEARL_STAGES;  // STAGES x STAGE_BYTES of dynamic shar
 //  - Previous design: BK 64 x 3/4 stages -10%; L2 prefetch, deferred and ordered-XOR folds, 12 warps (spills to
 //    DRAM): all slower; 16 warps of 32x64 -6% (more ldmatrix traffic per mma).
 //  - Ceiling at the cap: tensor cores + ldmatrix alone on Pearl-like data 55.8 TMAC/s at 1942 MHz; + fold 51.6.
+//  - 2026-10-25, miner at the cap (44.3 TH/s at ~1757 MHz; SRB 3.7.x 48.0 at ~1796 MHz, i.e. 93% vs our 88% of
+//    tensor peak per clock): BK 64 with 3 or 4 stages and this copy warp -4.5% / -4.0%; copy-warp sleeps of 16 and
+//    32 ns -0.2% / -1.9%; 2 or 8 XOR chains -0.5%; group rows 4 / 16 -0.5% / -1.2%. Zero DRAM traffic (DIAG_L2,
+//    wrong results) is only +2%, so DRAM is not the lever. Larger K amortizes the per-tile epilogue: XM_PEARL_K
+//    8192 +1.1%, 16384 +1.6% (share proofs grow with K).
 
 // Byte offset of (row, 16-byte chunk) inside a 128-byte-row stage, with an XOR swizzle so the 8 row addresses of
 // an ldmatrix hit 32 distinct banks.
