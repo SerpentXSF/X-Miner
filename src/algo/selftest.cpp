@@ -58,7 +58,7 @@ double ms_since(std::chrono::steady_clock::time_point t0) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
-// Pearl: one 1024 x 1024 x 4096 pass with a target every tile meets. The engine re-computes each reported tile's
+// Pearl: one 1024 x 1024 x 8192 pass with a target every tile meets. The engine re-computes each reported tile's
 // transcript on the CPU (host matrices + CPU noise), so this checks noise, GEMM, fold and hash against the reference.
 bool pearl_check(gpu::Device& dev, std::string& detail) {
   pearl::Engine eng(dev, 1024, 1024, 0x5e1f7e57);

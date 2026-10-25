@@ -35,7 +35,7 @@ struct Share {
   double work = 0;            // MAC a pool credits for this share: 2^256 / share target
 };
 
-// --gpu-intensity N: N x 1024 B columns per pass (8-64); 0 = auto (32 -> 16384 x 32768 x 4096 MAC per pass).
+// --gpu-intensity N: N x 1024 B columns per pass (8-64); 0 = auto (32 -> 16384 x 32768 x 8192 MAC per pass).
 inline uint32_t pass_columns(int intensity) {
   return intensity <= 0 ? 32768u : 1024u * static_cast<uint32_t>(intensity < 8 ? 8 : intensity > 64 ? 64 : intensity);
 }

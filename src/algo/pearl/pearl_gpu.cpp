@@ -36,7 +36,9 @@ unsigned blocks(size_t threads, unsigned bs) { return static_cast<unsigned>((thr
 }  // namespace
 
 Engine::Engine(gpu::Device& dev, uint32_t m, uint32_t n, uint64_t seed) : dev_(dev), m_(m), n_(n), rng_(seed) {
-  cfg_.k = 4096;
+  // K 8192 halves the per-tile epilogue (fold, hash, store) per MAC: +1.1% on the RTX 3060, +1.2% on the RX 9070 XT,
+  // twice the share-proof size (Kryptex accepts them). Consensus allows 1024 <= k <= 65536.
+  cfg_.k = 8192;
   if (const char* e = std::getenv("XM_PEARL_K")) cfg_.k = static_cast<uint32_t>(std::atoi(e));  // developer A/B
   cfg_.rank = 128;
   // Hash tiles match each kernel's accumulator ownership, so each lane folds and hashes its own tile. NVIDIA: the 128 accumulators one lane owns in a 64x64 warp tile of m16n8 fragments, rows

@@ -27,7 +27,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   job.id = "bench";
   for (int i = 0; i < 76; ++i)
     job.header[i] = static_cast<uint8_t>(std::stoul(std::string(kHeaderHex + 2 * i, 2), nullptr, 16));
-  // With --share-dump: an easy target (~1 share per 16384^2 x 4096 pass) to exercise the share path.
+  // With --share-dump: an easy target (~1 share per 16384^2 x 4096 MAC) to exercise the share path.
   // Otherwise a pool-like target (difficulty 2^21) so the run measures GPU throughput.
   job.share_nbits = cfg.share_dump.empty() ? 0x1a07fff8 : 0x1c010000;
   int failures = 0;
@@ -43,7 +43,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       ++failures;
       continue;
     }
-    info("BENCH", "GPU " + std::to_string(d) + " " + devs[d].name + ": pearlhash " + std::to_string(bm) + "x" + std::to_string(bn) + "x4096, " +
+    info("BENCH", "GPU " + std::to_string(d) + " " + devs[d].name + ": pearlhash " + std::to_string(bm) + "x" + std::to_string(bn) + "x" + std::to_string(eng.config().k) + ", " +
                       std::to_string(cfg.benchmark_seconds) + " s");
     auto t0 = std::chrono::steady_clock::now(), last = t0;
     double hashes = 0, window = 0, watts = 0;
