@@ -1,49 +1,46 @@
 // X-Miner Parano1d (NOID) search kernel, compiled for AMD (HIP) and NVIDIA (CUDA) from this one file.
 //
-// Per job the host absorbs header fields 0..9 into a flat-basis midstate. Per nonce the kernel finishes the sponge
-// with 3 permutations (nonce/f11, f12/f13, f14/f15), maps the top 64 bits of the digest back to the tower basis,
-// and keeps nonces whose top 64 bits are <= the share target's top 64 bits. The host re-checks every candidate
-// with the full reference digest. GF(2^128) arithmetic: noid_math.h / noid_perm.h (ported from NoidMiner,
-// Apache-2.0).
+// Per job the host absorbs header fields 0..9 into a midstate. Per nonce the kernel finishes the sponge with 3
+// permutations (nonce/f11, f12/f13, f14/f15), maps the top 64 bits of the digest back to the tower basis, and keeps
+// nonces whose top 64 bits are <= the share target's top 64 bits. The host re-checks every candidate with the full
+// reference digest. The kernel works in the composite basis of noid_comp.h (the host converts every input);
+// noid_math.h / noid_perm.h hold the carry-less products and the permutation (ported from NoidMiner, Apache-2.0).
 #if defined(__HIP__)
 #include <hip/hip_runtime.h>
 #endif
-#if defined(__CUDA_ARCH__) && !defined(__HIP__)
-// IMAD.WIDE carry-less multiply: RTX 3060 8.65 -> 9.63 MH/s. Not on AMD, where 32-bit multiplies are quarter rate
-// (RX 9070 XT 17.7 -> 14.9 MH/s); the 16-bit path uses the full-rate 24-bit multiplier there.
-#define NOID_GMUL32 1
-#endif
+#include "noid/noid_comp.h"
 #include "noid/noid_perm.h"
 
-struct NoidJob {
-  W4 mid[4];          // sponge state after fields 0..9 (flat)
-  W4 f[5];            // fields 11..15 (flat)
-  W4 nonce_base;      // flat image of the nonce with the low 32 bits zero
-  W4 t2f_lo[32];      // flat images of the low 32 nonce bits (tower bit i -> flat)
+struct NoidJob {      // all W4 values in the composite basis
+  W4 mid[4];          // sponge state after fields 0..9
+  W4 f[5];            // fields 11..15
+  W4 nonce_base;      // the nonce with the low 32 bits zero
+  W4 t2f_lo[32];      // images of the low 32 nonce bits (tower bit i)
   uint64_t target_hi; // top 64 bits of the share target (bytes 24..31, little-endian)
 };
 
 struct RcGlobal {
-  const W4* rc;  // [4][66] flat round constants
+  const W4* rc;  // [4][66] round constants
   __device__ __forceinline__ W4 get(int lane, int r) { return rc[lane * 66 + r]; }
 };
 
 // Grid of 1-D blocks; each thread tests one nonce (low 32 bits = counter_base + thread index).
-// f2t_hi[i] = top 64 bits of flat_to_tower(bit i).
-// Constant multiplies use nibble tables (NOID_TBL_WORDS words = 48 KB) copied from tbl into shared memory / LDS;
-// launch with 48 KB of dynamic shared memory.
+// f2t_hi[i] = top 64 bits of the tower image of composite bit i.
+// Constant multiplies use byte tables (NOID_CTBL_WORDS words = 24 KB) copied from tbl into shared memory / LDS;
+// launch with 24 KB of dynamic shared memory.
 extern "C" __global__ void xm_noid_search(NoidJob job, const W4* __restrict__ rc, const uint32_t* __restrict__ tbl,
                                           const uint64_t* __restrict__ f2t_hi, uint32_t counter_base,
                                           uint32_t* __restrict__ found, uint32_t max_found) {
   extern __shared__ uint32_t stbl[];
-  for (uint32_t i = threadIdx.x; i < NOID_TBL_WORDS; i += blockDim.x) stbl[i] = tbl[i];
+  for (uint32_t i = threadIdx.x; i < NOID_CTBL_WORDS; i += blockDim.x) stbl[i] = tbl[i];
   __syncthreads();
 #ifndef XM_NOID_LANES
 #define XM_NOID_LANES 1
 #endif
-  constexpr int L = XM_NOID_LANES;  // nonces per thread, interleaved for instruction-level parallelism
+  constexpr int L = XM_NOID_LANES;  // nonces per thread (only 1 is supported by permute())
+  static_assert(L == 1, "XM_NOID_LANES");
   const uint32_t lo0 = counter_base + (blockIdx.x * blockDim.x + threadIdx.x) * L;
-  CMulTable mul{stbl};
+  CMulByte mul{stbl};
   RcGlobal rcg{rc};
   W4 s[L][4];
 #pragma unroll
@@ -58,23 +55,23 @@ extern "C" __global__ void xm_noid_search(NoidJob job, const W4* __restrict__ rc
     s[n][2] = job.mid[2];
     s[n][3] = job.mid[3];
   }
-  permute_n<L>(s, mul, rcg);
+  permute(s[0], mul, rcg);
 #pragma unroll
   for (int n = 0; n < L; ++n) {
     s[n][0] = w4x(s[n][0], job.f[1]);
     s[n][1] = w4x(s[n][1], job.f[2]);
   }
-  permute_n<L>(s, mul, rcg);
+  permute(s[0], mul, rcg);
 #pragma unroll
   for (int n = 0; n < L; ++n) {
     s[n][0] = w4x(s[n][0], job.f[3]);
     s[n][1] = w4x(s[n][1], job.f[4]);
   }
-  permute_n<L>(s, mul, rcg);
+  permute(s[0], mul, rcg);
 
 #pragma unroll
   for (int n = 0; n < L; ++n) {
-    // Top 64 bits of the digest = high half of flat_to_tower(s[n][1]).
+    // Top 64 bits of the digest = high half of the tower image of s[n][1].
     uint64_t hi = 0;
     const uint32_t w[4] = {s[n][1].w0, s[n][1].w1, s[n][1].w2, s[n][1].w3};
 #pragma unroll

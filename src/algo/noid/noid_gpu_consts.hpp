@@ -2,9 +2,12 @@
 // kernel's W4 word layout, and the pre-split constant-multiplier operands (order: g, h, d0+1, d1+1, d2+1, d3+1).
 #pragma once
 
+#include <utility>
+
 #include "algo/noid/noid.hpp"
 #include "algo/noid/noid_consts.hpp"
-#include "noid/noid_perm.h"  // kernels/noid (plain C++ when not compiled as GPU code)
+#include "noid/noid_comp.h"  // kernels/noid (plain C++ when not compiled as GPU code)
+#include "noid/noid_perm.h"
 
 namespace xm::noid {
 
@@ -51,6 +54,80 @@ inline void constant_tables(uint32_t* tbl) {
         e1[1] = p.w3;
       }
 }
+
+// Composite basis (kernels/noid/noid_comp.h): word j bit i of a W4 is Y^i Z^j, with Y a flat-basis root of
+// y^32 + y^7 + y^3 + y^2 + 1 and Z a root of z^4 + z^3 + z^2 + Y z + Y (found by noidcomp/find.py, scratch tooling).
+// Composite elements travel as U128 in the to_w4 layout (bit 32 j + i).
+inline constexpr U128 kCompY{0x31ee2172561b7483ull, 0xb30bd434e3cd3098ull};
+inline constexpr U128 kCompZ{0x0ae9b93755c26f77ull, 0x3054b334c3f18e7cull};
+
+struct CompBasis {
+  U128 c2f[128];  // flat image of composite bit n
+  U128 f2c[128];  // composite image of flat bit n
+};
+
+inline bool u128_bit(const U128& v, int n) { return ((n < 64 ? v.lo >> n : v.hi >> (n - 64)) & 1u) != 0; }
+inline U128 u128_unit(int n) { return n < 64 ? U128{1ull << n, 0} : U128{0, 1ull << (n - 64)}; }
+
+inline const CompBasis& comp_basis() {
+  static const CompBasis b = [] {
+    CompBasis r;
+    U128 zj{1, 0};
+    for (int j = 0; j < 4; ++j) {
+      U128 yi{1, 0};
+      for (int i = 0; i < 32; ++i) {
+        r.c2f[32 * j + i] = gf_mul(yi, zj);
+        yi = gf_mul(yi, kCompY);
+      }
+      zj = gf_mul(zj, kCompZ);
+    }
+    U128 v[128], m[128];  // Gauss-Jordan: v[k] (flat) = image of the composite combination m[k]
+    for (int n = 0; n < 128; ++n) v[n] = r.c2f[n], m[n] = u128_unit(n);
+    for (int p = 0; p < 128; ++p) {
+      int q = p;
+      while (!u128_bit(v[q], p)) ++q;  // the basis is invertible: a pivot always exists
+      std::swap(v[p], v[q]);
+      std::swap(m[p], m[q]);
+      for (int k = 0; k < 128; ++k)
+        if (k != p && u128_bit(v[k], p)) v[k] ^= v[p], m[k] ^= m[p];
+    }
+    for (int n = 0; n < 128; ++n) r.f2c[n] = m[n];
+    return r;
+  }();
+  return b;
+}
+
+inline U128 flat_to_comp(const U128& f) {
+  U128 r;
+  for (int n = 0; n < 128; ++n)
+    if (u128_bit(f, n)) r ^= comp_basis().f2c[n];
+  return r;
+}
+inline U128 comp_to_flat(const U128& c) {
+  U128 r;
+  for (int n = 0; n < 128; ++n)
+    if (u128_bit(c, n)) r ^= comp_basis().c2f[n];
+  return r;
+}
+
+// Byte tables for CMulByte: tbl[(c * 4 + p) * 256 + v] = (v y^(8p)) * const_c in K. Every constant lies in GF(2^16)
+// inside K = span(Y^i), so only word 0 of its composite image is set (checked by the tests).
+inline void constant_tables_comp(uint32_t* tbl) {
+  U128 c[6];
+  constants_flat(c);
+  for (int ci = 0; ci < 6; ++ci) {
+    const uint32_t k = to_w4(flat_to_comp(c[ci])).w0;
+    for (int p = 0; p < 4; ++p)
+      for (uint32_t v = 0; v < 256; ++v) tbl[(ci * 4 + p) * 256 + v] = kred(cl32(v << (8 * p), k));
+  }
+}
+
+struct RcComp {  // round constants in the composite basis (host side)
+  NOID_HDM W4 get(int lane, int r) {
+    const U128c& c = kRoundConstFlat[lane][r];
+    return to_w4(flat_to_comp({c.lo, c.hi}));
+  }
+};
 
 struct RcFlat {  // round-constant accessor for the shared permutation code (host side)
   NOID_HDM W4 get(int lane, int r) {

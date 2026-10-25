@@ -70,7 +70,7 @@ NOID_HD void mds(W4 s[4], bool full, CM& cm)
     }
 }
 
-// round -1 is the initial MDS_FULL layer; rounds 0..3 and 62..65 are full
+// round -1 is the initial MDS_FULL layer; rounds 0..3 and 62..65 are full. CM::sbox is x^7 in the policy's basis.
 template <class CM, class RC>
 NOID_HD void permute(W4 s[4], CM& cm, RC& rc)
 {
@@ -80,7 +80,7 @@ NOID_HD void permute(W4 s[4], CM& cm, RC& rc)
         const int lanes = r < 0 ? 0 : (full ? 4 : 1);
         NOID_UNROLL1
         for (int i = 0; i < lanes; i++) {
-            W4 y = sbox7(w4x(s[0], rc.get(i, r)));
+            W4 y = CM::sbox(w4x(s[0], rc.get(i, r)));
             if (full) {               // rotate: after 4 steps lanes are back in place
                 s[0] = s[1]; s[1] = s[2]; s[2] = s[3]; s[3] = y;
             } else {
@@ -200,6 +200,7 @@ NOID_HD void permute_n(W4 s[N][4], CM& cm, RC& rc)
 struct CMulKop {
     const KOp* k;   // NOID_NCONST entries
     NOID_HDM W4 mul(int c, W4 a) { KOp ka = kop(a); return kmul(ka, k[c]); }
+    NOID_HDM static W4 sbox(W4 x) { return sbox7(x); }
 };
 
 // nibble tables, 64-bit entries: tbl[(((c*2 + half)*32 + nibble)*16 + value)*2 + {0,1}]
@@ -209,6 +210,7 @@ struct CMulKop {
 #define NOID_TBL_WORDS (NOID_NCONST * 2 * 32 * 16 * 2)
 struct CMulTable {
     const uint32_t* tbl;
+    NOID_HDM static W4 sbox(W4 x) { return sbox7(x); }
     NOID_HDM W4 mul(int c, W4 a)
     {
 #if defined(NOID_EXPERIMENT) && NOID_EXPERIMENT == 1

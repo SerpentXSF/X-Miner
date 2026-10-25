@@ -124,29 +124,33 @@ NVIDIA findings (RTX 3060):
 
 | Card | X-Miner | Reference |
 |---|---|---|
-| RX 9070 XT | 17.7 MH/s @ ~237 W (512 threads/block) | SRBMiner: 0 H/s; closed AMD miner: 20.9 MH/s on RX 9070 |
-| RTX 3060 | 9.6 MH/s @ 127 W | closed miners: ~29.5 MH/s @ 90 W |
+| RX 9070 XT | 20.1 MH/s @ ~236 W (-30% power) | SRBMiner: 0 H/s; closed AMD miner: 20.9 MH/s on RX 9070 |
+| RTX 3060 | 9.8 MH/s @ 148 W | closed miners: ~29.5 MH/s @ 90 W |
 
 History: generic Karatsuba constant multiply 11.1 / 5.32 MH/s; shared-memory/LDS nibble tables (NoidMiner) 16.6 /
-8.72 MH/s; AMD block size 512 17.7 MH/s. Two nonces per thread was slower on both vendors (15.3 / 8.30).
-NVIDIA block size is flat from 256 to 768.
+8.72 MH/s; AMD block size 512 17.7 MH/s; IMAD.WIDE products on NVIDIA; composite basis (below) 20.1 / 9.8 MH/s
+(same session, same settings: 17.7 -> 20.1 and 8.61 -> 9.81 MH/s, 3060 power 169 -> 148 W).
 
 NVIDIA general multiply: 32x32 -> 64 carry-less products from IMAD.WIDE on operands split in 4 bit classes
-(16 multiplies per 32x32, Karatsuba 32 -> 64 -> 128 = 9 of them) instead of NoidMiner's 16-bit XMAD path, which
-costs a full IMAD plus half-word extraction per product on Ampere: 8.65 -> 9.6 MH/s. On AMD the same code is slower
-(17.7 -> 14.9 MH/s: 32-bit multiplies are quarter rate; the 16-bit path uses the full-rate 24-bit multiplier).
+(16 multiplies per 32x32, 9 of them per 128-bit product) instead of NoidMiner's 16-bit XMAD path, which costs a full
+IMAD plus half-word extraction per product on Ampere. On AMD the 16-bit path stays (32-bit multiplies are quarter
+rate there; the 16-bit products use the full-rate 24-bit multiplier).
 
-Where the time goes on the RTX 3060 (timing-only builds): without the S-boxes 18.0 MH/s; without the table constant
-multiplies 13.2 MH/s. The table multiply (64 conflict-free LDS.64 per product) is close to the LDS limit, so the
-next step is fewer bytes per constant multiply: every constant (g, h, d_i + 1) lies in the GF(2^16) subfield, so in a
-composite basis GF((2^32)^4) a constant multiply is 4 independent GF(2^32) products (32 LDS.32 from 512-byte nibble
-tables, 4x fewer LDS wavefronts) while the general multiply keeps the 9 IMAD.WIDE products. Not done yet.
+Composite basis (kernels/noid/noid_comp.h): the kernel represents GF(2^128) as K[z]/(z^4 + z^3 + z^2 + y z + y) over
+K = GF(2^32) = GF(2)[y]/(y^32 + y^7 + y^3 + y^2 + 1); the host converts the midstate, fields, nonce bits and round
+constants, and maps the digest back. Every MDS constant (g, h, d_i + 1) lies in GF(2^16), inside K, so a constant
+multiply is four K-products by a constant: 16 lookups into 24 KB of byte tables instead of 64 LDS.64 into 48 KB of
+nibble tables. The general multiply stays at 9 carry-less 32 x 32 products; the z^4..z^6 terms fold back with
+one-bit shifts and each coefficient is reduced once. RTX 3060 profile (Nsight Compute), flat -> composite: instructions
+per nonce -16%, shared loads 4x fewer, registers 72 -> 64, occupancy 33% -> 66% (the tables no longer cap it); the ALU
+pipe stays the limit (~75% of peak, math-pipe throttle), now almost all in the S-box multiplies. Block size is flat on
+both vendors (3060 128-1024, 9070 XT 128-1024 within 2%).
 
-RX 9070 XT, same timing-only builds: 17.5 MH/s full, 24.9 without the table multiplies, 31.5 without the S-boxes.
-There the LDS bandwidth ceiling is far away (~50 MH/s); the table multiply costs issue slots (64 LDS + ~85 ALU per
-product), so the composite basis would save only ~5% on AMD (cheaper constant multiply, slightly dearer general
-multiply) against an estimated ~15% on NVIDIA. With NOID at ~$0.54 (~1.1 NOID/day for a 9070 XT at 17.5 MH/s on a
-656 GH/s network, 2026-10-22) this is parked behind Pearl work.
+Where the time went on the RTX 3060 with the flat basis (timing-only builds): without the S-boxes 18.0 MH/s; without
+the table constant multiplies 13.2 MH/s. RX 9070 XT, same builds: 17.5 MH/s full, 24.9 without the table multiplies,
+31.5 without the S-boxes. The closed NVIDIA miners are ~3x faster still, so they must have a much cheaper 128-bit
+multiply than 9 class-split integer products; that is the open item. With NOID at ~$0.54 (~1.1 NOID/day for a
+9070 XT at 17.5 MH/s on a 656 GH/s network, 2026-10-22) this stays behind Pearl work.
 
 ## Quantus (quantus)
 

@@ -12,7 +12,7 @@ namespace xm::noid {
 
 namespace {
 
-// Must match struct NoidJob in kernels/noid/noid.cu.
+// Must match struct NoidJob in kernels/noid/noid.cu (composite basis, kernels/noid/noid_comp.h).
 struct NoidJobArgs {
   W4 mid[4];
   W4 f[5];
@@ -38,19 +38,19 @@ Engine::~Engine() {
 
 bool Engine::init(std::string& err) {
   dev_.make_current();
-  // Threads per block: every block holds its own 48 KB copy of the constant tables, so larger blocks fit more
-  // threads per compute unit (RX 9070 XT: 128 -> 15.3, 256 -> 17.1, 512 -> 17.7 MH/s). NVIDIA is flat from 256 to
-  // 768 (RTX 3060 ~8.65 MH/s) and 1024 exceeds its register budget. XM_NOID_TPB overrides (developer tuning).
+  // Threads per block: every block holds its own 24 KB copy of the constant tables, so larger blocks fit more
+  // threads per compute unit. XM_NOID_TPB overrides (developer tuning).
   tpb_ = dev_.info().vendor == gpu::Vendor::Amd ? 512 : 256;
   if (const char* e = std::getenv("XM_NOID_TPB")) tpb_ = static_cast<uint32_t>(std::atoi(e));
   if (!gpu::load_kernels(dev_, "noid", err)) return false;
   std::vector<W4> rc(4 * 66);
   for (int l = 0; l < 4; ++l)
-    for (int r = 0; r < 66; ++r) rc[l * 66 + r] = to_w4({kRoundConstFlat[l][r].lo, kRoundConstFlat[l][r].hi});
-  std::vector<uint32_t> tbl(NOID_TBL_WORDS);
-  constant_tables(tbl.data());
+    for (int r = 0; r < 66; ++r)
+      rc[l * 66 + r] = to_w4(flat_to_comp({kRoundConstFlat[l][r].lo, kRoundConstFlat[l][r].hi}));
+  std::vector<uint32_t> tbl(NOID_CTBL_WORDS);
+  constant_tables_comp(tbl.data());
   std::vector<uint64_t> f2t(128);
-  for (int i = 0; i < 128; ++i) f2t[i] = kFlatToTower[i].hi;
+  for (int i = 0; i < 128; ++i) f2t[i] = flat_to_tower(comp_basis().c2f[i]).hi;
   d_rc_ = dev_.alloc(rc.size() * sizeof(W4));
   d_cm_ = dev_.alloc(tbl.size() * 4);
   d_f2t_ = dev_.alloc(f2t.size() * 8);
@@ -85,17 +85,17 @@ double Engine::iterate(uint32_t batch, std::vector<Share>& shares, std::string& 
     lo32_ = 0;
   }
   NoidJobArgs a{};
-  for (int i = 0; i < 4; ++i) a.mid[i] = to_w4(mid_[i]);
-  for (int i = 0; i < 5; ++i) a.f[i] = to_w4(tower_to_flat(job_.fields[11 + i]));
+  for (int i = 0; i < 4; ++i) a.mid[i] = to_w4(flat_to_comp(mid_[i]));
+  for (int i = 0; i < 5; ++i) a.f[i] = to_w4(flat_to_comp(tower_to_flat(job_.fields[11 + i])));
   U128 base{uint64_t(hi32_) << 32, job_.nonce_prefix};
-  a.nonce_base = to_w4(tower_to_flat(base));
-  for (int b = 0; b < 32; ++b) a.t2f_lo[b] = to_w4({kTowerToFlat[b].lo, kTowerToFlat[b].hi});
+  a.nonce_base = to_w4(flat_to_comp(tower_to_flat(base)));
+  for (int b = 0; b < 32; ++b) a.t2f_lo[b] = to_w4(flat_to_comp({kTowerToFlat[b].lo, kTowerToFlat[b].hi}));
   for (int i = 0; i < 8; ++i) a.target_hi |= uint64_t(job_.share_target[24 + i]) << (8 * i);
   uint32_t start = lo32_, maxf = kMaxFound;
   void* args[] = {&a, &d_rc_, &d_cm_, &d_f2t_, &start, &d_found_, &maxf};
   std::vector<uint32_t> found(1 + kMaxFound);
   if (!dev_.memset(d_found_, 0, 4) ||
-      !dev_.launch("xm_noid_search", batch / (tpb_ * kLanes), 1, 1, tpb_, 1, 1, NOID_TBL_WORDS * 4, args)) {
+      !dev_.launch("xm_noid_search", batch / (tpb_ * kLanes), 1, 1, tpb_, 1, 1, NOID_CTBL_WORDS * 4, args)) {
     err = dev_.last_error();
     return 0;
   }
