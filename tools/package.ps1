@@ -37,6 +37,7 @@ try {
   }
 } finally { $archive.Dispose() }
 $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-"$hash  $name.zip" | Set-Content -Encoding ascii "$zip.sha256"
+# LF line ending: sha256sum -c on Linux reads a trailing CR as part of the file name.
+[IO.File]::WriteAllText("$zip.sha256", "$hash  $name.zip`n", [Text.Encoding]::ASCII)
 Write-Host "packed $zip"
 Write-Host "sha256 $hash"
