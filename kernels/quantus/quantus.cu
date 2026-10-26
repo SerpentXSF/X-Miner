@@ -126,7 +126,9 @@ __device__ __forceinline__ void mul_wide(u64 a, u64 b, const Acc& w, u32& r0, u3
 
 // AMD reductions: XM_QTC_AFOLD 0 = add/sub chains only, 1 = fold_mad for products, 2 = also fold96_mad for the
 // linear layers (RX 9070 XT stock: 183.1 / 192.6 / 196.0 MH/s). XM_QTC_ASQR 1 squares with four products (slower:
-// the extra zero-extended addends cost more moves than the shifts they replace).
+// the extra zero-extended addends cost more moves than the shifts they replace). Also slower: products whose
+// addends are all 0 or full products (no moves, but one more multiply-add each: 183.0 MH/s); on NVIDIA, fold96 on
+// the multiply pipe (RTX 3060 148.0 vs 148.1, power-capped).
 #ifndef XM_QTC_AFOLD
 #define XM_QTC_AFOLD 2
 #endif
