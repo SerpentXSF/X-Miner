@@ -62,6 +62,12 @@ constexpr int STAGES = XM_PEARL_STAGES;  // STAGES x STAGE_BYTES of dynamic shar
 //    32 ns -0.2% / -1.9%; 2 or 8 XOR chains -0.5%; group rows 4 / 16 -0.5% / -1.2%. Zero DRAM traffic (DIAG_L2,
 //    wrong results) is only +2%, so DRAM is not the lever. Larger K amortizes the per-tile epilogue: XM_PEARL_K
 //    8192 +1.1%, 16384 +1.6% (share proofs grow with K).
+//  - 2026-10-25 night (K 8192, 44.7 TH/s at the cap): Nsight source sampling puts ~4.5% of math-warp time in the
+//    full-barrier wait and ~8% of IMMA samples on ldmatrix results (short scoreboard); the copy warp waits on empty
+//    barriers >50% of its time. Tried: starting warps 4..7 up to 2 us late (phase skew between the two math warps
+//    of a scheduler) +0.1%; no wave sync -4.6%; per-k32-slice full/empty barriers: waits per slice or a release
+//    right after the slice's ldmatrix spill (17.6 / similar), a release after the slice's MMAs 39.6 (32-byte copy
+//    rows). All reverted.
 
 // Byte offset of (row, 16-byte chunk) inside a 128-byte-row stage, with an XOR swizzle so the 8 row addresses of
 // an ldmatrix hit 32 distinct banks.
