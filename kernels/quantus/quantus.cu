@@ -124,19 +124,73 @@ __device__ __forceinline__ void mul_wide(u64 a, u64 b, const Acc& w, u32& r0, u3
   r3 = (u32)(p11 >> 32);
 }
 
+// AMD reductions: XM_QTC_AFOLD 0 = add/sub chains only, 1 = fold_mad for products, 2 = also fold96_mad for the
+// linear layers (RX 9070 XT stock: 183.1 / 192.6 / 196.0 MH/s). XM_QTC_ASQR 1 squares with four products (slower:
+// the extra zero-extended addends cost more moves than the shifts they replace).
+#ifndef XM_QTC_AFOLD
+#define XM_QTC_AFOLD 2
+#endif
+#ifndef XM_QTC_ASQR
+#define XM_QTC_ASQR 0
+#endif
+
+// fold() with r2 * (2^32 - 1) + (r1:r0) on the multiplier: its carry c is worth 2^64 = 2^32 - 1 (+c high, -c low).
+__device__ __forceinline__ u64 fold_mad(u32 r0, u32 r1, u32 r2, u32 r3) {
+  u64 t;
+  u32 c, o0, o1;
+  asm("v_mad_co_u64_u32 %0, %1, %2, %3, %4" : "=&v"(t), "=&s"(c) : "v"(r2), "s"(0xffffffffu), "v"(((u64)r1 << 32) | r0));
+  asm("v_sub_co_u32 %0, vcc_lo, %2, %4\n\t"
+      "v_sub_co_ci_u32_e64 %1, null, %3, 0, vcc_lo\n\t"
+      "v_add_co_ci_u32_e64 %1, null, %1, 0, %5\n\t"
+      "v_sub_co_ci_u32_e64 %0, null, %0, 0, %5"
+      : "=&v"(o0), "=&v"(o1)
+      : "v"((u32)t), "v"((u32)(t >> 32)), "v"(r3), "s"(c)
+      : "vcc");
+  return ((u64)o1 << 32) | o0;
+}
+
+// fold96() the same way: h * (2^32 - 1) + (l1:l0), carry c corrected as above.
+__device__ __forceinline__ u64 fold96_mad(const Acc& a) {
+  u64 t;
+  u32 c, o0, o1;
+  asm("v_mad_co_u64_u32 %0, %1, %2, %3, %4" : "=&v"(t), "=&s"(c) : "v"(a.h), "s"(0xffffffffu), "v"(((u64)a.l1 << 32) | a.l0));
+  asm("v_add_co_ci_u32_e64 %1, null, %3, 0, %4\n\t"
+      "v_sub_co_ci_u32_e64 %0, null, %2, 0, %4"
+      : "=&v"(o0), "=&v"(o1)
+      : "v"((u32)t), "v"((u32)(t >> 32)), "s"(c));
+  return ((u64)o1 << 32) | o0;
+}
+
+#if XM_QTC_AFOLD >= 2
+#define FOLD96 fold96_mad
+#else
+#define FOLD96 fold96
+#endif
+#if XM_QTC_AFOLD
+#define FOLD_SQ fold_mad
+#define FOLD_MUL fold_mad
+#define FOLD_DIAG fold_mad
+#else
+#define FOLD_SQ fold
+#define FOLD_MUL fold
+#define FOLD_DIAG fold
+#endif
+
 // a^2 with three products: a0^2 + 2 a0 a1 2^32 + a1^2 2^64.
 __device__ __forceinline__ u64 gsqr(u64 a) {
+#if XM_QTC_ASQR
+  u32 r0, r1, r2, r3;
+  mul_wide(a, a, Acc{0u, 0u, 0u}, r0, r1, r2, r3);
+  return FOLD_SQ(r0, r1, r2, r3);
+#else
   const u32 a0 = (u32)a, a1 = (u32)(a >> 32);
   const u64 ll = (u64)a0 * a0, lh = (u64)a0 * a1, hh = (u64)a1 * a1;
   // (hh:ll) + (lh << 33) as a 128-bit sum: lh << 1 is 65 bits.
   const u64 mid = (ll >> 32) + ((lh << 1) & 0xffffffffull);
   const u64 top = hh + (lh >> 31) + (mid >> 32);
-  return fold((u32)ll, (u32)mid, (u32)top, (u32)(top >> 32));
+  return FOLD_SQ((u32)ll, (u32)mid, (u32)top, (u32)(top >> 32));
+#endif
 }
-
-#define FOLD_SQ fold
-#define FOLD_MUL fold
-#define FOLD_DIAG fold
 
 #else  // NVIDIA
 
@@ -225,6 +279,7 @@ __device__ __forceinline__ u64 gadd(u64 a, u64 b) {
 #ifndef XM_QTC_MIX
 #define XM_QTC_MIX 2
 #endif
+#define FOLD96 fold96
 #define FOLD_SQ ((XM_QTC_MIX & 1) ? fold_fma : fold)
 #define FOLD_MUL ((XM_QTC_MIX & 2) ? fold_fma : fold)
 #define FOLD_DIAG ((XM_QTC_MIX & 4) ? fold_fma : fold)
@@ -306,7 +361,7 @@ __device__ __forceinline__ void external(u64 s[12], const u64* rc) {
 #pragma unroll
     for (int j = k; j < 12; j += 4) {
       const Acc v = acc_sum(y[j], sum);
-      s[j] = fold96(rc ? acc_sum(v, rc[j]) : v);
+      s[j] = FOLD96(rc ? acc_sum(v, rc[j]) : v);
     }
   }
 }
