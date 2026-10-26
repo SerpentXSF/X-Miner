@@ -146,6 +146,11 @@ per nonce -16%, shared loads 4x fewer, registers 72 -> 64, occupancy 33% -> 66% 
 pipe stays the limit (~75% of peak, math-pipe throttle), now almost all in the S-box multiplies. Block size is flat on
 both vendors (3060 128-1024, 9070 XT 128-1024 within 2%).
 
+Dead ends on the RTX 3060 after the composite basis (2026-10-25): 6 bit classes so the multiplier sums all class
+products (36 IMAD.WIDE per 32 x 32, no XOR tree) 9.81 -> 6.96 MH/s (logic ops barely drop, the multiplies double);
+right shifts as multiply-high on the idle multiply pipe 9.82 -> 9.72-9.75; threads per block 128-1024 flat. Moving
+work between pipes does not help: the profile's dispatch stalls point at issue limits, not at one busy pipe.
+
 Where the time went on the RTX 3060 with the flat basis (timing-only builds): without the S-boxes 18.0 MH/s; without
 the table constant multiplies 13.2 MH/s. RX 9070 XT, same builds: 17.5 MH/s full, 24.9 without the table multiplies,
 31.5 without the S-boxes. The closed NVIDIA miners are ~3x faster still, so they must have a much cheaper 128-bit
