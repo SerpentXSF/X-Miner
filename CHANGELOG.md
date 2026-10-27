@@ -26,7 +26,7 @@ Features
   (Kryptex), DATUM BLAKE2b (DATUM gateway, AlphaPool); TLS; failover lists.
 - GPU tuning: power limit, core / memory clock locks, clock offsets, intensity, per GPU; restored on exit.
 - Watchdog: exits for the launcher to restart after repeated GPU errors, a stalled GPU, or no usable GPU.
-- HTTP API and web dashboard, pool-credited hashrate, HiveOS custom-miner package.
+- HTTP API and web dashboard, pool-credited hashrate, HiveOS custom-miner package (not yet tested on a HiveOS rig).
 - No runtime dependencies beyond the GPU driver: static Windows exe, Linux binary for glibc 2.29+ (Ubuntu 20.04+).
 
 Dev fee: 1% on Pearl, Parano1d and Quantus, time-sliced (60 s per 100 minutes of mining) and shown in the console

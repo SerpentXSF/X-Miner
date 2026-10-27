@@ -17,6 +17,10 @@ Quantus (time-sliced: about 60 s per 100 minutes of mining, shown in the console
 
 The web dashboard is at <http://127.0.0.1:21550/> while the miner runs (`--api-host 0.0.0.0` for LAN access).
 
+**HiveOS** (custom miner, **not yet tested on a HiveOS rig**; reports welcome): put the release's
+`x-miner-<version>-hiveos.tar.gz` link in the flight sheet's Installation URL; `README.txt` inside the package has
+the flight sheet fields.
+
 Command line (all options: `x-miner --help`):
 
 ```
