@@ -25,7 +25,8 @@ Features
 - Pools: Pearl object stratum (Kryptex, HeroMiners), parano1d-stratum-v1 (rplant, InnovLab), Quantus
   (Kryptex), DATUM BLAKE2b (DATUM gateway, AlphaPool); TLS; failover lists.
 - GPU tuning: power limit, core / memory clock locks, clock offsets, core voltage offset (AMD RDNA3/4), fan speed,
-  intensity, per GPU; restored on exit. Every launcher has an optional TUNING line.
+  intensity, per GPU; restored on exit (Ctrl+C, closing the window, end of a benchmark, watchdog restart, SIGTERM /
+  SIGHUP on Linux). Every launcher has an optional TUNING line.
 - Watchdog: exits for the launcher to restart after repeated GPU errors, a stalled GPU, or no usable GPU.
 - HTTP API and web dashboard, pool-credited hashrate, HiveOS custom-miner package (not yet tested on a HiveOS rig).
 - No runtime dependencies beyond the GPU driver: static Windows exe, Linux binary for glibc 2.29+ (Ubuntu 20.04+).

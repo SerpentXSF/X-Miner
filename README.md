@@ -33,13 +33,17 @@ x-miner --algorithm blake2b --pool us1.alphapool.tech:5555 --wallet ADDRESS --wo
 ## GPU tuning
 
 Clocks, offsets, power limits and intensity can be set per GPU on the command line (one value for every GPU or a
-comma list in `--gpu-id` order, `-` to skip a GPU). Everything is restored when X-Miner exits.
+comma list in `--gpu-id` order, `-` to skip a GPU). Everything is put back to what it was when X-Miner exits: on Ctrl+C,
+when its window is closed, when a benchmark ends, when the watchdog restarts it, and on Linux on SIGTERM / SIGHUP
+(HiveOS `miner stop`). A forced kill (Task Manager "End task", `kill -9`), a system crash or a power cut gives the miner
+no chance to do that: reset the card then (AMD: Adrenalin > Performance > Tuning > Reset; NVIDIA: reboot, or
+`nvidia-smi -rgc`, `-rmc` and `-pl <watts>` as administrator).
 
 | Option | NVIDIA (Windows / Linux) | AMD Windows | AMD Linux |
 |---|---|---|---|
 | `--gpu-plimit 150` / `--gpu-plimit 70%` | watts or % of default | % only (Adrenalin's power slider) | watts or % |
 | `--gpu-cclock 1500` | locks the core clock | - | Overdrive max core |
-| `--gpu-mclock 7000` | locks the memory clock | max memory clock | Overdrive max memory |
+| `--gpu-mclock 7000` | locks the memory clock (GeForce: the nearest of the card's fixed memory clocks, listed by `--gpu-tune-info`; use `--gpu-moffset` to overclock memory) | max memory clock | Overdrive max memory |
 | `--gpu-coffset 100` | core clock offset | max clock offset | - |
 | `--gpu-moffset 500` | memory clock offset | - | - |
 | `--gpu-voffset -50` | - (lock the core clock instead, see below) | core voltage offset in mV (Adrenalin "Voltage Offset", RDNA3/4) | core voltage offset in mV (RDNA3/4) |

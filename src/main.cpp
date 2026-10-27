@@ -4,6 +4,7 @@
 #include <windows.h>
 #endif
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <memory>
 #include <mutex>
@@ -17,6 +18,7 @@
 #include "api/api.hpp"
 #include "core/devfee.hpp"
 #include "core/report.hpp"
+#include "core/stop.hpp"
 #include "core/stats.hpp"
 #include "core/banner.hpp"
 #include "core/config.hpp"
@@ -241,9 +243,22 @@ int main(int argc, char** argv) {
   std::at_quick_exit([] {  // watchdog exit with a hung GPU: still put clocks and power back
     if (g_tuner) g_tuner->restore();
   });
+  for (int sig : {SIGINT, SIGTERM,
 #ifdef _WIN32
-  SetConsoleCtrlHandler(on_console_event, TRUE);
+                  SIGBREAK})
+#else
+                  SIGHUP})
 #endif
+    std::signal(sig, [](int) { stop_flag() = true; });
+#ifdef _WIN32
+  SetConsoleCtrlHandler(on_console_event, TRUE);  // after std::signal so it runs before the C runtime's handler
+#endif
+  std::thread([] {  // a stop that hangs (a GPU that never returns): restore through the quick-exit handler
+    while (!stop_requested()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::this_thread::sleep_for(std::chrono::seconds(20));
+    error("STOP", "still running 20 s after the stop request; exiting");
+    std::quick_exit(130);
+  }).detach();
   for (size_t i = 0; i < devs.size(); ++i) tuner.apply(i, cfg.tune_for(i));
   struct Restore {
     gpu::Tuner& t;

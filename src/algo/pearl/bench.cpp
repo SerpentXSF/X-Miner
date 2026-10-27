@@ -9,6 +9,7 @@
 #include "core/config.hpp"
 #include "core/console.hpp"
 #include "core/stats.hpp"
+#include "core/stop.hpp"
 #include "gpu/sensors.hpp"
 
 namespace xm::pearl {
@@ -32,7 +33,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   job.share_nbits = cfg.share_dump.empty() ? 0x1a07fff8 : 0x1c010000;
   int failures = 0;
   gpu::Sensors sensors(devs);
-  for (size_t d = 0; d < devs.size(); ++d) {
+  for (size_t d = 0; d < devs.size() && !stop_requested(); ++d) {
     auto dev = gpu::open(devs[d]);
     uint32_t bm = 16384, bn = pass_columns(cfg.intensity_for(d));
     if (const char* e = std::getenv("XM_PEARL_MN")) std::sscanf(e, "%ux%u", &bm, &bn);  // developer tuning
@@ -50,7 +51,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     int samples = 0;
     size_t shares = 0;
     bool dumped = false;
-    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < cfg.benchmark_seconds) {
+    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < cfg.benchmark_seconds && !stop_requested()) {
       std::vector<Share> found;
       double h = eng.iterate(found, err);
       if (h == 0) {

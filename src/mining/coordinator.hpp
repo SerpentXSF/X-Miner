@@ -15,7 +15,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
@@ -27,6 +26,7 @@
 #include "core/config.hpp"
 #include "core/console.hpp"
 #include "core/report.hpp"
+#include "core/stop.hpp"
 #include "core/stats.hpp"
 #include "gpu/gpu.hpp"
 #include "gpu/sensors.hpp"
@@ -34,26 +34,16 @@
 
 namespace xm {
 
-namespace detail {
-inline std::atomic<bool>& stop_flag() {
-  static std::atomic<bool> stop{false};
-  return stop;
-}
-inline void on_signal(int) { stop_flag() = true; }
-}  // namespace detail
-
 template <class T>
 int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   using Pool = typename T::Pool;
   using Job = typename T::Job;
   using Share = typename T::Share;
-  auto& stop = detail::stop_flag();
+  auto& stop = stop_flag();
   if (cfg.pools.empty() || cfg.wallet.empty()) {
     error("POOL", std::string(T::kName) + " needs --pool and --wallet");
     return 2;
   }
-  std::signal(SIGINT, detail::on_signal);
-  std::signal(SIGTERM, detail::on_signal);
 
   Stats stats(devs.size());
   for (size_t i = 0; i < devs.size(); ++i) stats.set_name(static_cast<int>(i), devs[i].name, devs[i].pci_bus);

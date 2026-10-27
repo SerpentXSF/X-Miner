@@ -1,9 +1,8 @@
 // GPU tuning from the command line: core/memory clock locks, clock offsets, power limits, fan speed and (AMD) core voltage
-// offset, applied at start and
-// restored on exit (including Ctrl+C and closing the console window).
+// offset, applied at start and restored on exit (Ctrl+C, closing the console window, SIGTERM / SIGHUP, watchdog exit).
 //   NVIDIA (Windows, Linux): NVML. Needs administrator / root rights; without them X-Miner says so and mines anyway.
 //   AMD Linux:               amdgpu sysfs (power1_cap, pp_od_clk_voltage). Needs root and the overdrive feature mask.
-//   AMD Windows:             not yet; set clocks and power in Adrenalin.
+//   AMD Windows:             ADL Overdrive8 (Adrenalin's tuning settings).
 #pragma once
 
 #include <memory>

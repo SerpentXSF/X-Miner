@@ -48,6 +48,7 @@ struct NvmlTune {
   int (*reset_gpu)(H) = nullptr;
   int (*lock_mem)(H, unsigned, unsigned) = nullptr;
   int (*reset_mem)(H) = nullptr;
+  int (*mem_clocks)(H, unsigned*, unsigned*) = nullptr;  // supported memory clocks (MHz)
   int (*get_pl)(H, unsigned*) = nullptr;
   int (*get_pl_default)(H, unsigned*) = nullptr;
   int (*get_pl_range)(H, unsigned*, unsigned*) = nullptr;
@@ -78,6 +79,7 @@ struct NvmlTune {
     lib.sym("nvmlDeviceResetGpuLockedClocks", reset_gpu);
     lib.sym("nvmlDeviceSetMemoryLockedClocks", lock_mem);
     lib.sym("nvmlDeviceResetMemoryLockedClocks", reset_mem);
+    lib.sym("nvmlDeviceGetSupportedMemoryClocks", mem_clocks);
     lib.sym("nvmlDeviceGetPowerManagementLimit", get_pl);
     lib.sym("nvmlDeviceGetPowerManagementDefaultLimit", get_pl_default);
     lib.sym("nvmlDeviceGetPowerManagementLimitConstraints", get_pl_range);
@@ -304,7 +306,30 @@ void Tuner::report(size_t index) {
     if (N.num_fans) N.num_fans(hit->second, &fans);
     std::snprintf(buf, sizeof buf, ": power limit %.0f W (default %.0f, range %.0f-%.0f W), %u fan(s)", cur / 1e3,
                   def / 1e3, lo / 1e3, hi / 1e3, fans);
-    return info("TUNE", unit + buf);
+    info("TUNE", unit + buf);
+    for (auto [type, what] : {std::pair<int, const char*>{0, "core clock offset"}, {2, "memory clock offset"}}) {
+      std::string line = std::string("  ") + what + ":";
+      for (int ps : {0, 2}) {
+        NvmlClockOffset o{};
+        o.version = static_cast<unsigned>(sizeof o) | (1u << 24);
+        o.type = type;
+        o.pstate = ps;
+        if (N.get_offsets && N.get_offsets(hit->second, &o) == 0)
+          line += " P" + std::to_string(ps) + " " + std::to_string(o.offset_mhz) + " MHz (range " + std::to_string(o.min_mhz) +
+                  " to " + std::to_string(o.max_mhz) + ")";
+      }
+      int legacy = 0;
+      auto get = type == 0 ? N.get_core_off : N.get_mem_off;
+      if (line.back() == ':' && get && get(hit->second, &legacy) == 0) line += " " + std::to_string(legacy) + " MHz";
+      if (line.back() != ':') info("TUNE", line);
+    }
+    unsigned n = 32, clocks[32];
+    if (N.mem_clocks && N.mem_clocks(hit->second, &n, clocks) == 0 && n > 0) {
+      std::string list;
+      for (unsigned k = 0; k < n; ++k) list += (k ? ", " : "") + std::to_string(clocks[k]);
+      info("TUNE", "  memory clocks for --gpu-mclock: " + list + " MHz");
+    }
+    return;
   }
 #ifdef _WIN32
   if (!impl_->od8) impl_->od8 = std::make_unique<AdlOd8>();
@@ -429,10 +454,25 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
       }
     }
     if (req.mem_lock_mhz) {
-      unsigned f = static_cast<unsigned>(*req.mem_lock_mhz);
+      // GeForce memory runs only at a few fixed clocks; the driver accepts any lock but keeps its current clock unless
+      // the value is one of them. Lock to the highest supported clock at or below the request (else the lowest).
+      unsigned f = static_cast<unsigned>(*req.mem_lock_mhz), n = 32, clocks[32];
+      std::string note;
+      if (N.mem_clocks && N.mem_clocks(h, &n, clocks) == 0 && n > 0) {
+        unsigned best = 0, lowest = clocks[0];
+        std::string list;
+        for (unsigned k = 0; k < n; ++k) {
+          if (clocks[k] <= f && clocks[k] > best) best = clocks[k];
+          lowest = std::min(lowest, clocks[k]);
+          list += (list.empty() ? "" : ", ") + std::to_string(clocks[k]);
+        }
+        unsigned pick = best ? best : lowest;
+        if (pick != f) note = " (nearest supported to " + std::to_string(f) + "; this GPU supports " + list + " MHz)";
+        f = pick;
+      }
       int rc = N.lock_mem ? N.lock_mem(h, f, f) : 3;
       if (rc == 0) {
-        ok("memory clock locked at " + std::to_string(f) + " MHz");
+        ok("memory clock locked at " + std::to_string(f) + " MHz" + note);
         impl_->undo.push_back([&N, h] { N.reset_mem(h); });
       } else {
         fail("memory clock lock", N.why(rc));

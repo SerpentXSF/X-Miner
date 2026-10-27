@@ -9,6 +9,7 @@
 #include "core/config.hpp"
 #include "core/console.hpp"
 #include "core/stats.hpp"
+#include "core/stop.hpp"
 #include "gpu/sensors.hpp"
 
 namespace xm::b2b {
@@ -41,7 +42,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   const Job job = bench_job();
   int failures = 0;
   gpu::Sensors sensors(devs);
-  for (size_t d = 0; d < devs.size(); ++d) {
+  for (size_t d = 0; d < devs.size() && !stop_requested(); ++d) {
     auto dev = gpu::open(devs[d]);
     Engine eng(*dev, 0xb1a4e2b0 + d);
     std::string err;
@@ -57,7 +58,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     double total = 0, window = 0, watts = 0;
     int samples = 0;
     size_t shares = 0;
-    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < cfg.benchmark_seconds) {
+    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < cfg.benchmark_seconds && !stop_requested()) {
       std::vector<Share> found;
       double n = eng.iterate(batch, found, err);
       if (n == 0) {
