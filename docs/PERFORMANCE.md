@@ -161,7 +161,7 @@ multiply than 9 class-split integer products; that is the open item. With NOID a
 
 | Card | X-Miner | Reference |
 |---|---|---|
-| RX 9070 XT | 182.9 MH/s @ ~297 W (stock power) | SRBMiner 3.7.9: 221.5 MH/s @ ~316 W |
+| RX 9070 XT | 195.8 MH/s @ ~330 W (stock power), 179.6 MH/s at -30% | SRBMiner 3.7.9: 221.5 MH/s @ ~316 W |
 | RTX 3060 | 148.9 MH/s @ 170 W | SRBMiner 3.7.9: 230 MH/s @ 170 W |
 
 The hash is a Poseidon2 sponge (Goldilocks, width 12, rate 8, 8 full + 22 partial rounds, x^7) with five

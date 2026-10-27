@@ -18,7 +18,7 @@ GPUs
 
 Measured (see docs/PERFORMANCE.md)
 - RX 9070 XT: Pearl 115.0 TH/s at stock power (~340 W), 101.1 TH/s at -30% (~237 W); Parano1d 20.1 MH/s;
-  BLAKE2b 4.63 GH/s at -30%; Quantus 182.9 MH/s at stock power (~297 W).
+  BLAKE2b 4.63 GH/s at -30%; Quantus 195.8 MH/s at stock power (~330 W).
 - RTX 3060: Pearl 44.4 TH/s at stock 170 W; Parano1d 9.8 MH/s; Quantus 148.9 MH/s; BLAKE2b 1.97 GH/s.
 
 Features

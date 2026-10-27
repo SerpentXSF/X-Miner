@@ -63,8 +63,8 @@ non-zero code; the launchers restart it.
 
 | Card | Pearl | Parano1d | Quantus | BLAKE2b |
 |---|---|---|---|---|
-| RX 9070 XT (-30% power, ~237 W) | 101.1 TH/s | 20.1 MH/s | | 4.63 GH/s |
-| RX 9070 XT (stock power, ~300-340 W) | 115.0 TH/s | | 182.9 MH/s | |
+| RX 9070 XT (-30% power, ~237 W) | 101.1 TH/s | 20.1 MH/s | 179.6 MH/s | 4.63 GH/s |
+| RX 9070 XT (stock power, ~300-340 W) | 115.0 TH/s | | 195.8 MH/s | |
 | RTX 3060 (stock, 170 W) | 44.4 TH/s | 9.8 MH/s | 148.9 MH/s | 1.97 GH/s |
 
 The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share
