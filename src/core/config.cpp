@@ -110,6 +110,7 @@ gpu::TuneRequest Config::tune_for(size_t gpu) const {
       r.power_w = std::atof(pl.c_str());
   }
   r.fan_pct = pick_int(fan, gpu);
+  r.volt_offset_mv = pick_int(voffset, gpu);
   return r;
 }
 
@@ -202,6 +203,9 @@ std::optional<std::string> parse_args(int argc, char** argv, Config& c) {
     } else if (a == "--gpu-fan" || a == "--fan") {
       if (!(v = value())) return a + " needs a value";
       if (auto e = parse_gpu_list(*v, 0, 100, false, c.fan)) return a + ": " + *e;
+    } else if (a == "--gpu-voffset" || a == "--voff") {
+      if (!(v = value())) return a + " needs a value";
+      if (auto e = parse_gpu_list(*v, -500, 500, false, c.voffset)) return a + ": " + *e;
     } else if (a == "--gpu-off-temperature" || a == "--temp-stop") {
       if (!(v = value())) return a + " needs a value";
       if (auto e = parse_gpu_list(*v, 30, 120, false, c.off_temp)) return a + ": " + *e;
@@ -239,6 +243,7 @@ std::string usage() {
        "  --gpu-moffset <MHz>        memory clock offset             (NVIDIA)\n"
        "  --gpu-plimit <W|N%>        power limit in watts or % of default (AMD Windows: % only, e.g. 70%)\n"
        "  --gpu-fan <N>              fixed fan speed in % (NVIDIA; AMD: flat fan curve at N%)\n"
+       "  --gpu-voffset <mV>         core voltage offset, e.g. -50   (AMD RDNA3/4; NVIDIA: lock clocks instead)\n"
        "                             NVIDIA and AMD Linux need administrator / root.\n"
        "  --gpu-off-temperature <C>  pause a GPU when it reaches C degrees ...\n"
        "  --gpu-resume-temperature <C>  ... and resume at or below C (default: off temperature - 10)\n"

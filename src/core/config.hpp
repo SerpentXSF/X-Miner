@@ -33,6 +33,7 @@ struct Config {
   std::vector<std::string> intensity;  // work size per launch; empty / 0 = auto (see usage())
   std::vector<std::string> cclock, mclock, coffset, moffset, plimit;  // MHz / MHz / MHz / MHz / W or N%
   std::vector<std::string> fan;                // fixed fan speed, %
+  std::vector<std::string> voffset;            // core voltage offset, mV (AMD)
   std::vector<std::string> off_temp, resume_temp;  // pause a GPU at off_temp (C), resume at resume_temp
   bool list_devices = false;
   bool tune_info = false;             // --gpu-tune-info: show tunable ranges and current values, then exit

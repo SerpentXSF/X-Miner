@@ -42,7 +42,20 @@ comma list in `--gpu-id` order, `-` to skip a GPU). Everything is restored when 
 | `--gpu-mclock 7000` | locks the memory clock | max memory clock | Overdrive max memory |
 | `--gpu-coffset 100` | core clock offset | max clock offset | - |
 | `--gpu-moffset 500` | memory clock offset | - | - |
+| `--gpu-voffset -50` | - (lock the core clock instead, see below) | core voltage offset in mV (Adrenalin "Voltage Offset", RDNA3/4) | core voltage offset in mV (RDNA3/4) |
+| `--gpu-fan 70` | fixed fan speed in % | flat fan curve at N% | flat fan curve at N% |
 | `--gpu-intensity 32` | work per launch (pearlhash: N x 1024 columns, noid / quantus / blake2b: 2^N nonces; 0 = auto) | same | same |
+
+NVIDIA has no voltage control in its management library (NVML). To undervolt an NVIDIA card, lock the core clock
+(`--gpu-cclock 1500`): the GPU then runs at the voltage of that point of its voltage/frequency curve, which is how
+HiveOS undervolts NVIDIA cards too.
+
+Example (Windows `.bat`, two GPUs: an RTX 3060 and an RX 9070 XT; `-` leaves a GPU untouched):
+
+```
+x-miner.exe --algorithm quantus --pool qtc-us.kryptex.network:7049 --wallet krxXXXXXXX --worker rig1 ^
+  --gpu-plimit 170,70% --gpu-cclock 1700,- --gpu-mclock 6500,- --gpu-coffset -,100 --gpu-voffset -,-50 --gpu-fan 70,-
+```
 
 `--gpu-tune-info` lists what each GPU allows and its current values. NVIDIA tuning and AMD Linux tuning need
 administrator / root rights (HiveOS runs miners as root).

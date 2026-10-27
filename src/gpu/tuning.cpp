@@ -116,7 +116,7 @@ struct NvmlTune {
 enum {
   kOd8GfxclkFmax = 0, kOd8GfxclkFmin = 1, kOd8UclkFmax = 8, kOd8PowerPercentage = 9, kOd8FanMinSpeed = 10,
   kOd8FanZeroRpm = 15, kOd8FanCurveTemp1 = 19, kOd8FanCurveSpeed1 = 20, kOd8FanCurvePoints = 5, kOd8UclkFmin = 34,
-  kOd8OptimizedPowerMode = 36, kOd8Count = 77,
+  kOd8OptimizedPowerMode = 36, kOd8OdVoltage = 37, kOd8Count = 77,
   kAdlOd8FanSpeedMin = 1 << 5, kAdlOd8FanZeroRpmControl = 1 << 9, kAdlOd8FanCurve = 1 << 13,
   kAdlOd8OptimizedGpuPowerMode = 1 << 16,
 };
@@ -321,19 +321,27 @@ void Tuner::report(size_t index) {
   const std::pair<int, const char*> shown[] = {{kOd8GfxclkFmax, "core clock offset MHz"}, {kOd8GfxclkFmin, "min core clock MHz"},
                                                {kOd8UclkFmax, "max memory clock MHz"}, {kOd8PowerPercentage, "power limit % offset"},
                                                {kOd8UclkFmin, "min memory clock MHz"}, {kOd8OptimizedPowerMode, "power mode (3 = manual)"},
-                                               {kOd8FanMinSpeed, "fan min speed"}, {kOd8FanZeroRpm, "fan zero RPM"},
+                                               {kOd8OdVoltage, "core voltage offset mV"}, {kOd8FanMinSpeed, "fan min speed"}, {kOd8FanZeroRpm, "fan zero RPM"},
                                                {kOd8FanCurveTemp1, "fan curve 1 temp C"}, {kOd8FanCurveSpeed1, "fan curve 1 speed %"},
                                                {kOd8FanCurveTemp1 + 2, "fan curve 2 temp C"}, {kOd8FanCurveSpeed1 + 2, "fan curve 2 speed %"},
                                                {kOd8FanCurveTemp1 + 4, "fan curve 3 temp C"}, {kOd8FanCurveSpeed1 + 4, "fan curve 3 speed %"},
                                                {kOd8FanCurveTemp1 + 6, "fan curve 4 temp C"}, {kOd8FanCurveSpeed1 + 6, "fan curve 4 speed %"},
                                                {kOd8FanCurveTemp1 + 8, "fan curve 5 temp C"}, {kOd8FanCurveSpeed1 + 8, "fan curve 5 speed %"}};
-  for (auto [id, name] : shown) {
-    if (id >= static_cast<int>(init.size())) continue;
+  auto row = [&](int id, const std::string& name) {
     char line[160];
-    std::snprintf(line, sizeof line, "  %-26s current %6d  default %6d  range %6d to %6d", name,
+    std::snprintf(line, sizeof line, "  %-26s current %6d  default %6d  range %6d to %6d", name.c_str(),
                   id < static_cast<int>(cur.size()) ? cur[id] : 0, init[id].defaultValue, init[id].minValue, init[id].maxValue);
     info("TUNE", line);
+  };
+  std::vector<bool> listed(init.size(), false);
+  for (auto [id, name] : shown) {
+    if (id >= static_cast<int>(init.size())) continue;
+    row(id, name);
+    listed[id] = true;
   }
+  // The rest of the table (ADL OD8 setting ids) where the driver offers a range.
+  for (int id = 0; id < static_cast<int>(init.size()); ++id)
+    if (!listed[id] && init[id].minValue != init[id].maxValue) row(id, "OD8 setting " + std::to_string(id));
 #else
   info("TUNE", unit + ": amdgpu sysfs (power1_cap, pp_od_clk_voltage)");
 #endif
@@ -444,6 +452,9 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
       else
         fail("fan speed", rc == 0 ? "no controllable fans" : N.why(rc));
     }
+    if (req.volt_offset_mv)
+      warn("TUNE", unit + ": NVIDIA has no voltage control through NVML; lock the core clock (--gpu-cclock) to run at "
+                          "that point of the voltage curve");
     return applied;
   }
 
@@ -482,6 +493,9 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
     want.push_back({kOd8UclkFmax, *req.mem_lock_mhz});
   if (req.core_lock_mhz) warn("TUNE", unit + ": AMD Overdrive has no core clock lock; use --gpu-coffset (max clock offset)");
   if (req.mem_offset_mhz) warn("TUNE", unit + ": AMD Overdrive has no memory offset; use --gpu-mclock (max memory clock)");
+  // Adrenalin's "Voltage Offset" (RDNA3/4, OD8_OD_VOLTAGE): mV below the stock voltage curve, e.g. -200 to 0.
+  if (req.volt_offset_mv && in_range(kOd8OdVoltage, *req.volt_offset_mv, "core voltage offset"))
+    want.push_back({kOd8OdVoltage, *req.volt_offset_mv});
   if (req.fan_pct) {
     // RDNA3/4: a 5-point fan curve; a flat curve at N% (temperatures kept) is a fixed speed, with zero RPM off.
     // Older Overdrive8 GPUs: the minimum fan speed.
@@ -519,6 +533,7 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
     if (id == kOd8PowerPercentage) msg += " power " + std::to_string(100 + v) + "%";
     else if (id == kOd8GfxclkFmax) msg += " core offset " + std::to_string(v) + " MHz";
     else if (id == kOd8UclkFmax) msg += " max memory " + std::to_string(v) + " MHz";
+    else if (id == kOd8OdVoltage) msg += " voltage offset " + std::to_string(v) + " mV";
     else if (id == kOd8FanMinSpeed || id == kOd8FanCurveSpeed1) msg += " fan " + std::to_string(v) + "%";
   }
   ok("Overdrive" + msg);
@@ -565,6 +580,16 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
     }
   }
   if (req.core_offset_mhz || req.mem_offset_mhz) warn("TUNE", unit + ": clock offsets are NVIDIA-only for now");
+  if (req.volt_offset_mv) {
+    // RDNA3/4 Overdrive: "vo <mV>" is the voltage offset (OD_VDDGFX_OFFSET), then commit.
+    const std::string od = dev + "/pp_od_clk_voltage";
+    if (write_text(od, "vo " + std::to_string(*req.volt_offset_mv)) && write_text(od, "c")) {
+      ok("core voltage offset " + std::to_string(*req.volt_offset_mv) + " mV");
+      impl_->undo.push_back([od] { write_text(od, "vo 0"); write_text(od, "c"); });
+    } else {
+      fail("core voltage offset", "cannot write " + od + " (needs root, overdrive enabled and an RDNA3/4 GPU)");
+    }
+  }
   if (req.fan_pct) {
     // RDNA3/4: gpu_od/fan_ctrl/fan_curve ("<point> <temp> <speed%>", then "c"); older: hwmon pwm1 in manual mode.
     const std::string curve = dev + "/gpu_od/fan_ctrl/fan_curve";

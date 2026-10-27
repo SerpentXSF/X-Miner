@@ -1,4 +1,5 @@
-// GPU tuning from the command line: core/memory clock locks, clock offsets, power limits and fan speed, applied at start and
+// GPU tuning from the command line: core/memory clock locks, clock offsets, power limits, fan speed and (AMD) core voltage
+// offset, applied at start and
 // restored on exit (including Ctrl+C and closing the console window).
 //   NVIDIA (Windows, Linux): NVML. Needs administrator / root rights; without them X-Miner says so and mines anyway.
 //   AMD Linux:               amdgpu sysfs (power1_cap, pp_od_clk_voltage). Needs root and the overdrive feature mask.
@@ -22,8 +23,10 @@ struct TuneRequest {
   std::optional<double> power_w;      // board power limit in watts
   std::optional<double> power_pct;    // or as a percentage of the default limit (e.g. 70)
   std::optional<int> fan_pct;         // fixed fan speed
+  std::optional<int> volt_offset_mv;  // core voltage offset (AMD Overdrive)
   bool any() const {
-    return core_lock_mhz || mem_lock_mhz || core_offset_mhz || mem_offset_mhz || power_w || power_pct || fan_pct;
+    return core_lock_mhz || mem_lock_mhz || core_offset_mhz || mem_offset_mhz || power_w || power_pct || fan_pct ||
+           volt_offset_mv;
   }
 };
 
