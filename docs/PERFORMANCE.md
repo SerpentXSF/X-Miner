@@ -232,6 +232,23 @@ Height 1,904,505, N = 238.6 M, a 7.6 GB table; Ergo blocks are ~2 minutes, so th
 loads plus the read batch the compiler may form: RTX 3060 unroll 1 96.3, 2 95.6, 4 85.6, 8 64.6 MH/s (registers vs
 occupancy); RX 9070 XT unroll 8 64.5, 1-4 62.8 MH/s. The first version (four 8-byte loads, unroll 4) ran 68.0 / 62.8.
 
+## Octopus (Conflux)
+
+| Card | X-Miner | Published figures for other miners |
+|---|---|---|
+| RX 9070 XT | 42.7 MH/s @ 237 W | 79 MH/s @ 230 W |
+| RTX 3060 | 24.2 MH/s @ 169 W | 42 MH/s @ 140 W |
+
+Height 160.2 M, stage 305, an 8.8 GB DAG. Per nonce, 32 values of a degree-1023 polynomial mod p = 1032193 (32,768
+multiply-add-reduce steps, shared coefficients per group of 32 nonces), then 32 dependent 256-byte DAG reads. The
+polynomial dominates: one Horner step is a Shoup multiply (NVIDIA: one high and two low 32-bit multiply-adds; AMD: six
+full-rate 24-bit operations in inline asm; the compiler's own code used quarter-rate 32-bit multiplies and re-loaded
+the constants, 25.8 -> 42.7 MH/s on the 9070 XT). Both cards run at their power cap at ~90% ALU use, so the next step
+is a different method, not tuning: the evaluation is a matrix product (the 1024 fixed points of a job times each
+group's coefficients) that int8 tensor cores / WMMA can do in limbs, which is how the published figures reach about
+the memory limit (8 KB of DAG reads per hash: 3060 ~44 MH/s, 9070 XT ~78 MH/s); a GTX 1080 Ti without tensor
+cores is listed at 13.6 MH/s.
+
 ## BLAKE2b (Bitcoin Knots RDTS)
 
 | Card | X-Miner | Reference |

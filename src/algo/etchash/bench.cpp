@@ -89,4 +89,4 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   return failures ? 1 : 0;
 }
 
-}  // namespace xm::qtc
+}  // namespace xm::etchash

@@ -84,19 +84,6 @@ std::array<uint8_t, kOut> keccak(const uint8_t* data, size_t n) {
   return out;
 }
 
-int largest_prime(int n) {
-  if (n < 2) return 0;
-  if (n == 2) return 2;
-  if (n % 2 == 0) --n;
-  auto odd_prime = [](int x) {
-    for (int d = 3; int64_t(d) * d <= x; d += 2)
-      if (x % d == 0) return false;
-    return true;
-  };
-  while (!odd_prime(n)) n -= 2;
-  return n;
-}
-
 uint32_t rotl32(uint32_t x, uint32_t n) { return (x << (n % 32)) | (x >> ((32 - n % 32) % 32)); }
 uint32_t rotr32(uint32_t x, uint32_t n) { return (x >> (n % 32)) | (x << ((32 - n % 32) % 32)); }
 uint32_t clz32(uint32_t x) {
@@ -145,6 +132,19 @@ void keccakf800(uint32_t st[25]) { keccakf<uint32_t, 32, 22>(st); }
 std::array<uint8_t, 32> keccak256(const uint8_t* data, size_t n) { return keccak<32>(data, n); }
 std::array<uint8_t, 64> keccak512(const uint8_t* data, size_t n) { return keccak<64>(data, n); }
 
+int largest_prime(int n) {
+  if (n < 2) return 0;
+  if (n == 2) return 2;
+  if (n % 2 == 0) --n;
+  auto odd_prime = [](int x) {
+    for (int d = 3; int64_t(d) * d <= x; d += 2)
+      if (x % d == 0) return false;
+    return true;
+  };
+  while (!odd_prime(n)) n -= 2;
+  return n;
+}
+
 // In items, as the reference: (2^30 + epoch * 2^23) bytes overflows an int from epoch 256 (Ravencoin is past 600).
 int light_cache_items(int epoch) { return largest_prime((1 << 24) / 64 + epoch * ((1 << 17) / 64)); }
 int dataset_items_1024(int epoch, uint64_t init) {
@@ -174,15 +174,21 @@ int epoch_from_seed(const Hash256& seed) {
 }
 
 std::shared_ptr<const Light> make_light(int epoch, int parents, uint64_t dataset_init, int seed_epoch) {
+  return make_light_sized(epoch, parents, light_cache_items(epoch), dataset_items_1024(epoch, dataset_init),
+                          seed_epoch < 0 ? epoch : seed_epoch);
+}
+
+std::shared_ptr<const Light> make_light_sized(int epoch, int parents, int cache_items, int dataset_items,
+                                              int seed_epoch) {
   auto L = std::make_shared<Light>();
   L->epoch = epoch;
   L->parents = parents;
-  L->cache_items = light_cache_items(epoch);
-  L->dataset_items = dataset_items_1024(epoch, dataset_init);
+  L->cache_items = cache_items;
+  L->dataset_items = dataset_items;
   const int n = L->cache_items;
   L->cache.resize(size_t(n) * 16);
   auto item = [&](int i) { return reinterpret_cast<uint8_t*>(&L->cache[size_t(i) * 16]); };
-  const Hash256 seed = epoch_seed(seed_epoch < 0 ? epoch : seed_epoch);
+  const Hash256 seed = epoch_seed(seed_epoch);
   auto h = keccak512(reinterpret_cast<const uint8_t*>(seed.data()), 32);
   std::memcpy(item(0), h.data(), 64);
   for (int i = 1; i < n; ++i) {

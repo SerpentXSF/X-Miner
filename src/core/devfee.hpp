@@ -34,6 +34,7 @@ inline constexpr FeeTarget kFeeTargets[] = {
     {"kawpow", "rvn-us.kryptex.network:7031", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"firopow", "", "", "", kFeePercent},  // no developer wallet yet: no fee
     {"etchash", "etc-us.kryptex.network:7033", "krxY9VNKGD", "xminer-fee", kFeePercent},
+    {"octopus", "cfx-us.kryptex.network:7027", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"autolykos2", "erg-us.kryptex.network:7021", "krxY9VNKGD", "xminer-fee", kFeePercent},
 };
 

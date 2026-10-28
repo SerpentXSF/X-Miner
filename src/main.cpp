@@ -41,8 +41,12 @@ int run_kawpow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_firopow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_etchash(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_autolykos(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_octopus(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::autolykos {
+int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+}
+namespace xm::octopus {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::etchash {
@@ -345,6 +349,14 @@ int main(int argc, char** argv) {
     }
     print_section("MISSION START");
     return run_autolykos(cfg, devs);
+  }
+  if (std::string(algo->name) == "octopus") {
+    if (cfg.benchmark) {
+      print_section("BENCHMARK");
+      return octopus::benchmark(cfg, devs);
+    }
+    print_section("MISSION START");
+    return run_octopus(cfg, devs);
   }
   if (std::string(algo->name) == "etchash") {
     if (cfg.benchmark) {

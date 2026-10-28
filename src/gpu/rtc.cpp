@@ -1,5 +1,7 @@
 #include "gpu/rtc.hpp"
 
+#include <cstdlib>
+#include <fstream>
 #include <mutex>
 #ifndef _WIN32
 #include <unistd.h>
@@ -109,6 +111,16 @@ std::mutex& rtc_mutex() {  // both compilers are documented thread-safe, but one
   return m;
 }
 
+// Developer: XM_RTC_DUMP=<dir> writes each compiled source and its code object / cubin / PTX there.
+void dump(const std::string& source, const std::string& name, const RtcOutput& out) {
+  const char* dir = std::getenv("XM_RTC_DUMP");
+  if (!dir) return;
+  const std::string base = std::string(dir) + "/" + name + "." + out.arch;
+  std::ofstream(base + ".src", std::ios::binary) << source;
+  std::ofstream(base + ".bin", std::ios::binary).write(reinterpret_cast<const char*>(out.code.data()),
+                                                       std::streamsize(out.code.size()));
+}
+
 }  // namespace
 
 std::string rtc_library(Vendor v) {
@@ -173,6 +185,7 @@ bool rtc_compile(const DeviceInfo& dev, const std::string& source, const std::st
       }
     }
     N.destroy(&prog);
+    if (ok) dump(source, name, out);
     return ok;
   }
   Hiprtc& H = hiprtc();
@@ -207,6 +220,7 @@ bool rtc_compile(const DeviceInfo& dev, const std::string& source, const std::st
     }
   }
   H.destroy(&prog);
+  if (ok) dump(source, name, out);
   return ok;
 }
 

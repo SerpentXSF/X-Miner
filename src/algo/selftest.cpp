@@ -11,6 +11,7 @@
 #include "algo/kawpow/kawpow_gpu.hpp"
 #include "algo/quantus/quantus_gpu.hpp"
 #include "algo/noid/noid_gpu.hpp"
+#include "algo/octopus/octopus_gpu.hpp"
 #include "algo/pearl/pearl_gpu.hpp"
 #include "algo/registry.hpp"
 #include "core/console.hpp"
@@ -223,6 +224,42 @@ bool autolykos_check(gpu::Device& dev, std::string& detail) {
   return want >= 64 && missing == 0 && shares.size() == want && eng.cpu_rejects() == 0;
 }
 
+// Octopus: stage 0 (a 4 GB DAG) and 1024 consecutive nonces (32 nonce groups) against a 2^-4 boundary (about 64
+// hits). Every nonce is also hashed on the CPU: the GPU must report exactly the CPU's hits.
+bool octopus_check(gpu::Device& dev, std::string& detail) {
+  octopus::Engine eng(dev, 0x0c75e1f7);
+  octopus::Job job;
+  job.id = "selftest";
+  job.height = 1234;
+  uint8_t* h = reinterpret_cast<uint8_t*>(job.header.data());
+  for (int i = 0; i < 32; ++i) h[i] = static_cast<uint8_t>(i * 29 + 3);
+  reinterpret_cast<uint8_t*>(job.boundary.data())[0] = 0x10;
+  auto t0 = std::chrono::steady_clock::now();
+  std::vector<octopus::Share> shares;
+  if (!eng.init(detail) || !eng.set_job(job, detail)) return false;
+  const double setup = ms_since(t0);
+  t0 = std::chrono::steady_clock::now();
+  const uint64_t first = eng.next_nonce();
+  if (eng.iterate(1024, shares, detail) == 0) return false;
+  const double gpu_ms = ms_since(t0);
+  const auto light = octopus::make_light(0);
+  octopus::Points pts;
+  octopus::make_points(job.header, pts);
+  size_t want = 0, missing = 0;
+  for (uint64_t k = 0; k < 1024; ++k) {
+    if (!octopus::below(octopus::hash(*light, pts, job.header, first + k), job.boundary)) continue;
+    ++want;
+    bool got = false;
+    for (const auto& s : shares) got = got || s.nonce == first + k;
+    missing += !got;
+  }
+  char buf[200];
+  std::snprintf(buf, sizeof buf, "%zu of %zu CPU hits found in 1024 nonces, %llu wrong (DAG + compile %.0f ms, %.0f ms)",
+                shares.size(), want, static_cast<unsigned long long>(eng.cpu_rejects()), setup, gpu_ms);
+  detail = buf;
+  return want >= 32 && missing == 0 && shares.size() == want && eng.cpu_rejects() == 0;
+}
+
 void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int state, const std::string& detail) {
   static const char* kState[] = {"FAIL  ", "PASS  ", "SKIP  "};
   Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(i) + " ] "},
@@ -240,7 +277,7 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;

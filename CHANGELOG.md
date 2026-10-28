@@ -9,6 +9,10 @@
   EthereumStratum/1.0.0. RTX 3060 41.0 MH/s, RX 9070 XT 35.5 MH/s (the card's random-access limit); live accepted.
 - Autolykos v2 (Ergo, `--algorithm autolykos2`): table rebuilt on the GPU per block, Ergo stratum. RTX 3060 96.3 MH/s @
   137 W, RX 9070 XT 64.5 MH/s; the selftest matches the CPU on 4096 consecutive nonces; live accepted on both.
+- Octopus (Conflux, `--algorithm octopus`): per-nonce polynomial evaluation (Shoup modular multiply; 24-bit
+  multiplies on AMD) plus the 256-byte-page DAG mix, Conflux stratum. RX 9070 XT 42.7 MH/s @ 237 W, RTX 3060 24.2 MH/s
+  @ 169 W; the selftest matches the CPU on 1024 consecutive nonces; live accepted on both (Kryptex). Other miners do about 79 / 42
+  MH/s on these cards with tensor-core / matrix evaluation of the polynomial, not done here yet.
 - FiroPow (Firo, `--algorithm firopow`) on the ProgPoW engine, checked against Firo's vectors; kawpowminer stratum.
 - Epic Cash ProgPoW 0.9.2 (`progpow-epic`) and Zano ProgPowZ (`progpowz`) kernels: selftest and benchmark only,
   pool protocols next. ProgPowZ has no published test vectors; it is checked GPU-against-CPU only.
