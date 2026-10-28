@@ -5,6 +5,13 @@
 - KawPow (Ravencoin, `--algorithm kawpow`): ProgPoW programs generated per period and compiled at run time (NVRTC /
   hipRTC, shipped in the packages), DAG generated on the GPU, Kryptex RVN stratum. RX 9070 XT 34.0 MH/s @ 237 W, RTX
   3060 20.6 MH/s @ 169 W (WildRig 34.1 / T-Rex 20.85 on the same cards); live shares accepted on both.
+- Etchash (Ethereum Classic, `--algorithm etchash`): hashimoto with ECIP-1099 epochs, 8 lanes per hash,
+  EthereumStratum/1.0.0. RTX 3060 41.0 MH/s, RX 9070 XT 35.5 MH/s (the card's random-access limit); live accepted.
+- Autolykos v2 (Ergo, `--algorithm autolykos2`): table rebuilt on the GPU per block, Ergo stratum. RTX 3060 96.3 MH/s @
+  137 W, RX 9070 XT 64.5 MH/s; the selftest matches the CPU on 4096 consecutive nonces; live accepted on both.
+- FiroPow (Firo, `--algorithm firopow`) on the ProgPoW engine, checked against Firo's vectors; kawpowminer stratum.
+- Epic Cash ProgPoW 0.9.2 (`progpow-epic`) and Zano ProgPowZ (`progpowz`) kernels: selftest and benchmark only,
+  pool protocols next. ProgPowZ has no published test vectors; it is checked GPU-against-CPU only.
 - RX 9060 (gfx1200) and native RTX 40 (sm_89) kernel builds (untested on hardware).
 - Quantus NVIDIA: carry corrections without SEL (+1% on RTX 3060).
 

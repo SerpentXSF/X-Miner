@@ -207,6 +207,31 @@ Design: the program of each 3-block period is generated as CUDA / HIP source wit
 fixed, compiled at run time (NVRTC / hipRTC; the next period compiles in the background), one hash per 16 lanes with
 the 16 KB cache in shared memory, and the DAG generated on the GPU from the light cache (512 parents per item).
 
+## Etchash (Ethereum Classic)
+
+| Card | X-Miner |
+|---|---|
+| RX 9070 XT | 35.5 MH/s @ ~205 W |
+| RTX 3060 | 41.0 MH/s @ 155 W |
+
+Height 25.6 M, epoch 427, a 4.4 GB DAG. Each hash is a chain of 64 dependent 128-byte DAG reads. RTX 3060: 8 lanes
+per hash (a lane reads 16 of the 128 bytes) 41.0, 4 lanes 38.6, 2 lanes 35.9, 1 lane 16.6 MH/s. RX 9070 XT: 35.5 MH/s
+for 1-8 lanes, any block size and with a reciprocal-multiply modulo; 41.4 MH/s with a 1 GB DAG, power below the cap.
+Like KawPow (2.2 G reads/s of 256 B) it sits at ~2.3 G random reads per second, so on this card the limit is the
+memory's random-access rate, which a memory overclock raises.
+
+## Autolykos v2 (Ergo)
+
+| Card | X-Miner | Table build (per block) |
+|---|---|---|
+| RX 9070 XT | 64.5 MH/s @ ~199 W | 4.8 s |
+| RTX 3060 | 96.3 MH/s @ 137 W | 8.9 s |
+
+Height 1,904,505, N = 238.6 M, a 7.6 GB table; Ergo blocks are ~2 minutes, so the table build costs ~4% (9070 XT) to
+~7% (3060). The search is 3 BLAKE2b compressions and 33 random 32-byte reads per nonce. Element reads as two 16-byte
+loads plus the read batch the compiler may form: RTX 3060 unroll 1 96.3, 2 95.6, 4 85.6, 8 64.6 MH/s (registers vs
+occupancy); RX 9070 XT unroll 8 64.5, 1-4 62.8 MH/s. The first version (four 8-byte loads, unroll 4) ran 68.0 / 62.8.
+
 ## BLAKE2b (Bitcoin Knots RDTS)
 
 | Card | X-Miner | Reference |

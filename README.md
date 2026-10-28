@@ -1,9 +1,10 @@
 # X-Miner
 
 Open-source GPU miner by SerpentX Tech for **Pearl (pearlhash)**, **Parano1d (noid)**, **Quantus (quantus)**,
-**Ravencoin (kawpow)** and **Bitcoin Knots BLAKE2b (blake2b)** on AMD and NVIDIA GPUs. MIT licensed. 1% dev fee on
-Pearl, Parano1d, Quantus and KawPow (time-sliced: about 60 s per 100 minutes of mining, shown in the console and
-API); no dev fee on blake2b.
+**Ravencoin (kawpow)**, **Ethereum Classic (etchash)**, **Ergo (autolykos2)**, **Firo (firopow)** and **Bitcoin Knots
+BLAKE2b (blake2b)** on AMD and NVIDIA GPUs, with **Epic Cash (progpow-epic)** and **Zano (progpowz)** kernels verified
+and their pool protocols in development. MIT licensed. 1% dev fee (time-sliced: about 60 s per 100 minutes of
+mining, shown in the console and API) where a developer wallet is set; none on blake2b and, for now, Firo.
 
 ## Quick start
 
@@ -14,6 +15,9 @@ API); no dev fee on blake2b.
    - `start-noid-rplant.bat` / `.sh`: Parano1d on rplant.xyz (your `o1...` NOID address)
    - `start-quantus-kryptex.bat` / `.sh`: Quantus on Kryptex (your Kryptex `krx...` username)
    - `start-kawpow-kryptex.bat` / `.sh`: Ravencoin (KawPow) on Kryptex (your Kryptex `krx...` username)
+   - `start-etchash-kryptex.bat` / `.sh`: Ethereum Classic on Kryptex (your Kryptex `krx...` username)
+   - `start-ergo-kryptex.bat` / `.sh`: Ergo on Kryptex (your Kryptex `krx...` username)
+   - `start-firo-rplant.bat` / `.sh`: Firo on rplant.xyz (your FIRO address; not yet live-tested)
    - `start-blake2b-alphapool.bat` / `.sh`: Bitcoin Knots BLAKE2b (RDTS) on AlphaPool (your RDTS address)
 3. Run it. The launcher restarts the miner if it ever exits.
 
@@ -30,12 +34,16 @@ x-miner --algorithm pearlhash --pool prl.kryptex.network:7048 --wallet krxXXXXXX
 x-miner --algorithm noid --pool na.rplant.xyz:17185 --wallet o1... --worker rig1
 x-miner --algorithm quantus --pool qtc-us.kryptex.network:7049 --wallet krxXXXXXXX --worker rig1
 x-miner --algorithm kawpow --pool rvn-us.kryptex.network:7031 --wallet krxXXXXXXX --worker rig1
+x-miner --algorithm etchash --pool etc-us.kryptex.network:7033 --wallet krxXXXXXXX --worker rig1
+x-miner --algorithm autolykos2 --pool erg-us.kryptex.network:7021 --wallet krxXXXXXXX --worker rig1
+x-miner --algorithm firopow --pool na.rplant.xyz:7045 --wallet FIRO_ADDRESS --worker rig1
 x-miner --algorithm blake2b --pool us1.alphapool.tech:5555 --wallet ADDRESS --worker rig1
 ```
 
-KawPow compiles each new random program (every 3 blocks) on the GPU's own compiler at run time: the packages ship
-NVIDIA's NVRTC (and, on Windows, AMD's hipRTC) next to `x-miner`; on Linux, AMD GPUs use the hipRTC that ROCm
-installs. The first start of an epoch builds its light cache on the CPU and the DAG (6.2 GB for Ravencoin in late
+KawPow and the other ProgPoW coins compile each new random program on the GPU's own compiler at run time, and
+Etchash and Autolykos2 compile their kernels the same way once per start: the packages ship NVIDIA's NVRTC (and, on
+Windows, AMD's hipRTC) next to `x-miner`; on Linux, AMD GPUs use the hipRTC that ROCm installs. Ergo needs about 8 GB
+of GPU memory (its 7.6 GB table is rebuilt on the GPU at every block, 5-9 s). The first start of an epoch builds its light cache on the CPU and the DAG (6.2 GB for Ravencoin in late
 2026) on the GPU, which takes 10-30 s.
 
 ## GPU tuning
@@ -87,24 +95,24 @@ non-zero code; the launchers restart it.
 
 ## Supported hardware
 
-| Vendor | Pearl | Parano1d | Quantus | KawPow | BLAKE2b | Requirement |
+| Vendor | Pearl | Parano1d | Quantus | KawPow, Etchash, Autolykos2, FiroPow | BLAKE2b | Requirement |
 |---|---|---|---|---|---|---|
 | AMD RDNA4 (RX 9070 / 9070 XT, gfx1201) | yes | yes | yes | yes | yes | Windows: Adrenalin driver (provides the HIP runtime); Linux: ROCm 6.x |
 | AMD RDNA4 (RX 9060 / 9060 XT, gfx1200) | built, untested | built, untested | built, untested | untested | built, untested | same |
 | NVIDIA RTX 30xx (sm_86) | yes | yes | yes | yes | yes | driver 555+ |
 | NVIDIA RTX 40xx (sm_89) | native build, untested | native build, untested | native build, untested | untested | native build, untested | driver 555+ |
-| NVIDIA A100, RTX 50xx and newer | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | driver 555+ |
+| NVIDIA A100, RTX 50xx and newer | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | untested | via PTX JIT (untested) | driver 555+ |
 | Other AMD, NVIDIA Turing and older | no | no | no | no | no | |
 
 `x-miner --list-devices` shows each GPU and which algorithms it can run.
 
 ## Measured hashrates
 
-| Card | Pearl | Parano1d | Quantus | KawPow (6.2 GB DAG) | BLAKE2b |
-|---|---|---|---|---|---|
-| RX 9070 XT (-30% power, ~237 W) | 101.1 TH/s | 20.1 MH/s | 179.6 MH/s | 34.0 MH/s | 4.63 GH/s |
-| RX 9070 XT (stock power, ~300-340 W) | 115.0 TH/s | | 195.8 MH/s | | |
-| RTX 3060 (stock, 170 W) | 44.4 TH/s | 9.8 MH/s | 149.7 MH/s | 20.6 MH/s | 1.97 GH/s |
+| Card | Pearl | Parano1d | Quantus | KawPow (6.2 GB DAG) | Etchash (4.4 GB) | Autolykos2 (7.6 GB) | BLAKE2b |
+|---|---|---|---|---|---|---|---|
+| RX 9070 XT (-30% power, ~237 W) | 101.1 TH/s | 20.1 MH/s | 179.6 MH/s | 34.0 MH/s | 35.5 MH/s | 64.5 MH/s | 4.63 GH/s |
+| RX 9070 XT (stock power, ~300-340 W) | 115.0 TH/s | | 195.8 MH/s | | | | |
+| RTX 3060 (stock, 170 W) | 44.4 TH/s | 9.8 MH/s | 149.7 MH/s | 20.6 MH/s | 41.0 MH/s | 96.3 MH/s | 1.97 GH/s |
 
 The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share
 difficulty x 2^32 for Pearl) per hour and per run. That is what the pool should credit, so it is the number to compare
@@ -125,6 +133,9 @@ Pool certificates are not verified, as with other miners (pools use self-signed 
 - Quantus: Kryptex (`qtc-us.kryptex.network:7049`, `qtc.kryptex.network:7049`; XMRig-style stratum).
 - KawPow (Ravencoin): Kryptex (`rvn-us.kryptex.network:7031`, `rvn.kryptex.network:7031`) and other pools that speak
   the kawpowminer stratum (`mining.subscribe` / `mining.notify` with header hash, seed hash, target and height).
+- FiroPow (Firo): pools speaking the same kawpowminer stratum, e.g. rplant (`na.rplant.xyz:7045`); not yet live-tested.
+- Etchash (Ethereum Classic): EthereumStratum/1.0.0 pools, e.g. Kryptex (`etc-us.kryptex.network:7033`).
+- Autolykos2 (Ergo): Ergo stratum pools, e.g. Kryptex (`erg-us.kryptex.network:7021`).
 - BLAKE2b (Bitcoin Knots RDTS chain): the DATUM gateway's Sia-style stratum, solo through your own DATUM gateway
   or on AlphaPool (`us1.alphapool.tech:5555`). Pool difficulties are sized for Sia-class ASICs, so GPU mining here
   is a lottery.

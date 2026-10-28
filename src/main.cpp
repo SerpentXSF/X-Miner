@@ -115,6 +115,7 @@ int list_algorithms() {
   for (const auto& a : algorithms()) {
     std::string archs;
     for (const auto& s : gpu::kernel_archs(a.kernel)) archs += (archs.empty() ? "" : " ") + s;
+    if (std::string(a.kernel) == "@rtc") archs = "compiled at run time (NVRTC / hipRTC) for RDNA4 and RTX 30+";
     c.line({{Tone::Radar, "  " + std::string(a.name)},
             {Tone::Dim, "  " + std::string(a.coin) + "  "},
             {a.implemented ? Tone::Ok : Tone::Gold, a.implemented ? "ready: " + archs : "in development"}});
