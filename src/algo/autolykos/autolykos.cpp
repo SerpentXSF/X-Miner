@@ -159,12 +159,11 @@ Bytes32 from_decimal(const std::string& dec) {
 }
 
 double work_for(const Bytes32& b) {
-  double top = 0;
   int i = 0;
   while (i < 24 && b[i] == 0) ++i;
+  double top = 0;
   for (int k = 0; k < 8; ++k) top = top * 256 + b[i + k];
-  return top > 0 ? std::ldexp(1.0, 256 - 8 * i - 64) / top * std::ldexp(1.0, 64) / std::ldexp(1.0, 64) * 1.0 *
-                       std::ldexp(1.0, 0) * std::ldexp(1.0, 64) / std::ldexp(1.0, 64) : 0;
+  return top > 0 ? std::ldexp(1.0, 64 + 8 * i) / top : 0;  // 2^256 / b
 }
 
 }  // namespace xm::autolykos

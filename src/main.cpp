@@ -40,6 +40,10 @@ int run_quantus(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_kawpow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_firopow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_etchash(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_autolykos(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+}
+namespace xm::autolykos {
+int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::etchash {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
@@ -332,6 +336,14 @@ int main(int argc, char** argv) {
       print_section("MISSION START");
       return p.run(cfg, devs);
     }
+  }
+  if (std::string(algo->name) == "autolykos2") {
+    if (cfg.benchmark) {
+      print_section("BENCHMARK");
+      return autolykos::benchmark(cfg, devs);
+    }
+    print_section("MISSION START");
+    return run_autolykos(cfg, devs);
   }
   if (std::string(algo->name) == "etchash") {
     if (cfg.benchmark) {

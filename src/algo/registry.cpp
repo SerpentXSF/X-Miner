@@ -29,6 +29,7 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"progpow-epic", "epic,epiccash,progpow092", "Epic Cash (EPIC)", "@rtc", true},
       {"progpowz", "zano,progpow-zano", "Zano (ZANO)", "@rtc", true},
       {"etchash", "etc,ethash-etc", "Ethereum Classic (ETC)", "@rtc", true},
+      {"autolykos2", "ergo,erg,autolykos", "Ergo (ERG)", "@rtc", true},
   };
   return list;
 }
