@@ -9,6 +9,7 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <thread>
 
 #include "core/console.hpp"
 #include "gpu/dynlib.hpp"
@@ -293,7 +294,7 @@ struct Tuner::Impl {
   std::vector<DeviceInfo> devs;
   std::unique_ptr<NvmlTune> nvml;
   std::vector<std::function<void()>> undo;  // run in reverse order on restore
-  std::timed_mutex mu;
+  std::mutex mu;
 #ifdef _WIN32
   std::unique_ptr<AdlOd8> od8;
 #else
@@ -306,9 +307,13 @@ Tuner::Tuner(const std::vector<DeviceInfo>& devices) : impl_(std::make_unique<Im
 Tuner::~Tuner() { restore(); }
 
 void Tuner::restore(bool wait) {
-  std::unique_lock<std::timed_mutex> lk(impl_->mu, std::defer_lock);
-  if (wait) lk.lock();
-  else if (!lk.try_lock_for(std::chrono::seconds(5))) return;
+  std::unique_lock<std::mutex> lk(impl_->mu, std::defer_lock);
+  if (wait) {
+    lk.lock();
+  } else {  // polling, not timed_mutex: try_lock_for needs glibc 2.30 and the Linux build targets 2.29
+    for (int i = 0; i < 50 && !lk.try_lock(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (!lk.owns_lock()) return;
+  }
   if (impl_->undo.empty()) return;
   for (auto it = impl_->undo.rbegin(); it != impl_->undo.rend(); ++it) (*it)();
   impl_->undo.clear();
@@ -401,7 +406,7 @@ void Tuner::report(size_t index) {
 
 bool Tuner::apply(size_t index, const TuneRequest& req) {
   if (!req.any() || index >= impl_->devs.size()) return false;
-  std::lock_guard<std::timed_mutex> lk(impl_->mu);
+  std::lock_guard<std::mutex> lk(impl_->mu);
   const DeviceInfo& d = impl_->devs[index];
   const std::string unit = unit_name(index);
   bool applied = false;
