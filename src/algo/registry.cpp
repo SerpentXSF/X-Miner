@@ -5,6 +5,7 @@
 #include <string>
 
 #include "gpu/kernels.hpp"
+#include "gpu/rtc.hpp"
 
 namespace xm {
 
@@ -23,6 +24,7 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"noid", "parano1d,poseidon2b", "Parano1d (NOID)", "noid", true},
       {"blake2b", "rdts,btcb2,blake2b-rdts", "Bitcoin Knots BLAKE2b (RDTS)", "blake2b", true},
       {"quantus", "qtc,qpow,quantus-network", "Quantus (QTC)", "quantus", true},
+      {"kawpow", "rvn,ravencoin", "Ravencoin (RVN)", "@rtc", true},
   };
   return list;
 }
@@ -39,6 +41,10 @@ const AlgorithmInfo* find_algorithm(const std::string& name) {
 
 bool supports(const AlgorithmInfo& algo, const gpu::DeviceInfo& dev) {
   if (!algo.implemented) return false;
+  // Run-time compiled (ProgPoW family): any RDNA4 / RTX 30+ GPU whose runtime compiler is installed.
+  if (std::string(algo.kernel) == "@rtc")
+    return !gpu::rtc_library(dev.vendor).empty() &&
+           (dev.vendor == gpu::Vendor::Nvidia ? std::stoi(dev.arch.substr(3)) >= 61 : dev.arch.rfind("gfx1", 0) == 0);
   // Embedded kernels decide: an exact AMD code object or NVIDIA cubin, or NVIDIA PTX for an equal/older arch.
   for (const auto& a : gpu::kernel_archs(algo.kernel)) {
     if (a == dev.arch) return true;

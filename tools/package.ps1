@@ -15,6 +15,21 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
 
 Copy-Item $exe $stage
+# Run-time compilers for the ProgPoW family (KawPow): NVRTC for NVIDIA (the driver does not include it) and hipRTC
+# with its code-object library for AMD (Adrenalin does not include them). Both are redistributable; see THIRD_PARTY.md.
+$rtc = @()
+if ($env:CUDA_PATH) {
+  $cb = Join-Path $env:CUDA_PATH 'bin'
+  $rtc += Get-ChildItem (Join-Path $cb 'nvrtc64_*_0.dll'), (Join-Path $cb 'nvrtc-builtins64_*.dll') -ErrorAction SilentlyContinue |
+    Where-Object Name -notlike '*.alt.dll'
+}
+if ($env:HIP_PATH) {
+  $hb = Join-Path $env:HIP_PATH 'bin'
+  $rtc += Get-ChildItem (Join-Path $hb 'hiprtc0*.dll'), (Join-Path $hb 'hiprtc-builtins0*.dll'), (Join-Path $hb 'amd_comgr0*.dll') -ErrorAction SilentlyContinue
+}
+if (-not ($rtc | Where-Object Name -like 'nvrtc64_*')) { Write-Warning "NVRTC not found (CUDA_PATH): KawPow will not run on NVIDIA" }
+if (-not ($rtc | Where-Object Name -like 'hiprtc0*')) { Write-Warning "hipRTC not found (HIP_PATH): KawPow will not run on AMD" }
+$rtc | ForEach-Object { Copy-Item $_.FullName $stage; "runtime compiler: $($_.Name)" }
 foreach ($f in 'LICENSE', 'NOTICE', 'THIRD_PARTY.md', 'README.md') { Copy-Item $f $stage }
 # Launchers with CRLF line endings whatever the checkout settings.
 Get-ChildItem launchers\windows\*.bat | ForEach-Object {

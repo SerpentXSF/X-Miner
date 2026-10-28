@@ -89,7 +89,8 @@ TEST(login_keeps_existing_worker) {
 TEST(algorithm_aliases) {
   CHECK(find_algorithm("PearlHash") && std::string(find_algorithm("PearlHash")->name) == "pearlhash");
   CHECK(find_algorithm("parano1d") && std::string(find_algorithm("parano1d")->name) == "noid");
-  CHECK(find_algorithm("kawpow") == nullptr);
+  CHECK(find_algorithm("RVN") && std::string(find_algorithm("RVN")->name) == "kawpow");
+  CHECK(find_algorithm("ethash") == nullptr);
 }
 
 TEST(hashrate_formatting) {

@@ -33,6 +33,7 @@ struct Hip {
   hipError_t (*hipMemcpyDtoH)(void*, void*, size_t) = nullptr;
   hipError_t (*hipMemsetD8)(void*, unsigned char, size_t) = nullptr;
   hipError_t (*hipModuleLoadData)(hipModule_t*, const void*) = nullptr;
+  hipError_t (*hipModuleUnload)(hipModule_t) = nullptr;  // optional
   hipError_t (*hipModuleGetFunction)(hipFunction_t*, hipModule_t, const char*) = nullptr;
   hipError_t (*hipModuleLaunchKernel)(hipFunction_t, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned,
                                       unsigned, hipStream_t, void**, void**) = nullptr;
@@ -67,6 +68,7 @@ struct Hip {
                lib.sym("hipStreamSynchronize", hipStreamSynchronize) &&
                lib.sym("hipGetErrorString", hipGetErrorString);
     lib.sym("hipSetDeviceFlags", hipSetDeviceFlags);
+    lib.sym("hipModuleUnload", hipModuleUnload);
     ready = all && hipInit(0) == 0;
   }
 };
@@ -111,6 +113,8 @@ class HipDevice : public Device {
   bool load_module(const KernelBlob& blob) override {
     if (blob.vendor != Vendor::Amd || info_.arch != blob.arch) return false;
     funcs_.clear();
+    if (module_ && hip().hipModuleUnload) hip().hipModuleUnload(module_);  // run-time compiled modules are replaced
+    module_ = nullptr;
     return check(hip().hipModuleLoadData(&module_, blob.data));
   }
   bool launch(const char* kernel, unsigned gx, unsigned gy, unsigned gz, unsigned bx, unsigned by, unsigned bz,

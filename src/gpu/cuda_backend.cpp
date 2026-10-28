@@ -45,6 +45,7 @@ struct Cuda {
   CUresult (*cuMemcpyDtoH_v2)(void*, CUdeviceptr, size_t) = nullptr;
   CUresult (*cuMemsetD8_v2)(CUdeviceptr, unsigned char, size_t) = nullptr;
   CUresult (*cuModuleLoadData)(CUmodule*, const void*) = nullptr;
+  CUresult (*cuModuleUnload)(CUmodule) = nullptr;  // optional
   CUresult (*cuModuleGetFunction)(CUfunction*, CUmodule, const char*) = nullptr;
   CUresult (*cuLaunchKernel)(CUfunction, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned,
                              CUstream, void**, void**) = nullptr;
@@ -78,6 +79,7 @@ struct Cuda {
                lib.sym("cuStreamCreate", cuStreamCreate) && lib.sym("cuStreamSynchronize", cuStreamSynchronize) &&
                lib.sym("cuGetErrorString", cuGetErrorString);
     lib.sym("cuFuncSetAttribute", cuFuncSetAttribute);
+    lib.sym("cuModuleUnload", cuModuleUnload);
     if (!lib.sym("cuDevicePrimaryCtxSetFlags_v2", cuDevicePrimaryCtxSetFlags))
       lib.sym("cuDevicePrimaryCtxSetFlags", cuDevicePrimaryCtxSetFlags);
     lib.sym("cuEventCreate", cuEventCreate);
@@ -125,6 +127,8 @@ class CudaDevice : public Device {
     if (a.rfind("compute_", 0) == 0 && std::stoi(a.substr(8)) > std::stoi(info_.arch.substr(3))) return false;
     funcs_.clear();
     big_shared_.clear();
+    if (module_ && cuda().cuModuleUnload) cuda().cuModuleUnload(module_);  // run-time compiled modules are replaced
+    module_ = nullptr;
     return check(cuda().cuModuleLoadData(&module_, blob.data));
   }
   bool launch(const char* kernel, unsigned gx, unsigned gy, unsigned gz, unsigned bx, unsigned by, unsigned bz,

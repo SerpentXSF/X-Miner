@@ -13,4 +13,7 @@ NoidMiner (https://github.com/gacanga/NoidMiner): Parano1d test vectors.
 Quantus Network (https://github.com/Quantus-Network): Poseidon2 constants from qp-poseidon, test vectors and the
 prestate split from quantus-miner pow-core, and the multiply-pipe Goldilocks reduction from quantus-miner engine-cuda.
 
+cpp-kawpow (https://github.com/RavenCommunity/cpp-kawpow), based on ethash by Pawel Bylica
+(Copyright 2018-2019 Pawel Bylica): the KawPow / Ethash CPU reference and test vectors.
+
 It also includes code and data under ISC, MIT, CC0 and Apache-2.0 licences listed in THIRD_PARTY.md.
