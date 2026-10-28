@@ -82,7 +82,9 @@ non-zero code; the launchers restart it.
 | Vendor | Pearl | Parano1d | Quantus | BLAKE2b | Requirement |
 |---|---|---|---|---|---|
 | AMD RDNA4 (RX 9070 / 9070 XT, gfx1201) | yes | yes | yes | yes | Windows: Adrenalin driver (provides the HIP runtime); Linux: ROCm 6.x |
-| NVIDIA RTX 30xx / 40xx (sm_86 / sm_89) | yes | yes | yes | yes | driver 555+ |
+| AMD RDNA4 (RX 9060 / 9060 XT, gfx1200) | built, untested | built, untested | built, untested | built, untested | same |
+| NVIDIA RTX 30xx (sm_86) | yes | yes | yes | yes | driver 555+ |
+| NVIDIA RTX 40xx (sm_89) | native build, untested | native build, untested | native build, untested | native build, untested | driver 555+ |
 | NVIDIA A100, RTX 50xx and newer | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | driver 555+ |
 | Other AMD, NVIDIA Turing and older | no | no | no | no | |
 

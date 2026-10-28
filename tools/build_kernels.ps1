@@ -1,10 +1,10 @@
 # Compiles every GPU kernel into kernels/prebuilt/<algo>_<arch>.<ext>, which CMake embeds into x-miner.
 # Run this on a machine with the AMD HIP SDK and the CUDA toolkit after changing a kernel; commit the outputs so
 # builds without GPU toolchains (CI, Linux packagers) still produce a complete miner.
-#   AMD:    <algo>_gfx1201.hsaco         (code object, loaded with hipModuleLoadData)
-#   NVIDIA: <algo>_sm_86.cubin            (exact-arch binary)
+#   AMD:    <algo>_gfx1201.hsaco, _gfx1200 (RX 9070 / 9060 code objects, loaded with hipModuleLoadData)
+#   NVIDIA: <algo>_sm_86.cubin, _sm_89    (exact-arch binaries, RTX 30 / RTX 40)
 #           <algo>_compute_80.ptx         (portable PTX, JIT-compiled by the driver on newer GPUs)
-param([string]$HipClang = "", [string[]]$AmdArchs = @("gfx1201"), [string[]]$NvArchs = @("sm_86"),
+param([string]$HipClang = "", [string[]]$AmdArchs = @("gfx1201", "gfx1200"), [string[]]$NvArchs = @("sm_86", "sm_89"),
       [string]$NvPtx = "compute_80")
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
