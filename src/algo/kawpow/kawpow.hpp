@@ -88,7 +88,9 @@ struct Light {
   std::vector<uint32_t> cache;     // cache_items x 16 words
   std::vector<uint32_t> l1;        // kCacheWords words
 };
-std::shared_ptr<const Light> make_light(int epoch, int parents = 512, uint64_t dataset_init = 1ull << 30);
+// seed_epoch: the epoch whose seed builds the cache when it differs from the size epoch (Etchash: 2 x epoch).
+std::shared_ptr<const Light> make_light(int epoch, int parents = 512, uint64_t dataset_init = 1ull << 30,
+                                        int seed_epoch = -1);
 
 // Dataset (DAG) item `index` of 512 bits from the light cache (16 words).
 void dataset_item_512(const Light& light, uint64_t index, uint32_t out[16]);

@@ -63,6 +63,11 @@ add_library(xm_core STATIC
   src/algo/quantus/quantus_gpu.cpp
   src/algo/quantus/bench.cpp
   src/algo/kawpow/kawpow.cpp
+  src/algo/etchash/etchash.cpp
+  src/algo/etchash/etchash_gpu.cpp
+  src/algo/etchash/bench.cpp
+  src/pool/ethstratum_pool.cpp
+  src/mining/etchash_run.cpp
   src/algo/kawpow/kawpow_gpu.cpp
   src/algo/kawpow/bench.cpp
   src/pool/kawpow_pool.cpp
@@ -95,7 +100,7 @@ add_executable(x-miner src/main.cpp)
 target_link_libraries(x-miner PRIVATE xm_core)
 
 enable_testing()
-add_executable(xm_tests tests/test_main.cpp tests/test_core.cpp tests/test_blake3.cpp tests/test_pearl.cpp tests/test_noid.cpp tests/test_blake2b.cpp tests/test_quantus.cpp tests/test_kawpow.cpp)
+add_executable(xm_tests tests/test_main.cpp tests/test_core.cpp tests/test_blake3.cpp tests/test_pearl.cpp tests/test_noid.cpp tests/test_blake2b.cpp tests/test_quantus.cpp tests/test_kawpow.cpp tests/test_etchash.cpp)
 target_compile_definitions(xm_tests PRIVATE XM_TEST_VECTORS="${CMAKE_SOURCE_DIR}/tests/vectors")
 target_link_libraries(xm_tests PRIVATE xm_core)
 add_test(NAME unit COMMAND xm_tests)

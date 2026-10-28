@@ -28,6 +28,7 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"firopow", "firo", "Firo (FIRO)", "@rtc", true},
       {"progpow-epic", "epic,epiccash,progpow092", "Epic Cash (EPIC)", "@rtc", true},
       {"progpowz", "zano,progpow-zano", "Zano (ZANO)", "@rtc", true},
+      {"etchash", "etc,ethash-etc", "Ethereum Classic (ETC)", "@rtc", true},
   };
   return list;
 }

@@ -45,6 +45,10 @@ inline uint32_t batch_nonces(int intensity) {
 std::shared_ptr<const Light> shared_light(const Variant& v, int epoch);
 // The CUDA / HIP source of one period's search kernel and the DAG generator.
 std::string kernel_source(const Variant& v, uint64_t period, uint32_t tpb);
+// The shared part of every generated module: types, Keccak, KISS99 and the xm_ethash_dag DAG generator.
+std::string kernel_common(int parents, uint32_t tpb);
+// Generates the epoch's DAG with xm_ethash_dag (a module containing it must be loaded); replaces d_dag.
+bool generate_dag(gpu::Device& dev, const Light& light, gpu::DevPtr& d_dag, std::string& err);
 
 class Engine {
  public:

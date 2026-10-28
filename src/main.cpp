@@ -39,6 +39,10 @@ int run_blake2b(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_quantus(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_kawpow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_firopow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_etchash(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+}
+namespace xm::etchash {
+int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::kawpow {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs, const Variant& v, int height);
@@ -328,6 +332,14 @@ int main(int argc, char** argv) {
       print_section("MISSION START");
       return p.run(cfg, devs);
     }
+  }
+  if (std::string(algo->name) == "etchash") {
+    if (cfg.benchmark) {
+      print_section("BENCHMARK");
+      return etchash::benchmark(cfg, devs);
+    }
+    print_section("MISSION START");
+    return run_etchash(cfg, devs);
   }
   if (std::string(algo->name) == "pearlhash") {
     if (cfg.benchmark) {

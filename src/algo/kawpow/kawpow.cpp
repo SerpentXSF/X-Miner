@@ -173,7 +173,7 @@ int epoch_from_seed(const Hash256& seed) {
   return -1;
 }
 
-std::shared_ptr<const Light> make_light(int epoch, int parents, uint64_t dataset_init) {
+std::shared_ptr<const Light> make_light(int epoch, int parents, uint64_t dataset_init, int seed_epoch) {
   auto L = std::make_shared<Light>();
   L->epoch = epoch;
   L->parents = parents;
@@ -182,7 +182,7 @@ std::shared_ptr<const Light> make_light(int epoch, int parents, uint64_t dataset
   const int n = L->cache_items;
   L->cache.resize(size_t(n) * 16);
   auto item = [&](int i) { return reinterpret_cast<uint8_t*>(&L->cache[size_t(i) * 16]); };
-  const Hash256 seed = epoch_seed(epoch);
+  const Hash256 seed = epoch_seed(seed_epoch < 0 ? epoch : seed_epoch);
   auto h = keccak512(reinterpret_cast<const uint8_t*>(seed.data()), 32);
   std::memcpy(item(0), h.data(), 64);
   for (int i = 1; i < n; ++i) {

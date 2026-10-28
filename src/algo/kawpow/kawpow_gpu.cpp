@@ -362,35 +362,45 @@ bool Engine::load_program(uint64_t period, std::string& err) {
   return true;
 }
 
-bool Engine::build_dag(int epoch, std::string& err) {
-  light_ = shared_light(v_, epoch);
-  dev_.free(d_dag_);
-  d_dag_ = 0;
-  const size_t dag_bytes = size_t(light_->dataset_items) * 128;
-  if (dag_bytes + (size_t(256) << 20) > dev_.info().memory) {
-    err = "the epoch " + std::to_string(epoch) + " DAG (" + std::to_string(dag_bytes >> 20) + " MB) does not fit in GPU memory";
+bool generate_dag(gpu::Device& dev, const Light& light, gpu::DevPtr& d_dag, std::string& err) {
+  dev.free(d_dag);
+  d_dag = 0;
+  const size_t dag_bytes = size_t(light.dataset_items) * 128;
+  if (dag_bytes + (size_t(256) << 20) > dev.info().memory) {
+    err = "the epoch " + std::to_string(light.epoch) + " DAG (" + std::to_string(dag_bytes >> 20) +
+          " MB) does not fit in GPU memory";
     return false;
   }
-  d_dag_ = dev_.alloc(dag_bytes);
-  gpu::DevPtr d_light = dev_.alloc(light_->cache.size() * 4);
-  if (!d_dag_ || !d_light || !dev_.upload(d_light, light_->cache.data(), light_->cache.size() * 4)) {
-    err = dev_.last_error();
-    dev_.free(d_light);
+  d_dag = dev.alloc(dag_bytes);
+  gpu::DevPtr d_light = dev.alloc(light.cache.size() * 4);
+  if (!d_dag || !d_light || !dev.upload(d_light, light.cache.data(), light.cache.size() * 4)) {
+    err = dev.last_error();
+    dev.free(d_light);
     return false;
   }
-  const uint32_t items512 = uint32_t(light_->dataset_items) * 2;
-  uint32_t light_items = uint32_t(light_->cache_items);
+  const uint32_t items512 = uint32_t(light.dataset_items) * 2;
+  uint32_t light_items = uint32_t(light.cache_items);
   const uint32_t chunk = 1u << 18;  // short launches: the Windows display watchdog kills kernels after ~2 s
   for (uint32_t start = 0; start < items512; start += chunk) {
     uint32_t count = std::min(chunk, items512 - start);
-    void* args[] = {&d_dag_, &d_light, &light_items, &start, &count};
-    if (!dev_.launch("xm_ethash_dag", (count + 127) / 128, 1, 1, 128, 1, 1, 0, args) || !dev_.wait()) {
-      err = dev_.last_error();
-      dev_.free(d_light);
+    void* args[] = {&d_dag, &d_light, &light_items, &start, &count};
+    if (!dev.launch("xm_ethash_dag", (count + 127) / 128, 1, 1, 128, 1, 1, 0, args) || !dev.wait()) {
+      err = dev.last_error();
+      dev.free(d_light);
       return false;
     }
   }
-  dev_.free(d_light);
+  dev.free(d_light);
+  return true;
+}
+
+std::string kernel_common(int parents, uint32_t tpb) {
+  return "#define TPB " + std::to_string(tpb) + "\n#define DAG_PARENTS " + std::to_string(parents) + "u\n" + kHead;
+}
+
+bool Engine::build_dag(int epoch, std::string& err) {
+  light_ = shared_light(v_, epoch);
+  if (!generate_dag(dev_, *light_, d_dag_, err)) return false;
   dag_epoch_ = epoch;
   return true;
 }

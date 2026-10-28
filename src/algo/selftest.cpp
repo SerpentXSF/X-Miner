@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "algo/blake2b/blake2b_gpu.hpp"
+#include "algo/etchash/etchash_gpu.hpp"
 #include "algo/kawpow/kawpow_gpu.hpp"
 #include "algo/quantus/quantus_gpu.hpp"
 #include "algo/noid/noid_gpu.hpp"
@@ -164,6 +165,30 @@ bool firopow_check(gpu::Device& dev, std::string& d) { return progpow_check(dev,
 bool epic_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kProgpow092, 1234); }
 bool zano_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kProgpowZ, 1234); }
 
+// Etchash: epoch 0 (1 GB DAG), 2^20 nonces against a 2^-12 target (about 256 hits), every hit re-hashed on the CPU.
+bool etchash_check(gpu::Device& dev, std::string& detail) {
+  etchash::Engine eng(dev, 0xe7c5e1f7);
+  etchash::Job job;
+  job.id = "selftest";
+  job.height = 1234;
+  uint8_t* h = reinterpret_cast<uint8_t*>(job.header.data());
+  for (int i = 0; i < 32; ++i) h[i] = static_cast<uint8_t>(i * 41 + 9);
+  reinterpret_cast<uint8_t*>(job.target.data())[1] = 0x10;
+  job.nonce_prefix = 0x0f57ull << 48;
+  job.prefix_bits = 16;
+  auto t0 = std::chrono::steady_clock::now();
+  std::vector<etchash::Share> shares;
+  if (!eng.init(detail) || !eng.set_job(job, detail)) return false;
+  const double setup = ms_since(t0);
+  t0 = std::chrono::steady_clock::now();
+  if (eng.iterate(1u << 20, shares, detail) == 0) return false;
+  char buf[160];
+  std::snprintf(buf, sizeof buf, "%zu hits verified by the CPU reference, %llu rejected (DAG + compile %.0f ms, %.0f ms)",
+                shares.size(), static_cast<unsigned long long>(eng.cpu_rejects()), setup, ms_since(t0));
+  detail = buf;
+  return shares.size() >= 128 && shares.size() <= 256 && eng.cpu_rejects() == 0;
+}
+
 void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int state, const std::string& detail) {
   static const char* kState[] = {"FAIL  ", "PASS  ", "SKIP  "};
   Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(i) + " ] "},
@@ -181,7 +206,7 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;

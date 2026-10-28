@@ -33,6 +33,7 @@ inline constexpr FeeTarget kFeeTargets[] = {
     {"quantus", "qtc-us.kryptex.network:7049", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"kawpow", "rvn-us.kryptex.network:7031", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"firopow", "", "", "", kFeePercent},  // no developer wallet yet: no fee
+    {"etchash", "etc-us.kryptex.network:7033", "krxY9VNKGD", "xminer-fee", kFeePercent},
 };
 
 const FeeTarget* fee_target(const std::string& algorithm);
