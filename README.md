@@ -49,7 +49,7 @@ no chance to do that: reset the card then (AMD: Adrenalin > Performance > Tuning
 | `--gpu-moffset 500` | memory clock offset | - | - |
 | `--gpu-voffset -50` | - (lock the core clock instead, see below) | core voltage offset in mV (Adrenalin "Voltage Offset"; tested on RDNA4) | core voltage offset in mV (RDNA3/4, untested) |
 | `--gpu-fan 70` | fixed fan speed in % | flat fan curve at N% | flat fan curve at N% |
-| `--gpu-intensity 32` | work per launch (pearlhash: N x 1024 columns, noid / quantus / blake2b: 2^N nonces; 0 = auto) | same | same |
+| `--gpu-intensity 64` | work per launch (pearlhash: N x 1024 columns, auto 64; noid / quantus / blake2b: 2^N nonces; 0 = auto) | same | same |
 
 NVIDIA has no voltage control in its management library (NVML). To undervolt an NVIDIA card, lock the core clock
 (`--gpu-cclock 1500`): the GPU then runs at the voltage of that point of its voltage/frequency curve, which is how
