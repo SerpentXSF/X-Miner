@@ -218,18 +218,20 @@ __device__ __forceinline__ Acc acc_sum(const Acc& a, const Acc& x) {
 
 // Same reduction as the AMD path, on the integer ALU pipe so the multiply pipe only multiplies: (r1:r0) - r2 - r3 +
 // r2 * 2^32, a carry out of the high word (2^64 = 2^32 - 1) added as +1 high / -1 low, rare borrows uncorrected.
-// The carry is taken as a value: PTX subc after add.cc consumes CF as an inverted borrow.
+// The +1 is an addc into the high word and the -1 is lo + (t - hi) with t the high word before it, one IADD3, so no
+// SEL materializes the carry (-4.7% instructions per permutation, +1% on an RTX 3060, 2026-10-27). PTX subc after
+// add.cc would consume CF as an inverted borrow, hence the add form.
 __device__ __forceinline__ u64 fold(u32 r0, u32 r1, u32 r2, u32 r3) {
-  u32 o0, o1, c;
+  u32 o0, o1, t;
   asm("sub.cc.u32 %0, %3, %5;\n\t"
-      "subc.u32 %1, %4, 0;\n\t"
+      "subc.u32 %2, %4, 0;\n\t"
       "sub.cc.u32 %0, %0, %6;\n\t"
-      "subc.u32 %1, %1, 0;\n\t"
-      "add.cc.u32 %1, %1, %5;\n\t"
-      "addc.u32 %2, 0, 0;\n\t"
-      "add.u32 %1, %1, %2;\n\t"
-      "sub.u32 %0, %0, %2;"
-      : "=&r"(o0), "=&r"(o1), "=&r"(c)
+      "subc.u32 %2, %2, 0;\n\t"
+      "add.cc.u32 %2, %2, %5;\n\t"
+      "addc.u32 %1, %2, 0;\n\t"
+      "sub.u32 %2, %2, %1;\n\t"
+      "add.u32 %0, %0, %2;"
+      : "=&r"(o0), "=&r"(o1), "=&r"(t)
       : "r"(r0), "r"(r1), "r"(r2), "r"(r3));
   return ((u64)o1 << 32) | o0;
 }
@@ -252,26 +254,26 @@ __device__ __forceinline__ u64 fold_fma(u32 r0, u32 r1, u32 r2, u32 r3) {
 }
 
 __device__ __forceinline__ u64 fold96(const Acc& a) {
-  u32 o0, o1, c;
+  u32 o0, o1, t;
   asm("sub.cc.u32 %0, %3, %5;\n\t"
-      "subc.u32 %1, %4, 0;\n\t"
-      "add.cc.u32 %1, %1, %5;\n\t"
-      "addc.u32 %2, 0, 0;\n\t"
-      "add.u32 %1, %1, %2;\n\t"
-      "sub.u32 %0, %0, %2;"
-      : "=&r"(o0), "=&r"(o1), "=&r"(c)
+      "subc.u32 %2, %4, 0;\n\t"
+      "add.cc.u32 %2, %2, %5;\n\t"
+      "addc.u32 %1, %2, 0;\n\t"
+      "sub.u32 %2, %2, %1;\n\t"
+      "add.u32 %0, %0, %2;"
+      : "=&r"(o0), "=&r"(o1), "=&r"(t)
       : "r"(a.l0), "r"(a.l1), "r"(a.h));
   return ((u64)o1 << 32) | o0;
 }
 
 __device__ __forceinline__ u64 gadd(u64 a, u64 b) {
-  u32 o0, o1, c;
+  u32 o0, o1, t;
   asm("add.cc.u32 %0, %3, %5;\n\t"
-      "addc.cc.u32 %1, %4, %6;\n\t"
-      "addc.u32 %2, 0, 0;\n\t"
-      "add.u32 %1, %1, %2;\n\t"
-      "sub.u32 %0, %0, %2;"
-      : "=&r"(o0), "=&r"(o1), "=&r"(c)
+      "addc.cc.u32 %2, %4, %6;\n\t"
+      "addc.u32 %1, %2, 0;\n\t"
+      "sub.u32 %2, %2, %1;\n\t"
+      "add.u32 %0, %0, %2;"
+      : "=&r"(o0), "=&r"(o1), "=&r"(t)
       : "r"((u32)a), "r"((u32)(a >> 32)), "r"((u32)b), "r"((u32)(b >> 32)));
   return ((u64)o1 << 32) | o0;
 }

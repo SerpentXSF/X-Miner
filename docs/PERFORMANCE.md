@@ -162,7 +162,7 @@ multiply than 9 class-split integer products; that is the open item. With NOID a
 | Card | X-Miner | Reference |
 |---|---|---|
 | RX 9070 XT | 195.8 MH/s @ ~330 W (stock power), 179.6 MH/s at -30% | SRBMiner 3.7.9: 221.5 MH/s @ ~316 W |
-| RTX 3060 | 148.9 MH/s @ 170 W | SRBMiner 3.7.9: 230 MH/s @ 170 W |
+| RTX 3060 | 149.7 MH/s @ 170 W | SRBMiner 3.7.9: 230 MH/s @ 170 W |
 
 The hash is a Poseidon2 sponge (Goldilocks, width 12, rate 8, 8 full + 22 partial rounds, x^7) with five
 permutations. The host absorbs everything that does not depend on the low 64 nonce bits once per job (the official
@@ -178,6 +178,14 @@ rate to 2%, so the kernel runs at the issue rate. RTX 3060: compute-bound per cl
 the core clock at 1500 MHz gives 113 MH/s at ~80 W, the better rate per watt. Tried and slower: several nonces per
 thread (register pressure), independent-product multiplies, linear layers on the multiply pipe, unrolling, other
 block sizes.
+
+NVIDIA carry corrections without SEL (2026-10-27): the 2^64 carry of a fold or add is applied as an `addc` into the
+high word and `lo + (t - hi)` (one IADD3) instead of materializing the carry with SEL plus two adds. SASS per
+permutation tail 14612 -> 13918 instructions (-4.7%; partial round 282 -> 267), but only +1% on the RTX 3060: 148.0
+-> 149.4 MH/s at the 170 W cap, 117.0 -> 118.2 MH/s locked at 1500 MHz (82 -> 80 W). The saved instructions are
+integer-pipe adds; the kernel is held by the multiply pipe, and the multiply count (about 736 64-bit products per
+permutation, random diagonal and round constants) is fixed by the algorithm. Reduction mix re-checked after the
+change: XM_QTC_MIX 2 still best (0: 144.8, 3: 146.0, 6: 146.9 MH/s).
 
 ## BLAKE2b (Bitcoin Knots RDTS)
 
