@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- KawPow (Ravencoin, `--algorithm kawpow`): ProgPoW programs generated per period and compiled at run time (NVRTC /
+  hipRTC, shipped in the packages), DAG generated on the GPU, Kryptex RVN stratum. RX 9070 XT 34.0 MH/s @ 237 W, RTX
+  3060 20.6 MH/s @ 169 W (WildRig 34.1 / T-Rex 20.85 on the same cards); live shares accepted on both.
+- RX 9060 (gfx1200) and native RTX 40 (sm_89) kernel builds (untested on hardware).
+- Quantus NVIDIA: carry corrections without SEL (+1% on RTX 3060).
+
 ## 0.1.0 (first release)
 
 Algorithms

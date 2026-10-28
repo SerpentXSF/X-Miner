@@ -187,6 +187,26 @@ integer-pipe adds; the kernel is held by the multiply pipe, and the multiply cou
 permutation, random diagonal and round constants) is fixed by the algorithm. Reduction mix re-checked after the
 change: XM_QTC_MIX 2 still best (0: 144.8, 3: 146.0, 6: 146.9 MH/s).
 
+## KawPow (Ravencoin)
+
+| Card | X-Miner | Reference (same card, same pool, 2026-10-28) |
+|---|---|---|
+| RX 9070 XT (-30% power) | 34.0 MH/s @ 237 W | WildRig 0.51.3: 34.1 MH/s @ 238 W |
+| RTX 3060 (170 W) | 20.6 MH/s @ 169 W | T-Rex 0.26.8: 20.85 MH/s @ 169 W |
+
+Epoch 613 (height ~4.6 M), a 6.2 GB DAG. Each hash reads 64 x 256 bytes of DAG, so at these rates the 3060 moves
+~330 GB/s of its 360 GB/s and the 9070 XT ~560 of ~640 GB/s: KawPow is a memory-bandwidth algorithm and the kernels
+of every miner end up within a few percent of each other. With a wrongly sized 1.9 GB DAG (an int overflow in the
+size formula, fixed before release) the 9070 XT ran 39.6 MH/s: the larger DAG costs it ~14% (address translation).
+
+Settings (40 s benchmarks): RX 9070 XT `--gpu-mclock 2700` 33.95 -> 36.35 MH/s (+7.1%), 2800 unstable (18.2);
+`--gpu-voffset -50` and `--gpu-coffset -300` no change. RTX 3060 `--gpu-moffset 500` 21.28, `1000` 21.99 MH/s (+6.9%),
+and with `--gpu-cclock 1500` 21.91 MH/s at 135 W instead of 169 W.
+
+Design: the program of each 3-block period is generated as CUDA / HIP source with every register index and operation
+fixed, compiled at run time (NVRTC / hipRTC; the next period compiles in the background), one hash per 16 lanes with
+the 16 KB cache in shared memory, and the DAG generated on the GPU from the light cache (512 parents per item).
+
 ## BLAKE2b (Bitcoin Knots RDTS)
 
 | Card | X-Miner | Reference |
