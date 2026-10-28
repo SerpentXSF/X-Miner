@@ -35,7 +35,9 @@ class Tuner {
   ~Tuner();  // restores everything that was changed
   // Applies req to devices[index]; logs each change or why it could not be made. Returns false if nothing applied.
   bool apply(size_t index, const TuneRequest& req);
-  void restore();  // safe to call more than once
+  // Safe to call more than once and from several threads. wait=false (exit paths with a possibly hung thread): give
+  // up after a few seconds if another restore holds the lock.
+  void restore(bool wait = true);
   // Prints what can be tuned on devices[index] and the current values (read-only).
   void report(size_t index);
 

@@ -37,7 +37,8 @@ comma list in `--gpu-id` order, `-` to skip a GPU). Everything is put back to wh
 when its window is closed, when a benchmark ends, when the watchdog restarts it, and on Linux on SIGTERM / SIGHUP
 (HiveOS `miner stop`). A forced kill (Task Manager "End task", `kill -9`), a system crash or a power cut gives the miner
 no chance to do that: reset the card then (AMD: Adrenalin > Performance > Tuning > Reset; NVIDIA: reboot, or
-`nvidia-smi -rgc`, `-rmc` and `-pl <watts>` as administrator).
+`nvidia-smi -rgc`, `-rmc` and `-pl <watts>` as administrator). Tested on an RX 9070 XT (Windows) and an RTX 3060
+(Windows); the AMD Linux path (amdgpu sysfs) has not been tested on hardware yet.
 
 | Option | NVIDIA (Windows / Linux) | AMD Windows | AMD Linux |
 |---|---|---|---|
@@ -46,7 +47,7 @@ no chance to do that: reset the card then (AMD: Adrenalin > Performance > Tuning
 | `--gpu-mclock 7000` | locks the memory clock (GeForce: the nearest of the card's fixed memory clocks, listed by `--gpu-tune-info`; use `--gpu-moffset` to overclock memory) | max memory clock | Overdrive max memory |
 | `--gpu-coffset 100` | core clock offset | max clock offset | - |
 | `--gpu-moffset 500` | memory clock offset | - | - |
-| `--gpu-voffset -50` | - (lock the core clock instead, see below) | core voltage offset in mV (Adrenalin "Voltage Offset", RDNA3/4) | core voltage offset in mV (RDNA3/4) |
+| `--gpu-voffset -50` | - (lock the core clock instead, see below) | core voltage offset in mV (Adrenalin "Voltage Offset"; tested on RDNA4) | core voltage offset in mV (RDNA3/4, untested) |
 | `--gpu-fan 70` | fixed fan speed in % | flat fan curve at N% | flat fan curve at N% |
 | `--gpu-intensity 32` | work per launch (pearlhash: N x 1024 columns, noid / quantus / blake2b: 2^N nonces; 0 = auto) | same | same |
 
@@ -58,8 +59,15 @@ Example (Windows `.bat`, two GPUs: an RTX 3060 and an RX 9070 XT; `-` leaves a G
 
 ```
 x-miner.exe --algorithm quantus --pool qtc-us.kryptex.network:7049 --wallet krxXXXXXXX --worker rig1 ^
-  --gpu-plimit 170,70% --gpu-cclock 1700,- --gpu-mclock 6500,- --gpu-coffset -,100 --gpu-voffset -,-50 --gpu-fan 70,-
+  --gpu-plimit 170,70% --gpu-mclock 810,- --gpu-voffset -,-50 --gpu-fan 70,-
 ```
+
+Measured settings (60 s benchmarks, 2026-10-27; every card and sample differs, so check stability on yours):
+
+| Card | Pearl | Quantus | Parano1d | BLAKE2b |
+|---|---|---|---|---|
+| RX 9070 XT at `--gpu-plimit 70%` | `--gpu-voffset -50`: no gain while mining | `--gpu-voffset -50`: +4.5% | `--gpu-voffset -50`: +3.8% | `--gpu-voffset -50`: +3.5% |
+| RTX 3060 (170 W) | do not lock memory: `--gpu-mclock` 7301 costs 8%, 5001 costs 28%; `--gpu-cclock 1500` for the best TH/W | `--gpu-mclock 810`: +1% | `--gpu-mclock 810`: same speed, 15 W less | `--gpu-mclock 810`: same speed, 15 W less |
 
 `--gpu-tune-info` lists what each GPU allows and its current values. NVIDIA tuning and AMD Linux tuning need
 administrator / root rights (HiveOS runs miners as root).

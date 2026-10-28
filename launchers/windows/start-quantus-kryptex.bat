@@ -8,8 +8,9 @@ set WALLET=YOUR_KRYPTEX_ADDRESS
 set WORKER=%COMPUTERNAME%
 set POOL=qtc-us.kryptex.network:7049!qtc.kryptex.network:7049
 
-REM Optional GPU tuning, one value per GPU or a comma list (see README, "GPU tuning"). Example:
-REM set TUNING=--gpu-plimit 70%% --gpu-cclock 1500 --gpu-mclock 7000 --gpu-coffset 100 --gpu-voffset -50 --gpu-fan 70
+REM Optional GPU tuning, one value per GPU or a comma list (see README, "GPU tuning"). Measured examples:
+REM   RX 9070 XT: set TUNING=--gpu-plimit 70%% --gpu-voffset -50   (+4.5%% at the same power)
+REM   RTX 3060:   set TUNING=--gpu-mclock 810   (+1%%: memory power goes to the core)
 set TUNING=
 
 :loop

@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -170,18 +171,21 @@ int ui_demo(const Config& cfg) {
 }  // namespace
 
 namespace {
-xm::gpu::Tuner* g_tuner = nullptr;
+std::atomic<xm::gpu::Tuner*> g_tuner{nullptr};
 #ifdef _WIN32
 // Closing the console window ends the process within a few seconds: restore GPU tuning first.
 BOOL WINAPI on_console_event(DWORD type) {
-  if ((type == CTRL_CLOSE_EVENT || type == CTRL_LOGOFF_EVENT || type == CTRL_SHUTDOWN_EVENT) && g_tuner)
-    g_tuner->restore();
+  if (type == CTRL_CLOSE_EVENT || type == CTRL_LOGOFF_EVENT || type == CTRL_SHUTDOWN_EVENT)
+    if (auto* t = g_tuner.load()) t->restore();
   return FALSE;  // let the default handling (and Ctrl+C's signal path) continue
 }
 #endif
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifndef _WIN32
+  std::signal(SIGPIPE, SIG_IGN);  // a closed pool socket or log pipe (HiveOS tee) must not kill the miner before restore
+#endif
   Config cfg;
   if (auto err = parse_args(argc, argv, cfg)) {
     std::fprintf(stderr, "x-miner: %s\n", err->c_str());
@@ -241,7 +245,7 @@ int main(int argc, char** argv) {
   gpu::Tuner tuner(devs);
   g_tuner = &tuner;
   std::at_quick_exit([] {  // watchdog exit with a hung GPU: still put clocks and power back
-    if (g_tuner) g_tuner->restore();
+    if (auto* t = g_tuner.load()) t->restore(/*wait=*/false);
   });
   for (int sig : {SIGINT, SIGTERM,
 #ifdef _WIN32
@@ -249,7 +253,7 @@ int main(int argc, char** argv) {
 #else
                   SIGHUP})
 #endif
-    std::signal(sig, [](int) { stop_flag() = true; });
+    if (std::signal(sig, [](int) { stop_flag() = true; }) == SIG_IGN) std::signal(sig, SIG_IGN);  // keep nohup's
 #ifdef _WIN32
   SetConsoleCtrlHandler(on_console_event, TRUE);  // after std::signal so it runs before the C runtime's handler
 #endif

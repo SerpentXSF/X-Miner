@@ -195,3 +195,18 @@ to 2 and the kernel from ~2500 to ~2215 VALU instructions per hash (3.83 -> 4.63
 ~10.3 T lane-ops/s, the single-issue peak at the clocks this power limit allows; the remaining instructions (64-bit
 adds with carry, XORs, alignbits) have no VOPD dual-issue form. RTX 3060: ~2030 SASS instructions per hash (3-input
 IADD3 adds, SHF funnel rotates), bound by the integer pipe.
+
+## Clock, voltage and memory settings (2026-10-27)
+
+60 s `--benchmark` runs, alternated back to back (RX 9070 XT at Adrenalin's -30% power, ~237 W; RTX 3060 at its
+170 W cap, Windows):
+
+- RX 9070 XT `--gpu-voffset -50`: Quantus 181.2 / 184.1 -> 191.1 / 191.0 MH/s (+4.5%), Parano1d 20.17 -> 20.93 MH/s
+  (+3.8%), BLAKE2b 4.63 -> 4.79 GH/s (+3.5%), all at the same power. Pearl: +4-6% in the benchmark (101.3 / 103.0 ->
+  107.2 / 107.3 TH/s, -100 mV no better) but no gain while mining real jobs (5 min A/B on Kryptex: 102.9 / 101.1 at
+  0 mV, 100.7 / 101.1 at -50 mV). Pearl's clock at the power cap moves with the job data (1993-2030 MHz).
+- RTX 3060 memory lock (fixed clocks 7501 / 7301 / 5001 / 810 / 405 MHz): Quantus at 810 MHz 149.8 vs 147.9 MH/s
+  (+1.3%, core 1927 vs 1897 MHz); Parano1d and BLAKE2b same speed with 15 W less (148 -> 133 W, 161 -> 146 W). Pearl
+  needs the memory: locked 7301 MHz 41.1, 5001 MHz 32.2, unlocked 44.5 TH/s.
+- Pearl intensity 64 (16384 x 65536 columns per pass) vs 32: RX 9070 XT 103.0 -> 103.9 TH/s, RTX 3060 44.47 -> 44.80
+  TH/s; now the default. Quantus intensity 26 vs 24: no change (148.1 vs 147.9 MH/s).

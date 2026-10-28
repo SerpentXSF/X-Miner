@@ -227,7 +227,7 @@ std::string usage() {
   std::ostringstream o;
   o << "Usage: x-miner --algorithm <algo> --pool <host:port> --wallet <address> [options]\n\n"
        "Mining\n"
-       "  --algorithm, -a <name>     pearlhash | noid   (--list-algorithms)\n"
+       "  --algorithm, -a <name>     pearlhash | noid | quantus | blake2b   (--list-algorithms)\n"
        "  --pool, -o <url>           host:port, stratum+tcp://host:port or stratum+ssl://host:port;\n"
        "                             separate failover pools with ! or repeat --pool\n"
        "  --wallet, -w <address>     payout address or pool login\n"

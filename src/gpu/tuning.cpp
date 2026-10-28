@@ -1,5 +1,6 @@
 #include "gpu/tuning.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -234,6 +235,30 @@ bool write_text(const std::string& path, const std::string& text) {
   f << text << "\n";
   return static_cast<bool>(f.flush());
 }
+// A value from an Overdrive sysfs file: in section `sec` (e.g. "OD_SCLK:"), the line starting with `key` (e.g. "1:",
+// or "" for the first line); the first integer after the key. False if not found.
+bool od_value(const std::string& path, const std::string& sec, const std::string& key, int& out) {
+  std::ifstream f(path);
+  bool in = false;
+  for (std::string line; std::getline(f, line);) {
+    if (!line.empty() && line.back() == ':' && line.find(' ') == std::string::npos) {
+      in = line == sec;
+      continue;
+    }
+    if (!in) continue;
+    size_t p = line.find_first_not_of(" \t");
+    if (p == std::string::npos || line.compare(p, key.size(), key) != 0) continue;
+    return std::sscanf(line.c_str() + p + key.size(), "%d", &out) == 1;
+  }
+  return false;
+}
+// Two integers on the OD_RANGE line starting with `key` (e.g. "FAN_CURVE(hotspot temp):").
+bool od_range(const std::string& path, const std::string& key, int& lo, int& hi) {
+  std::ifstream f(path);
+  for (std::string line; std::getline(f, line);)
+    if (line.rfind(key, 0) == 0) return std::sscanf(line.c_str() + key.size(), " %d%*[^0-9-]%d", &lo, &hi) == 2;
+  return false;
+}
 // PCI bus -> /sys/class/drm/cardN/device
 std::map<int, std::string> amdgpu_devices() {
   std::map<int, std::string> out;
@@ -268,7 +293,7 @@ struct Tuner::Impl {
   std::vector<DeviceInfo> devs;
   std::unique_ptr<NvmlTune> nvml;
   std::vector<std::function<void()>> undo;  // run in reverse order on restore
-  std::mutex mu;
+  std::timed_mutex mu;
 #ifdef _WIN32
   std::unique_ptr<AdlOd8> od8;
 #else
@@ -280,8 +305,10 @@ Tuner::Tuner(const std::vector<DeviceInfo>& devices) : impl_(std::make_unique<Im
 
 Tuner::~Tuner() { restore(); }
 
-void Tuner::restore() {
-  std::lock_guard<std::mutex> lk(impl_->mu);
+void Tuner::restore(bool wait) {
+  std::unique_lock<std::timed_mutex> lk(impl_->mu, std::defer_lock);
+  if (wait) lk.lock();
+  else if (!lk.try_lock_for(std::chrono::seconds(5))) return;
   if (impl_->undo.empty()) return;
   for (auto it = impl_->undo.rbegin(); it != impl_->undo.rend(); ++it) (*it)();
   impl_->undo.clear();
@@ -374,7 +401,7 @@ void Tuner::report(size_t index) {
 
 bool Tuner::apply(size_t index, const TuneRequest& req) {
   if (!req.any() || index >= impl_->devs.size()) return false;
-  std::lock_guard<std::mutex> lk(impl_->mu);
+  std::lock_guard<std::timed_mutex> lk(impl_->mu);
   const DeviceInfo& d = impl_->devs[index];
   const std::string unit = unit_name(index);
   bool applied = false;
@@ -455,18 +482,17 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
     }
     if (req.mem_lock_mhz) {
       // GeForce memory runs only at a few fixed clocks; the driver accepts any lock but keeps its current clock unless
-      // the value is one of them. Lock to the highest supported clock at or below the request (else the lowest).
+      // the value is one of them. Lock to the nearest supported clock.
       unsigned f = static_cast<unsigned>(*req.mem_lock_mhz), n = 32, clocks[32];
       std::string note;
       if (N.mem_clocks && N.mem_clocks(h, &n, clocks) == 0 && n > 0) {
-        unsigned best = 0, lowest = clocks[0];
+        unsigned pick = clocks[0];
         std::string list;
         for (unsigned k = 0; k < n; ++k) {
-          if (clocks[k] <= f && clocks[k] > best) best = clocks[k];
-          lowest = std::min(lowest, clocks[k]);
+          auto dist = [f](unsigned c) { return c > f ? c - f : f - c; };
+          if (dist(clocks[k]) < dist(pick)) pick = clocks[k];
           list += (list.empty() ? "" : ", ") + std::to_string(clocks[k]);
         }
-        unsigned pick = best ? best : lowest;
         if (pick != f) note = " (nearest supported to " + std::to_string(f) + "; this GPU supports " + list + " MHz)";
         f = pick;
       }
@@ -607,6 +633,8 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
   if (req.core_lock_mhz || req.mem_lock_mhz) {
     // Overdrive: highest core / memory DPM state ("s 1" / "m 1"), then commit. Needs amdgpu.ppfeaturemask with OD.
     const std::string od = dev + "/pp_od_clk_voltage";
+    int prev_s = 0, prev_m = 0;
+    const bool have_s = od_value(od, "OD_SCLK:", "1:", prev_s), have_m = od_value(od, "OD_MCLK:", "1:", prev_m);
     bool good = true;
     if (req.core_lock_mhz) good = good && write_text(od, "s 1 " + std::to_string(*req.core_lock_mhz));
     if (req.mem_lock_mhz) good = good && write_text(od, "m 1 " + std::to_string(*req.mem_lock_mhz));
@@ -614,7 +642,17 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
     if (good) {
       ok("overdrive max clocks set" + (req.core_lock_mhz ? " core " + std::to_string(*req.core_lock_mhz) + " MHz" : "") +
          (req.mem_lock_mhz ? " memory " + std::to_string(*req.mem_lock_mhz) + " MHz" : ""));
-      impl_->undo.push_back([od] { write_text(od, "r"); write_text(od, "c"); });
+      // Put back the limits that were set before (HiveOS overclocks included); reset only if they were unreadable.
+      const bool core = req.core_lock_mhz.has_value(), mem = req.mem_lock_mhz.has_value();
+      impl_->undo.push_back([od, core, mem, have_s, have_m, prev_s, prev_m] {
+        if ((core && !have_s) || (mem && !have_m)) {
+          write_text(od, "r");
+        } else {
+          if (core) write_text(od, "s 1 " + std::to_string(prev_s));
+          if (mem) write_text(od, "m 1 " + std::to_string(prev_m));
+        }
+        write_text(od, "c");
+      });
     } else {
       fail("clock limits", "cannot write " + od + " (needs root and overdrive enabled)");
     }
@@ -623,9 +661,11 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
   if (req.volt_offset_mv) {
     // RDNA3/4 Overdrive: "vo <mV>" is the voltage offset (OD_VDDGFX_OFFSET), then commit.
     const std::string od = dev + "/pp_od_clk_voltage";
+    int prev = 0;
+    od_value(od, "OD_VDDGFX_OFFSET:", "", prev);  // unreadable: 0, the stock voltage
     if (write_text(od, "vo " + std::to_string(*req.volt_offset_mv)) && write_text(od, "c")) {
-      ok("core voltage offset " + std::to_string(*req.volt_offset_mv) + " mV");
-      impl_->undo.push_back([od] { write_text(od, "vo 0"); write_text(od, "c"); });
+      ok("core voltage offset " + std::to_string(*req.volt_offset_mv) + " mV (was " + std::to_string(prev) + ")");
+      impl_->undo.push_back([od, prev] { write_text(od, "vo " + std::to_string(prev)); write_text(od, "c"); });
     } else {
       fail("core voltage offset", "cannot write " + od + " (needs root, overdrive enabled and an RDNA3/4 GPU)");
     }
@@ -634,19 +674,39 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
     // RDNA3/4: gpu_od/fan_ctrl/fan_curve ("<point> <temp> <speed%>", then "c"); older: hwmon pwm1 in manual mode.
     const std::string curve = dev + "/gpu_od/fan_ctrl/fan_curve";
     std::ifstream cf(curve);
-    std::vector<int> temps;
+    std::vector<std::pair<int, int>> points;  // (temp C, speed %)
     for (std::string line; std::getline(cf, line);) {
       int pt = 0, t = 0, sp = 0;
-      if (std::sscanf(line.c_str(), "%d: %dC %d%%", &pt, &t, &sp) == 3) temps.push_back(t);
+      if (std::sscanf(line.c_str(), "%d: %dC %d%%", &pt, &t, &sp) == 3) points.push_back({t, sp});
     }
-    if (!temps.empty()) {
+    cf.close();
+    int tlo = 25, thi = 100, slo = 0, shi = 100;
+    od_range(curve, "FAN_CURVE(hotspot temp):", tlo, thi);
+    od_range(curve, "FAN_CURVE(fan speed):", slo, shi);
+    // The driver's default curve reads "0C 0%", which it refuses as input: keep valid temps, else spread them.
+    bool valid = true;
+    for (size_t k = 0; k < points.size(); ++k)
+      valid = valid && points[k].first >= tlo && points[k].first <= thi && points[k].second >= slo &&
+              points[k].second <= shi && (k == 0 || points[k].first > points[k - 1].first);
+    if (!points.empty()) {
       bool good = true;
-      for (size_t k = 0; k < temps.size(); ++k)
-        good = good && write_text(curve, std::to_string(k) + " " + std::to_string(temps[k]) + " " + std::to_string(*req.fan_pct));
+      const int n = static_cast<int>(points.size());
+      for (int k = 0; k < n; ++k) {
+        int t = valid ? points[k].first : tlo + (n > 1 ? k * (thi - tlo) / (n - 1) : 0);
+        good = good && write_text(curve, std::to_string(k) + " " + std::to_string(t) + " " + std::to_string(*req.fan_pct));
+      }
       good = good && write_text(curve, "c");
       if (good) {
         ok("fan curve flat at " + std::to_string(*req.fan_pct) + "%");
-        impl_->undo.push_back([curve] { write_text(curve, "r"); write_text(curve, "c"); });
+        impl_->undo.push_back([curve, points, valid] {
+          if (valid) {
+            for (size_t k = 0; k < points.size(); ++k)
+              write_text(curve, std::to_string(k) + " " + std::to_string(points[k].first) + " " + std::to_string(points[k].second));
+          } else {
+            write_text(curve, "r");  // it was the driver default
+          }
+          write_text(curve, "c");
+        });
       } else {
         fail("fan speed", "cannot write " + curve + " (needs root and overdrive enabled)");
       }

@@ -7,8 +7,9 @@ set WALLET=YOUR_NOID_ADDRESS
 set WORKER=%COMPUTERNAME%
 set POOL=na.rplant.xyz:17185
 
-REM Optional GPU tuning, one value per GPU or a comma list (see README, "GPU tuning"). Example:
-REM set TUNING=--gpu-plimit 70%% --gpu-cclock 1500 --gpu-mclock 7000 --gpu-coffset 100 --gpu-voffset -50 --gpu-fan 70
+REM Optional GPU tuning, one value per GPU or a comma list (see README, "GPU tuning"). Measured examples:
+REM   RX 9070 XT: set TUNING=--gpu-plimit 70%% --gpu-voffset -50   (+3.8%% at the same power)
+REM   RTX 3060:   set TUNING=--gpu-mclock 810   (same speed, 15 W less)
 set TUNING=
 
 :loop
