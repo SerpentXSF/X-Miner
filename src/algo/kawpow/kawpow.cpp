@@ -8,8 +8,21 @@
 
 namespace xm::kawpow {
 
-const uint32_t kRavencoinKawpow[15] = {0x72, 0x41, 0x56, 0x45, 0x4E, 0x43, 0x4F, 0x49,
-                                       0x4E, 0x4B, 0x41, 0x57, 0x50, 0x4F, 0x57};
+namespace {
+// KawPow: "RAVENCOINKAWPOW" in the first hash, its first 9 letters in the final one. FiroPow: Keccak-style padding
+// (a 1 after the data, 0x80008081 at the end; firoorg/firo progpow.cpp).
+const uint32_t kRavenInit[15] = {0x72, 0x41, 0x56, 0x45, 0x4E, 0x43, 0x4F, 0x49, 0x4E, 0x4B, 0x41, 0x57, 0x50, 0x4F, 0x57};
+const uint32_t kRavenFinal[9] = {0x72, 0x41, 0x56, 0x45, 0x4E, 0x43, 0x4F, 0x49, 0x4E};
+const uint32_t kFiroInit[15] = {0x00000001, 0, 0, 0, 0, 0, 0, 0, 0x80008081, 0, 0, 0, 0, 0, 0};
+const uint32_t kFiroFinal[9] = {0, 0x00000001, 0, 0, 0, 0, 0, 0, 0x80008081};
+}  // namespace
+
+//                               name         epoch  period cache math parents init        max  terminal v092   pads
+const Variant kKawpow = {"kawpow", 7500, 3, 11, 18, 512, 1ull << 30, -1, -1, false, kRavenInit, kRavenFinal, false};
+const Variant kFiropow = {"firopow", 1300, 1, 11, 18, 512, (1ull << 30) + (1ull << 29), 926, 650, false, kFiroInit,
+                          kFiroFinal, false};
+const Variant kProgpow092 = {"progpow", 30000, 50, 12, 20, 256, 1ull << 30, -1, -1, true, nullptr, nullptr, false};
+const Variant kProgpowZ = {"progpowz", 30000, 50, 12, 20, 256, 1ull << 30, -1, -1, true, nullptr, nullptr, true};
 
 namespace {
 
@@ -134,7 +147,14 @@ std::array<uint8_t, 64> keccak512(const uint8_t* data, size_t n) { return keccak
 
 // In items, as the reference: (2^30 + epoch * 2^23) bytes overflows an int from epoch 256 (Ravencoin is past 600).
 int light_cache_items(int epoch) { return largest_prime((1 << 24) / 64 + epoch * ((1 << 17) / 64)); }
-int dataset_items_1024(int epoch) { return largest_prime((1 << 30) / 128 + epoch * ((1 << 23) / 128)); }
+int dataset_items_1024(int epoch, uint64_t init) {
+  return largest_prime(int(init / 128) + epoch * ((1 << 23) / 128));
+}
+
+int epoch_for_height(const Variant& v, int height) {
+  const int e = height / v.epoch_length;
+  return v.max_epoch >= 0 && e > v.max_epoch ? v.terminal_epoch : e;
+}
 
 Hash256 epoch_seed(int epoch) {
   std::array<uint8_t, 32> s{};
@@ -153,11 +173,12 @@ int epoch_from_seed(const Hash256& seed) {
   return -1;
 }
 
-std::shared_ptr<const Light> make_light(int epoch) {
+std::shared_ptr<const Light> make_light(int epoch, int parents, uint64_t dataset_init) {
   auto L = std::make_shared<Light>();
   L->epoch = epoch;
+  L->parents = parents;
   L->cache_items = light_cache_items(epoch);
-  L->dataset_items = dataset_items_1024(epoch);
+  L->dataset_items = dataset_items_1024(epoch, dataset_init);
   const int n = L->cache_items;
   L->cache.resize(size_t(n) * 16);
   auto item = [&](int i) { return reinterpret_cast<uint8_t*>(&L->cache[size_t(i) * 16]); };
@@ -191,7 +212,7 @@ void dataset_item_512(const Light& light, uint64_t index, uint32_t out[16]) {
   auto h = keccak512(reinterpret_cast<const uint8_t*>(mix), 64);
   std::memcpy(mix, h.data(), 64);
   const uint32_t seed = static_cast<uint32_t>(index);
-  for (uint32_t j = 0; j < uint32_t(kDatasetParents); ++j) {
+  for (uint32_t j = 0; j < uint32_t(light.parents); ++j) {
     const uint32_t parent = fnv1(seed ^ j, mix[j % 16]) % n;
     const uint32_t* p = &light.cache[size_t(parent) * 16];
     for (int k = 0; k < 16; ++k) mix[k] = fnv1(mix[k], p[k]);
@@ -200,12 +221,12 @@ void dataset_item_512(const Light& light, uint64_t index, uint32_t out[16]) {
   std::memcpy(out, h.data(), 64);
 }
 
-Program make_program(uint64_t period) {
+Program make_program(uint64_t period, const Variant& v) {
   MixRng st(period);
   Program p;
-  constexpr int kMaxOps = kCntCache > kCntMath ? kCntCache : kCntMath;
-  for (int i = 0; i < kMaxOps; ++i) {
-    if (i < kCntCache) {
+  const int max_ops = v.cnt_cache > v.cnt_math ? v.cnt_cache : v.cnt_math;
+  for (int i = 0; i < max_ops; ++i) {
+    if (i < v.cnt_cache) {
       Program::Op op{};
       op.cache = true;
       op.c.src = st.next_src();
@@ -213,7 +234,7 @@ Program make_program(uint64_t period) {
       op.c.sel = st.rng();
       p.ops.push_back(op);
     }
-    if (i < kCntMath) {
+    if (i < v.cnt_math) {
       Program::Op op{};
       op.cache = false;
       const uint32_t src_rnd = st.rng() % (kRegs * (kRegs - 1));
@@ -233,8 +254,13 @@ Program make_program(uint64_t period) {
   return p;
 }
 
-uint32_t random_math(uint32_t a, uint32_t b, uint32_t sel) {
-  switch (sel % 11) {
+int math_op(uint32_t sel, const Variant& v) {
+  const int s = int(sel % 11);
+  return v.zano_math ? (s + 9) % 11 : s;  // ProgPowZ: 0 clz, 1 popc, 2 add, 3 mul, ..., 10 xor
+}
+
+uint32_t random_math(uint32_t a, uint32_t b, int op) {
+  switch (op) {
     default:
     case 0: return a + b;
     case 1: return a * b;
@@ -260,39 +286,32 @@ void random_merge(uint32_t& a, uint32_t b, uint32_t sel) {
   }
 }
 
-void initial_keccak(const Hash256& header_hash, uint64_t nonce, uint32_t state2[8]) {
+namespace {
+uint32_t bswap32(uint32_t x) { return (x >> 24) | ((x >> 8) & 0xff00u) | ((x << 8) & 0xff0000u) | (x << 24); }
+}  // namespace
+
+Result hash(const Light& light, int height, const Hash256& header_hash, uint64_t nonce, const Variant& v) {
+  // First Keccak-f800: header, nonce, then the variant's padding (0.9.2: zeros).
   uint32_t st[25] = {};
   for (int i = 0; i < 8; ++i) st[i] = header_hash[i];
   st[8] = static_cast<uint32_t>(nonce);
   st[9] = static_cast<uint32_t>(nonce >> 32);
-  for (int i = 10; i < 25; ++i) st[i] = kRavencoinKawpow[i - 10];
+  if (v.pad_init)
+    for (int i = 10; i < 25; ++i) st[i] = v.pad_init[i - 10];
   keccakf800(st);
-  for (int i = 0; i < 8; ++i) state2[i] = st[i];
-}
-
-Hash256 final_keccak(const uint32_t state2[8], const Hash256& mix_hash) {
-  uint32_t st[25] = {};
-  for (int i = 0; i < 8; ++i) st[i] = state2[i];
-  for (int i = 8; i < 16; ++i) st[i] = mix_hash[i - 8];
-  for (int i = 16; i < 25; ++i) st[i] = kRavencoinKawpow[i - 16];
-  keccakf800(st);
-  Hash256 out;
-  for (int i = 0; i < 8; ++i) out[i] = st[i];
-  return out;
-}
-
-Result hash(const Light& light, int height, const Hash256& header_hash, uint64_t nonce) {
   uint32_t state2[8];
-  initial_keccak(header_hash, nonce, state2);
-  // Per-lane mix initialization from the seed (state2[0..1]).
+  for (int i = 0; i < 8; ++i) state2[i] = st[i];
+  // The two words that seed the per-lane KISS99: 0.9.4 the first two state words, 0.9.2 the 64-bit seed
+  // bswap(st0) << 32 | bswap(st1), low word first.
+  const uint32_t s_lo = v.v092 ? bswap32(state2[1]) : state2[0], s_hi = v.v092 ? bswap32(state2[0]) : state2[1];
   uint32_t mix[kLanes][kRegs];
-  const uint32_t z = fnv1a(kFnvOffset, state2[0]), w = fnv1a(z, state2[1]);
+  const uint32_t z = fnv1a(kFnvOffset, s_lo), w = fnv1a(z, s_hi);
   for (uint32_t l = 0; l < uint32_t(kLanes); ++l) {
     const uint32_t jsr = fnv1a(w, l), jcong = fnv1a(jsr, l);
     Kiss99 rng{z, w, jsr, jcong};
     for (int r = 0; r < kRegs; ++r) mix[l][r] = rng();
   }
-  const Program prog = make_program(uint64_t(height / kPeriodLength));
+  const Program prog = make_program(uint64_t(height / v.period), v);
   const uint32_t num_items = uint32_t(light.dataset_items / 2);  // 2048-bit items
   uint32_t item[64];
   for (int r = 0; r < kCntDag; ++r) {
@@ -302,7 +321,8 @@ Result hash(const Light& light, int height, const Hash256& header_hash, uint64_t
         if (op.cache) {
           random_merge(mix[l][op.c.dst], light.l1[mix[l][op.c.src] % kCacheWords], op.c.sel);
         } else {
-          random_merge(mix[l][op.m.dst], random_math(mix[l][op.m.src1], mix[l][op.m.src2], op.m.sel1), op.m.sel2);
+          random_merge(mix[l][op.m.dst], random_math(mix[l][op.m.src1], mix[l][op.m.src2], math_op(op.m.sel1, v)),
+                       op.m.sel2);
         }
       }
     }
@@ -319,7 +339,20 @@ Result hash(const Light& light, int height, const Hash256& header_hash, uint64_t
   Result res;
   res.mix_hash.fill(kFnvOffset);
   for (int l = 0; l < kLanes; ++l) res.mix_hash[l % 8] = fnv1a(res.mix_hash[l % 8], lane_hash[l]);
-  res.final_hash = final_keccak(state2, res.mix_hash);
+  // Final Keccak-f800. 0.9.4: the first hash's 8 words, the mix, the padding. 0.9.2: header, seed, mix, zeros.
+  uint32_t fs[25] = {};
+  if (v.v092) {
+    for (int i = 0; i < 8; ++i) fs[i] = header_hash[i];
+    fs[8] = s_lo;
+    fs[9] = s_hi;
+    for (int i = 0; i < 8; ++i) fs[10 + i] = res.mix_hash[i];
+  } else {
+    for (int i = 0; i < 8; ++i) fs[i] = state2[i];
+    for (int i = 0; i < 8; ++i) fs[8 + i] = res.mix_hash[i];
+    for (int i = 16; i < 25; ++i) fs[i] = v.pad_final[i - 16];
+  }
+  keccakf800(fs);
+  for (int i = 0; i < 8; ++i) res.final_hash[i] = fs[i];
   return res;
 }
 

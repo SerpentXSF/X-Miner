@@ -66,6 +66,61 @@ TEST(kawpow_epoch_sizes) {
   CHECK_EQ(light_cache_items(613), 1517567);
 }
 
+// FiroPow: firoorg/firo src/crypto/progpow/firopow_test_vectors.hpp @8246465 ({height, header, boundary, nonce, mix,
+// final}; boundary unused here).
+const Vector kFiroVectors[] = {
+    {1, "2d794e900dcad779e658de9078d9a88eee87d75f7b09a8fdd270d3a8e76650c7", 0x85f22c9b3cd2f123ull,
+     "cfab3766331d6c4e6913e6688a71e4c26b7f36c1581cdbec0f5b19db8956eb50",
+     "00017c7de1fa499314f9e3dd3537546982073624f7d478592cf28a6d13929f2d"},
+    {1300, "1fc36bd5d1bff8d134e24a997cfa43cbb2a0b956379bdc0c8df444f2553f6b7d", 0xdec25420bac29b01ull,
+     "5f8fe6069efb88d9af861999973b3523295d3b1ec7e8423c965f33b3d12b20b1",
+     "000038a1804eb3976346bf84e679884d56122e113c3b4a301f6180a246644262"},
+    {96590, "0231f310fb1a0cfd63f363802ae3f0a90c50b3b879d8cedb243efc1446d0d6b2", 0x6fec0856f969dd81ull,
+     "a91de8ff0849aed667d4e11f610e3fdc4612ea7d8fe6c58e902eaf95c978bf54",
+     "000016f6ebb36334946238e06d484b8ed8ff50477729eb28c4c294a9e8218f97"},
+};
+
+// ProgPoW 0.9.2 (Epic Cash): EpicCash/progpow-rust pp_light/res/progpow_testvectors.json (v0.2.0), the canonical
+// 0.9.2 spec vectors.
+const Vector kProgpow092Vectors[] = {
+    {0, "0000000000000000000000000000000000000000000000000000000000000000", 0x0000000000000000ull,
+     "faeb1be51075b03a4ff44b335067951ead07a3b078539ace76fd56fc410557a3",
+     "63155f732f2bf556967f906155b510c917e48e99685ead76ea83f4eca03ab12b"},
+    {49, "63155f732f2bf556967f906155b510c917e48e99685ead76ea83f4eca03ab12b", 0x0000000006ff2c47ull,
+     "c789c1180f890ec555ff42042913465481e8e6bc512cb981e1c1108dc3f2227d",
+     "9e7248f20914913a73d80a70174c331b1d34f260535ac3631d770e656b5dd922"},
+    {50, "9e7248f20914913a73d80a70174c331b1d34f260535ac3631d770e656b5dd922", 0x00000000076e482eull,
+     "c7340542c2a06b3a7dc7222635f7cd402abf8b528ae971ddac6bbe2b0c7cb518",
+     "de37e1824c86d35d154cf65a88de6d9286aec4f7f10c3fc9f0fa1bcc2687188d"},
+    {29950, "ac7b55e801511b77e11d52e9599206101550144525b5679f2dab19386f23dcce", 0x005d409dbc23a62aull,
+     "07393d15805eb08ee6fc6cb3ad4ad1010533bd0ff92d6006850246829f18fd6e",
+     "e43d7e0bdc8a4a3f6e291a5ed790b9fa1a0948a2b9e33c844888690847de19f5"},
+};
+
+void check_vectors(const Variant& var, const Vector* vs, size_t n) {
+  std::map<int, std::shared_ptr<const Light>> lights;
+  for (size_t k = 0; k < n; ++k) {
+    const Vector& v = vs[k];
+    const int e = epoch_for_height(var, v.height);
+    if (!lights.count(e)) lights[e] = make_light(e, var.parents, var.dataset_init);
+    const Result r = hash(*lights[e], v.height, hash_from_hex(v.header), v.nonce, var);
+    CHECK_EQ(hash_to_hex(r.mix_hash), std::string(v.mix));
+    CHECK_EQ(hash_to_hex(r.final_hash), std::string(v.final));
+  }
+}
+
+TEST(firopow_hash_vectors) { check_vectors(kFiropow, kFiroVectors, sizeof kFiroVectors / sizeof kFiroVectors[0]); }
+
+TEST(progpow092_hash_vectors) {
+  check_vectors(kProgpow092, kProgpow092Vectors, sizeof kProgpow092Vectors / sizeof kProgpow092Vectors[0]);
+}
+
+TEST(firopow_epoch_clamp) {
+  CHECK_EQ(epoch_for_height(kFiropow, 926 * 1300), 926);
+  CHECK_EQ(epoch_for_height(kFiropow, 927 * 1300), 650);
+  CHECK_EQ(epoch_for_height(kKawpow, 4601007), 613);
+}
+
 TEST(kawpow_hash_vectors) {
   std::map<int, std::shared_ptr<const Light>> lights;
   for (const auto& v : kVectors) {

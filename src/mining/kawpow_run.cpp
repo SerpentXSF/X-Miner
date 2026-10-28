@@ -1,4 +1,4 @@
-// KawPow mining: the shared coordinator with the KawPow engine and pool.
+// KawPow and FiroPow mining: the shared coordinator with the ProgPoW engine and the kawpowminer-style pool.
 #include "algo/kawpow/kawpow_gpu.hpp"
 #include "mining/coordinator.hpp"
 #include "pool/kawpow_pool.hpp"
@@ -7,15 +7,25 @@ namespace xm {
 
 namespace {
 
-struct KawpowTraits {
+struct KawpowTag {
   static constexpr const char* kName = "kawpow";
+  static const kawpow::Variant& variant() { return kawpow::kKawpow; }
+};
+struct FiropowTag {
+  static constexpr const char* kName = "firopow";
+  static const kawpow::Variant& variant() { return kawpow::kFiropow; }
+};
+
+template <class Tag>
+struct ProgpowTraits {
+  static constexpr const char* kName = Tag::kName;
   // The GPU pre-filters on the top 64 hash bits, so a CPU reject is an expected near miss, not an error.
   static constexpr bool kCpuRejectIsError = false;
   using Pool = KawpowPool;
   using Job = kawpow::Job;
   using Share = kawpow::Share;
   struct Engine : kawpow::Engine {  // the engine plus its launch size
-    Engine(gpu::Device& dev, uint64_t seed, uint32_t b) : kawpow::Engine(dev, seed), batch(b) {}
+    Engine(gpu::Device& dev, uint64_t seed, uint32_t b) : kawpow::Engine(dev, seed, Tag::variant()), batch(b) {}
     uint32_t batch;
   };
   static std::unique_ptr<Engine> make_engine(gpu::Device& dev, uint64_t seed, int intensity) {
@@ -36,7 +46,11 @@ struct KawpowTraits {
 }  // namespace
 
 int run_kawpow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
-  return run_mining<KawpowTraits>(cfg, devs);
+  return run_mining<ProgpowTraits<KawpowTag>>(cfg, devs);
+}
+
+int run_firopow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
+  return run_mining<ProgpowTraits<FiropowTag>>(cfg, devs);
 }
 
 }  // namespace xm

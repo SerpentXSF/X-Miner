@@ -25,6 +25,9 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"blake2b", "rdts,btcb2,blake2b-rdts", "Bitcoin Knots BLAKE2b (RDTS)", "blake2b", true},
       {"quantus", "qtc,qpow,quantus-network", "Quantus (QTC)", "quantus", true},
       {"kawpow", "rvn,ravencoin", "Ravencoin (RVN)", "@rtc", true},
+      {"firopow", "firo", "Firo (FIRO)", "@rtc", true},
+      {"progpow-epic", "epic,epiccash,progpow092", "Epic Cash (EPIC)", "@rtc", true},
+      {"progpowz", "zano,progpow-zano", "Zano (ZANO)", "@rtc", true},
   };
   return list;
 }

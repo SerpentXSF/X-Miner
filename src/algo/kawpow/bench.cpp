@@ -28,20 +28,21 @@ Job bench_job() {
   return job;
 }
 
-int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
-  const Job job = bench_job();
+int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs, const Variant& v, int height) {
+  Job job = bench_job();
+  job.height = height;
   int failures = 0;
   gpu::Sensors sensors(devs);
   for (size_t d = 0; d < devs.size() && !stop_requested(); ++d) {
     auto dev = gpu::open(devs[d]);
-    Engine eng(*dev, 0x6a7ba0b0 + d);
+    Engine eng(*dev, 0x6a7ba0b0 + d, v);
     std::string err;
     if (!eng.init(err) || !eng.set_job(job, err)) {
       error("GPU", "GPU " + std::to_string(d) + " " + devs[d].name + ": " + err);
       ++failures;
       continue;
     }
-    info("BENCH", "GPU " + std::to_string(d) + " " + devs[d].name + ": kawpow (epoch " + std::to_string(job.height / kEpochLength) + "), " +
+    info("BENCH", "GPU " + std::to_string(d) + " " + devs[d].name + ": " + v.name + " (epoch " + std::to_string(epoch_for_height(v, job.height)) + "), " +
                       std::to_string(cfg.benchmark_seconds) + " s");
     const uint32_t batch = batch_nonces(cfg.intensity_for(d));
     auto t0 = std::chrono::steady_clock::now(), last = t0;

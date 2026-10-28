@@ -13,6 +13,7 @@
 #include <string>
 #include <thread>
 
+#include "algo/kawpow/kawpow.hpp"
 #include "algo/registry.hpp"
 #include "gpu/tuning.hpp"
 #include "algo/selftest.hpp"
@@ -37,9 +38,10 @@ int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_blake2b(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_quantus(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_kawpow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_firopow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::kawpow {
-int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs, const Variant& v, int height);
 }
 namespace xm::b2b {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
@@ -299,13 +301,33 @@ int main(int argc, char** argv) {
     print_section("MISSION START");
     return run_quantus(cfg, devs);
   }
-  if (std::string(algo->name) == "kawpow") {
-    if (cfg.benchmark) {
-      print_section("BENCHMARK");
-      return kawpow::benchmark(cfg, devs);
+  {
+    // ProgPoW family. Benchmark heights: late 2026 chains (Ravencoin epoch 613; Firo past the epoch-650 clamp;
+    // Epic ~3.77 M; Zano ~3.3 M).
+    struct Pp {
+      const char* name;
+      const kawpow::Variant* v;
+      int height;
+      int (*run)(const Config&, const std::vector<gpu::DeviceInfo>&);
+    };
+    const Pp pp[] = {{"kawpow", &kawpow::kKawpow, 4600000, run_kawpow},
+                     {"firopow", &kawpow::kFiropow, 1250000, run_firopow},
+                     {"progpow-epic", &kawpow::kProgpow092, 3770000, nullptr},
+                     {"progpowz", &kawpow::kProgpowZ, 3300000, nullptr}};
+    for (const auto& p : pp) {
+      if (std::string(algo->name) != p.name) continue;
+      if (cfg.benchmark) {
+        print_section("BENCHMARK");
+        return kawpow::benchmark(cfg, devs, *p.v, p.height);
+      }
+      if (!p.run) {
+        error("ALGO", std::string(p.name) + ": the GPU kernel is verified (--selftest, --benchmark), pool support is "
+                                            "still in development in this build");
+        return 3;
+      }
+      print_section("MISSION START");
+      return p.run(cfg, devs);
     }
-    print_section("MISSION START");
-    return run_kawpow(cfg, devs);
   }
   if (std::string(algo->name) == "pearlhash") {
     if (cfg.benchmark) {

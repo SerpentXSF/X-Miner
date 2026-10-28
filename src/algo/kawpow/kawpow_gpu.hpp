@@ -42,13 +42,13 @@ inline uint32_t batch_nonces(int intensity) {
 }
 
 // The light cache of an epoch, built once and shared by every GPU.
-std::shared_ptr<const Light> shared_light(int epoch);
+std::shared_ptr<const Light> shared_light(const Variant& v, int epoch);
 // The CUDA / HIP source of one period's search kernel and the DAG generator.
-std::string kernel_source(uint64_t period, uint32_t tpb);
+std::string kernel_source(const Variant& v, uint64_t period, uint32_t tpb);
 
 class Engine {
  public:
-  Engine(gpu::Device& dev, uint64_t seed);
+  Engine(gpu::Device& dev, uint64_t seed, const Variant& v = kKawpow);
   ~Engine();
   bool init(std::string& err);
   bool set_job(const Job& job, std::string& err);
@@ -61,6 +61,7 @@ class Engine {
   bool load_program(uint64_t period, std::string& err);
 
   gpu::Device& dev_;
+  const Variant& v_;
   uint64_t rng_;
   gpu::DevPtr d_found_ = 0, d_dag_ = 0;
   int dag_epoch_ = -1;

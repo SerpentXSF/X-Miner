@@ -135,13 +135,13 @@ bool quantus_check(gpu::Device& dev, std::string& detail) {
   return shares.size() >= 128 && shares.size() <= 512;
 }
 
-// KawPow: epoch 0 (1 GB DAG generated on the GPU), one period's program compiled at run time, 2^20 nonces against
+// ProgPoW family (KawPow, FiroPow, Epic ProgPoW 0.9.2, ProgPowZ): epoch 0 (a 1-1.5 GB DAG generated on the GPU), one period's program compiled at run time, 2^20 nonces against
 // a 2^-12 target (about 256 hits). Every GPU hit is re-hashed with the CPU reference (light cache).
-bool kawpow_check(gpu::Device& dev, std::string& detail) {
-  kawpow::Engine eng(dev, 0x6a77e1f7);
+bool progpow_check(gpu::Device& dev, std::string& detail, const kawpow::Variant& v, int height) {
+  kawpow::Engine eng(dev, 0x6a77e1f7, v);
   kawpow::Job job;
   job.id = "selftest";
-  job.height = 1234;
+  job.height = height;
   uint8_t* h = reinterpret_cast<uint8_t*>(job.header.data());
   for (int i = 0; i < 32; ++i) h[i] = static_cast<uint8_t>(i * 53 + 3);
   reinterpret_cast<uint8_t*>(job.target.data())[1] = 0x10;
@@ -159,6 +159,10 @@ bool kawpow_check(gpu::Device& dev, std::string& detail) {
   detail = buf;
   return shares.size() >= 128 && shares.size() <= 256 && eng.cpu_rejects() == 0;
 }
+bool kawpow_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kKawpow, 1234); }
+bool firopow_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kFiropow, 1234); }
+bool epic_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kProgpow092, 1234); }
+bool zano_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kProgpowZ, 1234); }
 
 void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int state, const std::string& detail) {
   static const char* kState[] = {"FAIL  ", "PASS  ", "SKIP  "};
@@ -177,7 +181,7 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;

@@ -161,9 +161,7 @@ extern "C" __global__ __launch_bounds__(TPB) void xm_kawpow_search(const uint4* 
     for (int i = 0; i < 8; ++i) st[i] = hdr.w[i];
     st[8] = (u32)nonce;
     st[9] = (u32)(nonce >> 32);
-    st[10] = 0x72; st[11] = 0x41; st[12] = 0x56; st[13] = 0x45; st[14] = 0x4E; st[15] = 0x43; st[16] = 0x4F;
-    st[17] = 0x49; st[18] = 0x4E; st[19] = 0x4B; st[20] = 0x41; st[21] = 0x57; st[22] = 0x50; st[23] = 0x4F;
-    st[24] = 0x57;
+INIT_PAD
     keccakf800(st);
     for (int i = 0; i < 8; ++i) state2[i] = st[i];
   }
@@ -172,7 +170,7 @@ extern "C" __global__ __launch_bounds__(TPB) void xm_kawpow_search(const uint4* 
   for (u32 h = 0; h < 16; ++h) {
     u32 mix[32];
     {
-      const u32 s0 = SHFL(state2[0], h), s1 = SHFL(state2[1], h);
+      const u32 s0 = SHFL(SEED_LO, h), s1 = SHFL(SEED_HI, h);
       u32 z = fnv1a(FNV_OFFSET, s0), w = fnv1a(z, s1), jsr = fnv1a(w, lane), jcong = fnv1a(jsr, lane);
 #pragma unroll
       for (int i = 0; i < 32; ++i) mix[i] = kiss(z, w, jsr, jcong);
@@ -199,10 +197,7 @@ DAG_MERGE
     }
   }
   u32 st[25];
-  for (int i = 0; i < 8; ++i) st[i] = state2[i];
-  for (int i = 0; i < 8; ++i) st[8 + i] = digest[i];
-  st[16] = 0x72; st[17] = 0x41; st[18] = 0x56; st[19] = 0x45; st[20] = 0x4E; st[21] = 0x43; st[22] = 0x4F;
-  st[23] = 0x49; st[24] = 0x4E;
+FINAL_STATE
   keccakf800(st);
   const u64 top = ((u64)bswap32(st[0]) << 32) | bswap32(st[1]);
   if (top <= target_hi) {
@@ -215,8 +210,8 @@ DAG_MERGE
 }
 )KRN";
 
-std::string math_expr(const std::string& a, const std::string& b, uint32_t sel) {
-  switch (sel % 11) {
+std::string math_expr(const std::string& a, const std::string& b, int op) {
+  switch (op) {
     default:
     case 0: return a + " + " + b;
     case 1: return a + " * " + b;
@@ -247,15 +242,15 @@ std::string reg(int i) { return "mix[" + std::to_string(i) + "]"; }
 
 }  // namespace
 
-std::string kernel_source(uint64_t period, uint32_t tpb) {
-  const Program p = make_program(period);
+std::string kernel_source(const Variant& v, uint64_t period, uint32_t tpb) {
+  const Program p = make_program(period, v);
   std::ostringstream prog;
   for (const auto& op : p.ops) {
     if (op.cache) {
       prog << "      data = c_dag[" << reg(op.c.src) << " & 4095u];\n      " << merge_stmt(reg(op.c.dst), "data", op.c.sel)
            << "\n";
     } else {
-      prog << "      data = " << math_expr(reg(op.m.src1), reg(op.m.src2), op.m.sel1) << ";\n      "
+      prog << "      data = " << math_expr(reg(op.m.src1), reg(op.m.src2), math_op(op.m.sel1, v)) << ";\n      "
            << merge_stmt(reg(op.m.dst), "data", op.m.sel2) << "\n";
     }
   }
@@ -265,27 +260,46 @@ std::string kernel_source(uint64_t period, uint32_t tpb) {
   std::string body = kSearch;
   body.replace(body.find("PROGRAM"), 7, prog.str());
   body.replace(body.find("DAG_MERGE"), 9, dag.str());
+  // The variant's Keccak: 0.9.4 pads both hashes and carries the first hash's 8 words into the final one; 0.9.2
+  // uses zeros, seeds the lanes from bswap(st0) << 32 | bswap(st1) and hashes header + seed + mix at the end.
+  std::ostringstream init, fin;
+  for (int i = 10; i < 25; ++i) init << "    st[" << i << "] = " << (v.pad_init ? v.pad_init[i - 10] : 0) << "u;\n";
+  if (v.v092) {
+    fin << "  for (int i = 0; i < 8; ++i) st[i] = hdr.w[i];\n"
+        << "  st[8] = bswap32(state2[1]); st[9] = bswap32(state2[0]);\n"
+        << "  for (int i = 0; i < 8; ++i) st[10 + i] = digest[i];\n"
+        << "  for (int i = 18; i < 25; ++i) st[i] = 0u;\n";
+  } else {
+    fin << "  for (int i = 0; i < 8; ++i) st[i] = state2[i];\n"
+        << "  for (int i = 0; i < 8; ++i) st[8 + i] = digest[i];\n";
+    for (int i = 16; i < 25; ++i) fin << "  st[" << i << "] = " << v.pad_final[i - 16] << "u;\n";
+  }
+  body.replace(body.find("INIT_PAD"), 8, init.str());
+  body.replace(body.find("FINAL_STATE"), 11, fin.str());
   std::ostringstream src;
-  src << "#define TPB " << tpb << "\n#define DAG_PARENTS " << kDatasetParents << "u\n// KawPow period " << period << "\n"
-      << kHead << body;
+  src << "#define TPB " << tpb << "\n#define DAG_PARENTS " << v.parents << "u\n"
+      << "#define SEED_LO " << (v.v092 ? "bswap32(state2[1])" : "state2[0]") << "\n"
+      << "#define SEED_HI " << (v.v092 ? "bswap32(state2[0])" : "state2[1]") << "\n"
+      << "// " << v.name << " period " << period << "\n" << kHead << body;
   return src.str();
 }
 
-std::shared_ptr<const Light> shared_light(int epoch) {
+std::shared_ptr<const Light> shared_light(const Variant& v, int epoch) {
   static std::mutex mu;
-  static std::map<int, std::shared_ptr<const Light>> cache;
+  static std::map<std::pair<std::string, int>, std::shared_ptr<const Light>> cache;  // (variant, epoch)
+  const auto key = std::make_pair(std::string(v.name), epoch);
   std::lock_guard<std::mutex> lk(mu);
-  auto it = cache.find(epoch);
+  auto it = cache.find(key);
   if (it != cache.end()) return it->second;
-  for (auto i = cache.begin(); i != cache.end();)  // keep at most the previous epoch
-    i = i->first < epoch - 1 ? cache.erase(i) : std::next(i);
+  for (auto i = cache.begin(); i != cache.end();)  // keep at most the previous epoch of each variant
+    i = i->first.first == key.first && i->first.second < epoch - 1 ? cache.erase(i) : std::next(i);
   info("DAG", "building the epoch " + std::to_string(epoch) + " light cache");
-  auto l = make_light(epoch);
-  cache[epoch] = l;
+  auto l = make_light(epoch, v.parents, v.dataset_init);
+  cache[key] = l;
   return l;
 }
 
-Engine::Engine(gpu::Device& dev, uint64_t seed) : dev_(dev), rng_(seed) {}
+Engine::Engine(gpu::Device& dev, uint64_t seed, const Variant& v) : dev_(dev), v_(v), rng_(seed) {}
 
 Engine::~Engine() {
   if (next_.valid()) next_.wait();
@@ -312,11 +326,11 @@ bool Engine::init(std::string& err) {
 
 namespace {
 
-gpu::RtcOutput compile_period(const gpu::DeviceInfo& dev, uint64_t period, uint32_t tpb) {
+gpu::RtcOutput compile_period(const gpu::DeviceInfo& dev, const Variant* v, uint64_t period, uint32_t tpb) {
   gpu::RtcOutput out;
   std::vector<std::string> opts;
   if (dev.vendor == gpu::Vendor::Amd) opts.push_back("-O3");
-  if (!gpu::rtc_compile(dev, kernel_source(period, tpb), "kawpow_" + std::to_string(period) + ".cu", opts, out))
+  if (!gpu::rtc_compile(dev, kernel_source(*v, period, tpb), std::string(v->name) + "_" + std::to_string(period) + ".cu", opts, out))
     out.code.clear();
   return out;
 }
@@ -331,7 +345,7 @@ bool Engine::load_program(uint64_t period, std::string& err) {
     out = next_.get();
   } else {
     if (next_.valid()) next_.wait();
-    out = compile_period(dev_.info(), period, tpb_);
+    out = compile_period(dev_.info(), &v_, period, tpb_);
   }
   if (out.code.empty()) {
     err = "KawPow program " + std::to_string(period) + " did not compile: " + out.log.substr(0, 2000);
@@ -344,12 +358,12 @@ bool Engine::load_program(uint64_t period, std::string& err) {
   }
   period_ = period;
   next_period_ = period + 1;
-  next_ = std::async(std::launch::async, compile_period, dev_.info(), next_period_, tpb_);
+  next_ = std::async(std::launch::async, compile_period, dev_.info(), &v_, next_period_, tpb_);
   return true;
 }
 
 bool Engine::build_dag(int epoch, std::string& err) {
-  light_ = shared_light(epoch);
+  light_ = shared_light(v_, epoch);
   dev_.free(d_dag_);
   d_dag_ = 0;
   const size_t dag_bytes = size_t(light_->dataset_items) * 128;
@@ -382,8 +396,8 @@ bool Engine::build_dag(int epoch, std::string& err) {
 }
 
 bool Engine::set_job(const Job& job, std::string& err) {
-  const int epoch = job.height / kEpochLength;
-  const uint64_t period = uint64_t(job.height / kPeriodLength);
+  const int epoch = epoch_for_height(v_, job.height);
+  const uint64_t period = uint64_t(job.height / v_.period);
   if (period != period_ && !load_program(period, err)) return false;
   if (epoch != dag_epoch_ && !build_dag(epoch, err)) return false;
   if (job.header != job_.header || job.nonce_prefix != job_.nonce_prefix || !have_job_) {
@@ -423,7 +437,7 @@ double Engine::iterate(uint32_t batch, std::vector<Share>& shares, std::string& 
   for (uint32_t k = 0; k < hits; ++k) {
     Share s;
     s.nonce = uint64_t(found[2 + 2 * k]) << 32 | found[1 + 2 * k];
-    const Result r = hash(*light_, job_.height, job_.header, s.nonce);
+    const Result r = hash(*light_, job_.height, job_.header, s.nonce, v_);
     if (!less_or_equal(r.final_hash, job_.target)) {
       ++cpu_rejects_;  // the GPU filter only compares the top 64 bits (or the GPU erred)
       continue;
