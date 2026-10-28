@@ -3,9 +3,11 @@
 # builds without GPU toolchains (CI, Linux packagers) still produce a complete miner.
 #   AMD:    <algo>_gfx1201.hsaco, _gfx1200 (RX 9070 / 9060 code objects, loaded with hipModuleLoadData)
 #   NVIDIA: <algo>_sm_86.cubin, _sm_89    (exact-arch binaries, RTX 30 / RTX 40)
+#           <algo>_sm_120.cubin           (RTX 50; needs CUDA 12.8+, built separately so the PTX stays loadable by
+#                                          older drivers: -Nvcc <cuda-12.8>\bin\nvcc.exe -NvArchs sm_120 -AmdArchs @() -NoPtx)
 #           <algo>_compute_80.ptx         (portable PTX, JIT-compiled by the driver on newer GPUs)
 param([string]$HipClang = "", [string[]]$AmdArchs = @("gfx1201", "gfx1200"), [string[]]$NvArchs = @("sm_86", "sm_89"),
-      [string]$NvPtx = "compute_80")
+      [string]$NvPtx = "compute_80", [string]$Nvcc = "", [switch]$NoPtx)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $out = Join-Path $root "kernels\prebuilt"
@@ -15,7 +17,7 @@ if (-not $HipClang) {
   foreach ($c in @("$env:HIP_PATH\bin\clang++.exe", "G:\Program Files\AMD\ROCm\bin\clang++.exe",
                    "C:\Program Files\AMD\ROCm\6.4\bin\clang++.exe")) { if ($c -and (Test-Path $c)) { $HipClang = $c; break } }
 }
-$nvcc = (Get-Command nvcc -ErrorAction SilentlyContinue).Source
+$nvcc = if ($Nvcc) { $Nvcc } else { (Get-Command nvcc -ErrorAction SilentlyContinue).Source }
 $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
 $ccbin = (Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1).DirectoryName
 
@@ -41,6 +43,7 @@ foreach ($dir in Get-ChildItem (Join-Path $root "kernels") -Directory | Where-Ob
       if ($LASTEXITCODE) { throw "nvcc failed: $algo $a" }
       "built ${algo}_$a.cubin"
     }
+    if ($NoPtx) { continue }
     & $nvcc -ccbin $ccbin -ptx "-arch=$NvPtx" -O3 -std=c++17 -I (Join-Path $root "kernels") `
       -o (Join-Path $out "${algo}_$NvPtx.ptx") $cu
     if ($LASTEXITCODE) { throw "nvcc ptx failed: $algo" }

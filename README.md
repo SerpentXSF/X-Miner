@@ -101,7 +101,8 @@ non-zero code; the launchers restart it.
 | AMD RDNA4 (RX 9060 / 9060 XT, gfx1200) | built, untested | built, untested | built, untested | untested | built, untested | same |
 | NVIDIA RTX 30xx (sm_86) | yes | yes | yes | yes | yes | driver 555+ |
 | NVIDIA RTX 40xx (sm_89) | native build, untested | native build, untested | native build, untested | untested | native build, untested | driver 555+ |
-| NVIDIA A100, RTX 50xx and newer | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | untested | via PTX JIT (untested) | driver 555+ |
+| NVIDIA RTX 50xx (sm_120) | native build, untested | native build, untested | native build, untested | untested | native build, untested | driver 570+ |
+| NVIDIA A100, H100 and other newer | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | untested | via PTX JIT (untested) | driver 555+ |
 | Other AMD, NVIDIA Turing and older | no | no | no | no | no | |
 
 `x-miner --list-devices` shows each GPU and which algorithms it can run.

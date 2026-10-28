@@ -12,7 +12,7 @@
 - FiroPow (Firo, `--algorithm firopow`) on the ProgPoW engine, checked against Firo's vectors; kawpowminer stratum.
 - Epic Cash ProgPoW 0.9.2 (`progpow-epic`) and Zano ProgPowZ (`progpowz`) kernels: selftest and benchmark only,
   pool protocols next. ProgPowZ has no published test vectors; it is checked GPU-against-CPU only.
-- RX 9060 (gfx1200) and native RTX 40 (sm_89) kernel builds (untested on hardware).
+- RX 9060 (gfx1200), native RTX 40 (sm_89) and RTX 50 (sm_120, CUDA 12.8) kernel builds (untested on hardware).
 - Quantus NVIDIA: carry corrections without SEL (+1% on RTX 3060).
 
 ## 0.1.0 (first release)
