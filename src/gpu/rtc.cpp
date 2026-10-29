@@ -1,9 +1,11 @@
 #include "gpu/rtc.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <mutex>
 #ifndef _WIN32
+#include <dirent.h>
 #include <unistd.h>
 #endif
 #include <string>
@@ -14,17 +16,23 @@ namespace xm::gpu {
 
 namespace {
 
+#ifndef _WIN32
+std::string exe_dir() {
+  char buf[4096];
+  const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+  if (n <= 0) return "";
+  std::string dir(buf, size_t(n));
+  return dir.substr(0, dir.rfind('/') + 1);
+}
+#endif
+
 // Linux dlopen() does not look next to the executable; Windows LoadLibrary does (the libraries ship there).
 bool open_first(DynLib& lib, const std::vector<std::string>& names) {
 #ifndef _WIN32
-  char buf[4096];
-  const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
-  if (n > 0) {
-    std::string dir(buf, size_t(n));
-    dir = dir.substr(0, dir.rfind('/') + 1);
+  const std::string dir = exe_dir();
+  if (!dir.empty())
     for (const auto& name : names)
       if (name.find('/') == std::string::npos && lib.open((dir + name).c_str())) return true;
-  }
 #endif
   for (const auto& name : names)
     if (lib.open(name.c_str())) return true;
@@ -33,6 +41,7 @@ bool open_first(DynLib& lib, const std::vector<std::string>& names) {
 
 // ---------------------------------------------------------------- NVRTC
 struct Nvrtc {
+  DynLib builtins;  // Linux: the shipped libnvrtc-builtins, preloaded
   DynLib lib;
   using P = void*;
   int (*create)(P*, const char*, const char*, int, const char* const*, const char* const*) = nullptr;
@@ -52,6 +61,15 @@ struct Nvrtc {
 #ifdef _WIN32
     if (!open_first(lib, {"nvrtc64_130_0.dll", "nvrtc64_120_0.dll", "nvrtc64_112_0.dll"})) return;
 #else
+    // NVRTC dlopen()s libnvrtc-builtins.so.<major>.<minor> by name at compile time, which misses the copy shipped next
+    // to x-miner: load it from there first, so the by-name lookup finds the already loaded library.
+    if (DIR* d = opendir(exe_dir().c_str())) {
+      while (dirent* e = readdir(d)) {
+        const std::string f = e->d_name;
+        if (f.rfind("libnvrtc-builtins.so.", 0) == 0 && std::count(f.begin(), f.end(), '.') == 3) builtins.open((exe_dir() + f).c_str());
+      }
+      closedir(d);
+    }
     if (!open_first(lib, {"libnvrtc.so.13", "libnvrtc.so.12", "libnvrtc.so"})) return;
 #endif
     ready = lib.sym("nvrtcCreateProgram", create) && lib.sym("nvrtcCompileProgram", compile) &&
