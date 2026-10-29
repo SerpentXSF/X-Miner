@@ -11,7 +11,7 @@ per 100 minutes of mining, shown in the console and API); none on BLAKE2b.
 | Ravencoin (RVN) | `kawpow` | Firo (FIRO) | `firopow` |
 | Ethereum Classic (ETC) | `etchash` | Epic Cash (EPIC) | `progpow-epic` |
 | Ergo (ERG) | `autolykos2` | Zano (ZANO) | `progpowz` |
-| Bitcoin Knots RDTS | `blake2b` | | |
+| Bitcoin Knots RDTS | `blake2b` | Xelis (XEL) | `xelishashv3` |
 
 Every algorithm is checked against its coin's published test vectors where they exist (ProgPowZ and Octopus have
 none: GPU against the CPU reference), by a GPU-against-CPU `--selftest`, and with shares accepted on a live pool from
@@ -34,6 +34,7 @@ both an RX 9070 XT and an RTX 3060.
    - `start-firo-woolypooly.bat` / `.sh`: Firo on WoolyPooly (your FIRO address)
    - `start-epic-poolpay.bat` / `.sh`: Epic Cash on epic.pool-pay.com (your epicbox address)
    - `start-zano-herominers.bat` / `.sh`: Zano on HeroMiners (your Zano address)
+   - `start-xelis-kryptex.bat` / `.sh`: Xelis on Kryptex (your Kryptex `krx...` username)
    - `start-blake2b-alphapool.bat` / `.sh`: Bitcoin Knots BLAKE2b (RDTS) on AlphaPool (your RDTS address)
 3. Run it. The launcher restarts the miner if it ever exits.
 
@@ -58,16 +59,18 @@ x-miner --algorithm karlsenhashv2 --pool pool.woolypooly.com:3132 --wallet karls
 x-miner --algorithm firopow --pool pool.woolypooly.com:3104 --wallet FIRO_ADDRESS --worker rig1
 x-miner --algorithm progpow-epic --pool epic.pool-pay.com:3333 --wallet ADDRESS@epicbox.epiccash.com --worker rig1
 x-miner --algorithm progpowz --pool us.zano.herominers.com:1110 --wallet ZANO_ADDRESS --worker rig1
+x-miner --algorithm xelishashv3 --pool xel-us.kryptex.network:7019 --wallet krxXXXXXXX --worker rig1
 x-miner --algorithm blake2b --pool us1.alphapool.tech:5555 --wallet ADDRESS --worker rig1
 ```
 
 The ProgPoW coins (Ravencoin, Firo, Epic Cash, Zano) compile each new random program on the GPU's own compiler at run
-time, and Etchash, Autolykos2, Octopus and FishHash compile their kernels the same way once per start: the packages ship
+time, and Etchash, Autolykos2, Octopus, FishHash and XelisHashV3 compile their kernels the same way once per start: the packages ship
 NVIDIA's NVRTC (and, on Windows, AMD's hipRTC) next to `x-miner`; on Linux, AMD GPUs use the hipRTC that ROCm installs.
 The first job of an epoch builds its light cache on the CPU and the DAG on the GPU, which takes 5-40 s. GPU memory
 needed (late 2026): Conflux about 10 GB (8.8 GB DAG), Ergo about 8 GB (a 7.6 GB table, rebuilt at every block in 5-9
 s), Firo about 7 GB, Ravencoin about 6.5 GB, Iron Fish and Karlsen about 5 GB (one fixed 4.5 GB dataset), Ethereum
-Classic about 5 GB, Epic Cash and Zano about 2.5 GB.
+Classic about 5 GB, Epic Cash and Zano about 2.5 GB. XelisHashV3 gives every hash in flight its own 544 KB scratchpad
+and sizes the batch to the GPU (RX 9070 XT 4,096 hashes = 2.2 GB; RTX 3060 ~17,700 = 9.6 GB).
 
 ## GPU tuning
 
@@ -147,6 +150,7 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 | Autolykos2 (Ergo) | 64.5 MH/s | 96.3 MH/s @ 137 W | |
 | Octopus (Conflux) | 42.7 MH/s | 24.2 MH/s | other miners: ~79 / ~42 (tensor-core method, not yet in X-Miner) |
 | FishHash (Iron Fish) / KarlsenHashV2 | 23.5 MH/s (25.2 with `--gpu-mclock 2700`) | 27.5 MH/s @ 140 W | |
+| XelisHashV3 (Xelis) | 5.0 kH/s @ ~170 W | 4.49 kH/s @ 112 W | published: RTX 3060 5.5 kH/s, RTX 4090 15 kH/s |
 | BLAKE2b | 4.63 GH/s | 1.97 GH/s | |
 
 The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share
@@ -183,6 +187,8 @@ Pool certificates are not verified, as with other miners (pools use self-signed 
 - Zano: the ethproxy stratum (`eth_submitLogin` / `eth_getWork` with the block height), e.g. HeroMiners
   (`us.zano.herominers.com:1110`, `de.`, ...). The worker is sent separately (HeroMiners reads `address.x` as a
   payment id).
+- XelisHashV3 (Xelis): the Xelis stratum (xel/v3), e.g. Kryptex (`xel-us.kryptex.network:7019`, share difficulty
+  fixed at 1,048,576).
 - BLAKE2b (Bitcoin Knots RDTS chain): the DATUM gateway's Sia-style stratum, solo through your own DATUM gateway
   or on AlphaPool (`us1.alphapool.tech:5555`). Pool difficulties are sized for Sia-class ASICs, so GPU mining here
   is a lottery.

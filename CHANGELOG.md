@@ -2,7 +2,7 @@
 
 ## 0.1.0b (2026-10-28)
 
-Nine more coins, all verified against their published test vectors where they exist, by the GPU-against-CPU
+Ten more coins, all verified against their published test vectors where they exist, by the GPU-against-CPU
 `--selftest`, and with shares accepted on live pools from an RX 9070 XT and an RTX 3060.
 
 New algorithms
@@ -23,6 +23,11 @@ New algorithms
   32 rounds of three 128-byte reads. RX 9070 XT 23.5 MH/s (25.2 with `--gpu-mclock 2700`), RTX 3060 27.5 MH/s @ 140 W.
   Kryptex (Iron Fish, native Iron Fish stratum), WoolyPooly (Karlsen, Kaspa-style stratum).
 
+- XelisHashV3 (Xelis, `xelishashv3`): one GPU thread per hash with its own 544 KB scratchpad (ChaCha8 fill, the
+  sequential random walk with exact 128-bit division and the reference's double-precision square root, BLAKE3 tree),
+  run as fill / walk-slices / final kernels so no launch runs long. Matches the published xelis-hash vectors; the
+  selftest compares 256 nonces with the CPU. RX 9070 XT 5.0 kH/s, RTX 3060 4.49 kH/s. Kryptex (Xelis stratum).
+
 Pools
 - Epic Cash: shares are sent at most 50 per second (the pool answers about 60 per second per connection and drops the
   rest) and only for the current block height; the worker is joined with `+`.
@@ -36,7 +41,8 @@ Other
 - Quantus NVIDIA: carry corrections without SEL (+1% on RTX 3060).
 - A DAG or table that fails to rebuild is no longer taken as current on the next job; implausible block heights are
   rejected instead of building a huge cache.
-- Dev fee (1%) on every new coin; `XM_RTC_DUMP=<dir>` saves the run-time compiled kernels (developers).
+- Dev fee (1%) on every new coin; `XM_RTC_DUMP=<dir>` saves the run-time compiled kernels and `XM_RTC_OPTS` adds
+  compiler options (developers).
 - Linux packages preload the shipped NVRTC builtins library, so the run-time compiled algorithms work on NVIDIA
   from the package.
 

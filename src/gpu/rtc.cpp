@@ -151,6 +151,15 @@ bool rtc_compile(const DeviceInfo& dev, const std::string& source, const std::st
   std::lock_guard<std::mutex> lk(rtc_mutex());
   out = RtcOutput{};
   std::vector<std::string> opts = options;
+  if (const char* e = std::getenv("XM_RTC_OPTS")) {  // developer: extra compiler options, space separated
+    std::string s = e;
+    for (size_t p = 0; p < s.size();) {
+      const size_t q = s.find(' ', p);
+      if (q != p) opts.push_back(s.substr(p, q == std::string::npos ? std::string::npos : q - p));
+      if (q == std::string::npos) break;
+      p = q + 1;
+    }
+  }
   if (dev.vendor == Vendor::Nvidia) {
     Nvrtc& N = nvrtc();
     if (!N.ready) {

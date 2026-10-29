@@ -278,6 +278,21 @@ A hash is 32 rounds of three random 128-byte reads from the 4.5 GB dataset (96 r
 23.53 MH/s for 4 or 8 lanes per hash and blocks of 64-256 threads: 2.26 G random reads per second, the same ceiling as
 KawPow and Etchash on this card, raised only by the memory clock. Karlsen runs at the same rate.
 
+## XelisHashV3 (Xelis)
+
+| Card | X-Miner | Published |
+|---|---|---|
+| RX 9070 XT (-30% power) | 5.0 kH/s @ ~170 W (4,096 hashes in flight) | - |
+| RTX 3060 (170 W cap) | 4.49 kH/s @ 112 W (17,728 in flight) | 5.5 kH/s @ 80 W |
+
+Each hash fills its own 543,744-byte scratchpad, then makes 67,968 strictly sequential steps, each a chain of dependent
+random 8-byte reads (and two read-modify-writes) in that scratchpad, with 16 kinds of 64/128-bit arithmetic chosen by
+the data. It cannot be parallelised within a hash, so the GPU runs thousands of hashes at once and is bound by memory
+latency and cache / TLB misses, at low power. RX 9070 XT by hashes in flight: 2048 3.91, 3072 4.71, 4096 5.00, 6144
+5.04, 8192 4.08, 16384 3.59 kH/s (falls once the scratchpads thrash the caches). RTX 3060: 1024 1.77, 2048 2.50, 4096
+2.68, 8192 3.50, 12288 4.04, 16384 4.36, 17728 4.49 kH/s (keeps rising to the memory limit). Splitting the walk into
+slices (no launch over ~0.5 s, for the Windows display watchdog), L2-only loads and block size changed nothing.
+
 ## BLAKE2b (Bitcoin Knots RDTS)
 
 | Card | X-Miner | Reference |

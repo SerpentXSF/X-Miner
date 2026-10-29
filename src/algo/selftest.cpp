@@ -12,6 +12,7 @@
 #include "algo/fishhash/fishhash_gpu.hpp"
 #include "algo/kawpow/kawpow_gpu.hpp"
 #include "algo/quantus/quantus_gpu.hpp"
+#include "algo/xelis/xelis_gpu.hpp"
 #include "algo/noid/noid_gpu.hpp"
 #include "algo/octopus/octopus_gpu.hpp"
 #include "algo/pearl/pearl_gpu.hpp"
@@ -311,6 +312,40 @@ bool fish_check(gpu::Device& dev, std::string& detail, fishhash::Variant v) {
 bool fishhash_check(gpu::Device& dev, std::string& d) { return fish_check(dev, d, fishhash::Variant::Iron); }
 bool karlsen_check(gpu::Device& dev, std::string& d) { return fish_check(dev, d, fishhash::Variant::Karlsen); }
 
+// XelisHash v3: 256 consecutive nonces (256 scratchpads) against difficulty 8 (about 32 hits). Every nonce is also
+// hashed on the CPU: the GPU must report exactly the CPU's hits.
+bool xelis_check(gpu::Device& dev, std::string& detail) {
+  xelis::Engine eng(dev, 0x8e15e1f7, 256);
+  xelis::Job job;
+  job.id = "selftest";
+  for (int i = 0; i < xelis::kInputSize; ++i) job.work.bytes[i] = static_cast<uint8_t>(i * 29 + 3);
+  job.difficulty = 8;
+  auto t0 = std::chrono::steady_clock::now();
+  std::vector<xelis::Share> shares;
+  if (!eng.init(detail) || !eng.set_job(job, detail)) return false;
+  const double setup = ms_since(t0);
+  t0 = std::chrono::steady_clock::now();
+  const uint64_t first = eng.next_nonce();
+  if (eng.iterate(shares, detail) == 0) return false;
+  const double gpu_ms = ms_since(t0);
+  std::vector<uint64_t> scratch;
+  size_t want = 0, missing = 0;
+  for (uint64_t k = 0; k < eng.threads(); ++k) {
+    xelis::Work w = job.work;
+    w.set_nonce(first + k);
+    if (!xelis::meets_difficulty(xelis::hash(w.bytes, xelis::kInputSize, scratch), job.difficulty)) continue;
+    ++want;
+    bool got = false;
+    for (const auto& s : shares) got = got || s.nonce == first + k;
+    missing += !got;
+  }
+  char buf[200];
+  std::snprintf(buf, sizeof buf, "%zu of %zu CPU hits found in %u nonces, %llu wrong (compile %.0f ms, %.0f ms)",
+                shares.size(), want, eng.threads(), static_cast<unsigned long long>(eng.cpu_rejects()), setup, gpu_ms);
+  detail = buf;
+  return want >= 12 && missing == 0 && shares.size() == want && eng.cpu_rejects() == 0;
+}
+
 void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int state, const std::string& detail) {
   static const char* kState[] = {"FAIL  ", "PASS  ", "SKIP  "};
   Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(i) + " ] "},
@@ -328,7 +363,7 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;
