@@ -1,30 +1,42 @@
 # Changelog
 
-## Unreleased
+## 0.1.0b (2026-10-28)
 
-- KawPow (Ravencoin, `--algorithm kawpow`): ProgPoW programs generated per period and compiled at run time (NVRTC /
-  hipRTC, shipped in the packages), DAG generated on the GPU, Kryptex RVN stratum. RX 9070 XT 34.0 MH/s @ 237 W, RTX
-  3060 20.6 MH/s @ 169 W (WildRig 34.1 / T-Rex 20.85 on the same cards); live shares accepted on both.
-- Etchash (Ethereum Classic, `--algorithm etchash`): hashimoto with ECIP-1099 epochs, 8 lanes per hash,
-  EthereumStratum/1.0.0. RTX 3060 41.0 MH/s, RX 9070 XT 35.5 MH/s (the card's random-access limit); live accepted.
-- Autolykos v2 (Ergo, `--algorithm autolykos2`): table rebuilt on the GPU per block, Ergo stratum. RTX 3060 96.3 MH/s @
-  137 W, RX 9070 XT 64.5 MH/s; the selftest matches the CPU on 4096 consecutive nonces; live accepted on both.
-- Octopus (Conflux, `--algorithm octopus`): per-nonce polynomial evaluation (Shoup modular multiply; 24-bit
-  multiplies on AMD) plus the 256-byte-page DAG mix, Conflux stratum. RX 9070 XT 42.7 MH/s @ 237 W, RTX 3060 24.2 MH/s
-  @ 169 W; the selftest matches the CPU on 1024 consecutive nonces; live accepted on both (Kryptex). Other miners do about 79 / 42
-  MH/s on these cards with tensor-core / matrix evaluation of the polynomial, not done here yet.
-- FishHash (Iron Fish, `--algorithm fishhash`) and KarlsenHashV2 (Karlsen, `--algorithm karlsenhashv2`): one fixed
-  4.5 GB dataset built on the GPU, BLAKE3 + 32 rounds of three 128-byte reads, 8 lanes per hash; CPU reference matches
-  the published Iron Fish and rusty-karlsen vectors, selftest matches the CPU nonce for nonce. Native Iron Fish stratum
-  (live accepted on Kryptex, both cards) and the Kaspa-style Karlsen stratum (not yet live-tested). RX 9070 XT 23.5
-  MH/s (25.2 with `--gpu-mclock 2700`), RTX 3060 27.5 MH/s @ 140 W.
-- Pool clients: recent jobs are kept in arrival order (a sorted set could drop the current job when job ids are random,
-  turning good shares into "job expired" on Iron Fish).
-- FiroPow (Firo, `--algorithm firopow`) on the ProgPoW engine, checked against Firo's vectors; kawpowminer stratum; live accepted on WoolyPooly (RX 9070 XT 33.5 MH/s, 5/0).
-- Epic Cash ProgPoW 0.9.2 (`progpow-epic`) and Zano ProgPowZ (`progpowz`) kernels: selftest and benchmark only,
-  pool protocols next. ProgPowZ has no published test vectors; it is checked GPU-against-CPU only.
-- RX 9060 (gfx1200), native RTX 40 (sm_89) and RTX 50 (sm_120, CUDA 12.8) kernel builds (untested on hardware).
+Nine more coins, all verified against their published test vectors where they exist, by the GPU-against-CPU
+`--selftest`, and with shares accepted on live pools from an RX 9070 XT and an RTX 3060.
+
+New algorithms
+- KawPow (Ravencoin, `kawpow`): ProgPoW programs generated per period and compiled at run time (NVRTC / hipRTC,
+  shipped in the packages), DAG built on the GPU. RX 9070 XT 34.0 MH/s @ 237 W, RTX 3060 20.6 MH/s (WildRig 34.1 /
+  T-Rex 20.85 on the same cards). Kryptex.
+- FiroPow (Firo, `firopow`), ProgPoW 0.9.2 (Epic Cash, `progpow-epic`) and ProgPowZ (Zano, `progpowz`) on the same
+  engine: 9070 XT 33.1 / 39.9 / 40.0 MH/s, RTX 3060 20.5 / 20.6 / 20.6 MH/s. WoolyPooly (Firo), epic.pool-pay.com (Epic,
+  Epic node stratum), HeroMiners (Zano, ethproxy stratum).
+- Etchash (Ethereum Classic, `etchash`): ECIP-1099 epochs, 8 lanes per hash. RTX 3060 41.0, RX 9070 XT 35.5 MH/s (the
+  card's random-access limit). Kryptex.
+- Autolykos v2 (Ergo, `autolykos2`): the 7.6 GB table rebuilt on the GPU per block; the selftest compares 4096
+  consecutive nonces with the CPU. RTX 3060 96.3 MH/s @ 137 W, RX 9070 XT 64.5 MH/s. Kryptex.
+- Octopus (Conflux, `octopus`): per-nonce polynomial evaluation (Shoup multiply; full-rate 24-bit multiplies in inline
+  asm on AMD) and the DAG mix. RX 9070 XT 42.7 MH/s, RTX 3060 24.2 MH/s; other miners reach ~79 / ~42 with a
+  tensor-core method that X-Miner does not have yet. Kryptex.
+- FishHash (Iron Fish, `fishhash`) and KarlsenHashV2 (Karlsen, `karlsenhashv2`): one fixed 4.5 GB dataset, BLAKE3 and
+  32 rounds of three 128-byte reads. RX 9070 XT 23.5 MH/s (25.2 with `--gpu-mclock 2700`), RTX 3060 27.5 MH/s @ 140 W.
+  Kryptex (Iron Fish, native Iron Fish stratum), WoolyPooly (Karlsen, Kaspa-style stratum).
+
+Pools
+- Epic Cash: shares are sent at most 50 per second (the pool answers about 60 per second per connection and drops the
+  rest) and only for the current block height; the worker is joined with `+`.
+- All pool clients keep recent jobs in arrival order (a sorted set could drop the current job when job ids are
+  random, turning good shares into "job expired"), and a malformed pool message is logged and ignored instead of
+  ending the miner.
+
+Other
+- Native RTX 50 (sm_120, CUDA 12.8) kernels for Pearl, Parano1d, Quantus and BLAKE2b, RX 9060 (gfx1200) and native RTX
+  40 (sm_89) builds (untested on hardware).
 - Quantus NVIDIA: carry corrections without SEL (+1% on RTX 3060).
+- A DAG or table that fails to rebuild is no longer taken as current on the next job; implausible block heights are
+  rejected instead of building a huge cache.
+- Dev fee (1%) on every new coin; `XM_RTC_DUMP=<dir>` saves the run-time compiled kernels (developers).
 
 ## 0.1.0 (first release)
 

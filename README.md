@@ -1,11 +1,21 @@
 # X-Miner
 
-Open-source GPU miner by SerpentX Tech for **Pearl (pearlhash)**, **Parano1d (noid)**, **Quantus (quantus)**,
-**Ravencoin (kawpow)**, **Ethereum Classic (etchash)**, **Ergo (autolykos2)**, **Conflux (octopus)**, **Iron Fish
-(fishhash)**, **Karlsen (karlsenhashv2)**, **Firo (firopow)** and **Bitcoin Knots BLAKE2b (blake2b)** on AMD and NVIDIA
-GPUs, with **Epic Cash (progpow-epic)** and **Zano (progpowz)** kernels verified
-and their pool protocols in development. MIT licensed. 1% dev fee (time-sliced: about 60 s per 100 minutes of
-mining, shown in the console and API) where a developer wallet is set; none on blake2b and, for now, Karlsen.
+Open-source GPU miner by SerpentX Tech for AMD and NVIDIA GPUs. MIT licensed. 1% dev fee (time-sliced: about 60 s
+per 100 minutes of mining, shown in the console and API); none on BLAKE2b.
+
+| Coin | `--algorithm` | Coin | `--algorithm` |
+|---|---|---|---|
+| Pearl (PRL) | `pearlhash` | Conflux (CFX) | `octopus` |
+| Parano1d (NOID) | `noid` | Iron Fish (IRON) | `fishhash` |
+| Quantus (QTC) | `quantus` | Karlsen (KLS) | `karlsenhashv2` |
+| Ravencoin (RVN) | `kawpow` | Firo (FIRO) | `firopow` |
+| Ethereum Classic (ETC) | `etchash` | Epic Cash (EPIC) | `progpow-epic` |
+| Ergo (ERG) | `autolykos2` | Zano (ZANO) | `progpowz` |
+| Bitcoin Knots RDTS | `blake2b` | | |
+
+Every algorithm is checked against its coin's published test vectors where they exist (ProgPowZ and Octopus have
+none: GPU against the CPU reference), by a GPU-against-CPU `--selftest`, and with shares accepted on a live pool from
+both an RX 9070 XT and an RTX 3060.
 
 ## Quick start
 
@@ -15,13 +25,15 @@ mining, shown in the console and API) where a developer wallet is set; none on b
    - `start-pearl-herominers.bat` / `.sh`: Pearl on HeroMiners (your PRL address)
    - `start-noid-rplant.bat` / `.sh`: Parano1d on rplant.xyz (your `o1...` NOID address)
    - `start-quantus-kryptex.bat` / `.sh`: Quantus on Kryptex (your Kryptex `krx...` username)
-   - `start-kawpow-kryptex.bat` / `.sh`: Ravencoin (KawPow) on Kryptex (your Kryptex `krx...` username)
+   - `start-kawpow-kryptex.bat` / `.sh`: Ravencoin on Kryptex (your Kryptex `krx...` username)
    - `start-etchash-kryptex.bat` / `.sh`: Ethereum Classic on Kryptex (your Kryptex `krx...` username)
+   - `start-ergo-kryptex.bat` / `.sh`: Ergo on Kryptex (your Kryptex `krx...` username)
    - `start-octopus-kryptex.bat` / `.sh`: Conflux on Kryptex (your Kryptex `krx...` username)
    - `start-fishhash-kryptex.bat` / `.sh`: Iron Fish on Kryptex (your Kryptex `krx...` username)
-   - `start-karlsen.bat` / `.sh`: Karlsen on a Karlsen stratum pool of your choice (your KLS address)
-   - `start-ergo-kryptex.bat` / `.sh`: Ergo on Kryptex (your Kryptex `krx...` username)
+   - `start-karlsen-woolypooly.bat` / `.sh`: Karlsen on WoolyPooly (your `karlsen:...` address)
    - `start-firo-woolypooly.bat` / `.sh`: Firo on WoolyPooly (your FIRO address)
+   - `start-epic-poolpay.bat` / `.sh`: Epic Cash on epic.pool-pay.com (your epicbox address)
+   - `start-zano-herominers.bat` / `.sh`: Zano on HeroMiners (your Zano address)
    - `start-blake2b-alphapool.bat` / `.sh`: Bitcoin Knots BLAKE2b (RDTS) on AlphaPool (your RDTS address)
 3. Run it. The launcher restarts the miner if it ever exits.
 
@@ -42,16 +54,20 @@ x-miner --algorithm etchash --pool etc-us.kryptex.network:7033 --wallet krxXXXXX
 x-miner --algorithm autolykos2 --pool erg-us.kryptex.network:7021 --wallet krxXXXXXXX --worker rig1
 x-miner --algorithm octopus --pool cfx-us.kryptex.network:7027 --wallet krxXXXXXXX --worker rig1
 x-miner --algorithm fishhash --pool iron-us.kryptex.network:7017 --wallet krxXXXXXXX --worker rig1
+x-miner --algorithm karlsenhashv2 --pool pool.woolypooly.com:3132 --wallet karlsen:qq... --worker rig1
 x-miner --algorithm firopow --pool pool.woolypooly.com:3104 --wallet FIRO_ADDRESS --worker rig1
+x-miner --algorithm progpow-epic --pool epic.pool-pay.com:3333 --wallet ADDRESS@epicbox.epiccash.com --worker rig1
+x-miner --algorithm progpowz --pool us.zano.herominers.com:1110 --wallet ZANO_ADDRESS --worker rig1
 x-miner --algorithm blake2b --pool us1.alphapool.tech:5555 --wallet ADDRESS --worker rig1
 ```
 
-KawPow and the other ProgPoW coins compile each new random program on the GPU's own compiler at run time, and
-Etchash, Autolykos2, Octopus and FishHash compile their kernels the same way once per start: the packages ship NVIDIA's NVRTC (and, on
-Windows, AMD's hipRTC) next to `x-miner`; on Linux, AMD GPUs use the hipRTC that ROCm installs. Ergo needs about 8 GB
-of GPU memory (its 7.6 GB table is rebuilt on the GPU at every block, 5-9 s); Conflux about 10 GB (an 8.8 GB DAG); Iron Fish and Karlsen about 6 GB (a fixed 4.5 GB
-dataset). The first start of an epoch builds its light cache on the CPU and the DAG (6.2 GB for Ravencoin in late
-2026) on the GPU, which takes 10-30 s.
+The ProgPoW coins (Ravencoin, Firo, Epic Cash, Zano) compile each new random program on the GPU's own compiler at run
+time, and Etchash, Autolykos2, Octopus and FishHash compile their kernels the same way once per start: the packages ship
+NVIDIA's NVRTC (and, on Windows, AMD's hipRTC) next to `x-miner`; on Linux, AMD GPUs use the hipRTC that ROCm installs.
+The first job of an epoch builds its light cache on the CPU and the DAG on the GPU, which takes 5-40 s. GPU memory
+needed (late 2026): Conflux about 10 GB (8.8 GB DAG), Ergo about 8 GB (a 7.6 GB table, rebuilt at every block in 5-9
+s), Firo about 7 GB, Ravencoin about 6.5 GB, Iron Fish and Karlsen about 5 GB (one fixed 4.5 GB dataset), Ethereum
+Classic about 5 GB, Epic Cash and Zano about 2.5 GB.
 
 ## GPU tuning
 
@@ -102,25 +118,36 @@ non-zero code; the launchers restart it.
 
 ## Supported hardware
 
-| Vendor | Pearl | Parano1d | Quantus | KawPow, Etchash, Autolykos2, Octopus, FishHash, Karlsen, FiroPow | BLAKE2b | Requirement |
-|---|---|---|---|---|---|---|
-| AMD RDNA4 (RX 9070 / 9070 XT, gfx1201) | yes | yes | yes | yes | yes | Windows: Adrenalin driver (provides the HIP runtime); Linux: ROCm 6.x |
-| AMD RDNA4 (RX 9060 / 9060 XT, gfx1200) | built, untested | built, untested | built, untested | untested | built, untested | same |
-| NVIDIA RTX 30xx (sm_86) | yes | yes | yes | yes | yes | driver 555+ |
-| NVIDIA RTX 40xx (sm_89) | native build, untested | native build, untested | native build, untested | untested | native build, untested | driver 555+ |
-| NVIDIA RTX 50xx (sm_120) | native build, untested | native build, untested | native build, untested | untested | native build, untested | driver 570+ |
-| NVIDIA A100, H100 and other newer | via PTX JIT (untested) | via PTX JIT (untested) | via PTX JIT (untested) | untested | via PTX JIT (untested) | driver 555+ |
-| Other AMD, NVIDIA Turing and older | no | no | no | no | no | |
+| Vendor | Pearl, Parano1d, Quantus, BLAKE2b (prebuilt kernels) | Run-time compiled algorithms (all others) | Requirement |
+|---|---|---|---|
+| AMD RDNA4 (RX 9070 / 9070 XT, gfx1201) | yes | yes | Windows: Adrenalin driver (provides the HIP runtime); Linux: ROCm 6.x |
+| AMD RDNA4 (RX 9060 / 9060 XT, gfx1200) | built, untested | untested | same |
+| NVIDIA RTX 30xx (sm_86) | yes | yes | driver 555+ |
+| NVIDIA RTX 40xx (sm_89) | native build, untested | untested | driver 555+ |
+| NVIDIA RTX 50xx (sm_120) | native build, untested | untested | driver 570+ |
+| NVIDIA A100, H100 and other newer | via PTX JIT (untested) | untested | driver 555+ |
+| Other AMD, NVIDIA Turing and older | no | no | |
 
 `x-miner --list-devices` shows each GPU and which algorithms it can run.
 
 ## Measured hashrates
 
-| Card | Pearl | Parano1d | Quantus | KawPow (6.2 GB DAG) | Etchash (4.4 GB) | Autolykos2 (7.6 GB) | Octopus (8.8 GB) | FishHash / Karlsen (4.5 GB) | BLAKE2b |
-|---|---|---|---|---|---|---|---|---|---|
-| RX 9070 XT (-30% power, ~237 W) | 101.1 TH/s | 20.1 MH/s | 179.6 MH/s | 34.0 MH/s | 35.5 MH/s | 64.5 MH/s | 42.7 MH/s | 23.5 MH/s | 4.63 GH/s |
-| RX 9070 XT (stock power, ~300-340 W) | 115.0 TH/s | | 195.8 MH/s | | | | | | |
-| RTX 3060 (stock, 170 W) | 44.4 TH/s | 9.8 MH/s | 149.7 MH/s | 20.6 MH/s | 41.0 MH/s | 96.3 MH/s | 24.2 MH/s | 27.5 MH/s | 1.97 GH/s |
+RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner's own benchmarks (2026-10-28):
+
+| Algorithm | RX 9070 XT | RTX 3060 | Notes |
+|---|---|---|---|
+| Pearl | 101.1 TH/s (115.0 at stock power) | 44.4 TH/s | |
+| Parano1d | 20.1 MH/s | 9.8 MH/s | |
+| Quantus | 179.6 MH/s (195.8 at stock power) | 149.7 MH/s | |
+| KawPow (Ravencoin) | 34.0 MH/s | 20.6 MH/s | WildRig 34.1 / T-Rex 20.85 on the same cards |
+| FiroPow (Firo) | 33.1 MH/s | 20.5 MH/s | |
+| ProgPoW 0.9.2 (Epic Cash) | 39.9 MH/s | 20.6 MH/s | see "Epic Cash" below |
+| ProgPowZ (Zano) | 40.0 MH/s | 20.6 MH/s | WildRig: 41.1 MH/s on a 9070 XT at 314 W |
+| Etchash (Ethereum Classic) | 35.5 MH/s | 41.0 MH/s | |
+| Autolykos2 (Ergo) | 64.5 MH/s | 96.3 MH/s @ 137 W | |
+| Octopus (Conflux) | 42.7 MH/s | 24.2 MH/s | other miners: ~79 / ~42 (tensor-core method, not yet in X-Miner) |
+| FishHash (Iron Fish) / KarlsenHashV2 | 23.5 MH/s (25.2 with `--gpu-mclock 2700`) | 27.5 MH/s @ 140 W | |
+| BLAKE2b | 4.63 GH/s | 1.97 GH/s | |
 
 The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share
 difficulty x 2^32 for Pearl) per hour and per run. That is what the pool should credit, so it is the number to compare
@@ -139,14 +166,23 @@ Pool certificates are not verified, as with other miners (pools use self-signed 
 - Parano1d: rplant (`na.rplant.xyz:17185`, plain or TLS on the same port), InnovLab
   (`stratum+ssl://us.innovlab.cc:19601`) and other `parano1d-stratum-v1` pools.
 - Quantus: Kryptex (`qtc-us.kryptex.network:7049`, `qtc.kryptex.network:7049`; XMRig-style stratum).
-- KawPow (Ravencoin): Kryptex (`rvn-us.kryptex.network:7031`, `rvn.kryptex.network:7031`) and other pools that speak
-  the kawpowminer stratum (`mining.subscribe` / `mining.notify` with header hash, seed hash, target and height).
-- FiroPow (Firo): pools speaking the same kawpowminer stratum, e.g. WoolyPooly (`pool.woolypooly.com:3104`; rplant `na.rplant.xyz:7045` rejected every share from every miner we tried, WildRig included, on 2026-10-28).
+- KawPow (Ravencoin): Kryptex (`rvn-us.kryptex.network:7031`) and other pools that speak the kawpowminer stratum
+  (`mining.subscribe` / `mining.notify` with header hash, seed hash, target and height).
+- FiroPow (Firo): the same kawpowminer stratum, e.g. WoolyPooly (`pool.woolypooly.com:3104`). rplant
+  (`na.rplant.xyz:7045`) rejected every share from every miner we tried, WildRig included, on 2026-10-28.
 - Etchash (Ethereum Classic): EthereumStratum/1.0.0 pools, e.g. Kryptex (`etc-us.kryptex.network:7033`).
 - Autolykos2 (Ergo): Ergo stratum pools, e.g. Kryptex (`erg-us.kryptex.network:7021`).
 - Octopus (Conflux): Conflux stratum pools, e.g. Kryptex (`cfx-us.kryptex.network:7027`).
 - FishHash (Iron Fish): the native Iron Fish stratum, e.g. Kryptex (`iron-us.kryptex.network:7017`).
-- KarlsenHashV2 (Karlsen): Kaspa-style Karlsen stratum pools (karlsen-stratum-bridge format); not yet live-tested.
+- KarlsenHashV2 (Karlsen): Kaspa-style stratum (karlsen-stratum-bridge), e.g. WoolyPooly (`pool.woolypooly.com:3132`).
+- Epic Cash: the Epic node's stratum, e.g. epic.pool-pay.com (`epic.pool-pay.com:3333`). The wallet is your epicbox
+  address with or without `@epicbox.epiccash.com`; X-Miner joins the worker with `+` (Epic pools read `.` as a
+  deposit note). The pool credits every share at a fixed difficulty of 200,000 and answers about 60 shares per
+  second per connection, so X-Miner sends at most 50 per second: the pool credits up to ~10 MH/s per connection
+  whatever the GPU does.
+- Zano: the ethproxy stratum (`eth_submitLogin` / `eth_getWork` with the block height), e.g. HeroMiners
+  (`us.zano.herominers.com:1110`, `de.`, ...). The worker is sent separately (HeroMiners reads `address.x` as a
+  payment id).
 - BLAKE2b (Bitcoin Knots RDTS chain): the DATUM gateway's Sia-style stratum, solo through your own DATUM gateway
   or on AlphaPool (`us1.alphapool.tech:5555`). Pool difficulties are sized for Sia-class ASICs, so GPU mining here
   is a lottery.

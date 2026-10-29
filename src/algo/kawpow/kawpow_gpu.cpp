@@ -399,6 +399,11 @@ std::string kernel_common(int parents, uint32_t tpb) {
 }
 
 bool Engine::build_dag(int epoch, std::string& err) {
+  dag_epoch_ = -1;  // generate_dag frees the old DAG first: set again only on success
+  if (epoch < 0 || epoch > 4096) {
+    err = "implausible block height (DAG epoch " + std::to_string(epoch) + ")";
+    return false;
+  }
   light_ = shared_light(v_, epoch);
   if (!generate_dag(dev_, *light_, d_dag_, err)) return false;
   dag_epoch_ = epoch;
@@ -443,7 +448,14 @@ double Engine::iterate(uint32_t batch, std::vector<Share>& shares, std::string& 
     return 0;
   }
   counter_ += batch;
-  const uint32_t hits = std::min(found[0], kMaxFound);
+  uint32_t hits = std::min(found[0], kMaxFound);
+  if (share_rate_ > 0) {
+    const auto now = std::chrono::steady_clock::now();
+    share_tokens_ = std::min(share_rate_, share_tokens_ + share_rate_ * std::chrono::duration<double>(now - share_refill_).count());
+    share_refill_ = now;
+    hits = std::min(hits, uint32_t(share_tokens_));
+    share_tokens_ -= hits;
+  }
   for (uint32_t k = 0; k < hits; ++k) {
     Share s;
     s.nonce = uint64_t(found[2 + 2 * k]) << 32 | found[1 + 2 * k];

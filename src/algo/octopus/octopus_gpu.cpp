@@ -242,6 +242,11 @@ bool Engine::init(std::string& err) {
 bool Engine::set_job(const Job& job, std::string& err) {
   const int stage = stage_for_height(job.height);
   if (stage != dag_stage_) {
+    dag_stage_ = -1;  // generate_dag frees the old DAG first: set again only on success
+    if (stage < 0 || stage > 1024) {  // 1024 stages = a 20 GB DAG
+      err = "implausible block height " + std::to_string(job.height);
+      return false;
+    }
     light_ = shared_light(stage);
     if (!kawpow::generate_dag(dev_, *light_, d_dag_, err)) return false;
     dag_stage_ = stage;

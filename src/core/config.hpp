@@ -47,7 +47,7 @@ struct Config {
   bool help = false;
   bool version = false;
 
-  std::string login() const;          // wallet[.worker]
+  std::string login() const;          // join_login(wallet, worker)
   int intensity_for(size_t gpu) const;               // 0 = auto
   gpu::TuneRequest tune_for(size_t gpu) const;      // index into the selected GPUs
   int off_temp_for(size_t gpu) const;                // 0 = no thermal pause
@@ -59,6 +59,10 @@ std::optional<std::string> parse_args(int argc, char** argv, Config& out);
 
 // "host:port", "stratum+tcp://host:port", "stratum+ssl://host:port". Multiple pools may be separated by
 // '!' or ',' in one flag, or given by repeating --pool.
+// wallet.worker, or wallet+worker for an @epicbox address (Epic pools read "." as a deposit note); the wallet
+// alone when it already names a worker or the worker is empty.
+std::string join_login(const std::string& wallet, const std::string& worker);
+
 std::optional<std::string> parse_pool_list(const std::string& text, std::vector<PoolEndpoint>& out);
 
 std::string usage();

@@ -39,6 +39,8 @@ int run_blake2b(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_quantus(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_kawpow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_firopow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_epic(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_zano(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_etchash(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_autolykos(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_octopus(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
@@ -331,8 +333,8 @@ int main(int argc, char** argv) {
     };
     const Pp pp[] = {{"kawpow", &kawpow::kKawpow, 4600000, run_kawpow},
                      {"firopow", &kawpow::kFiropow, 1250000, run_firopow},
-                     {"progpow-epic", &kawpow::kProgpow092, 3770000, nullptr},
-                     {"progpowz", &kawpow::kProgpowZ, 3300000, nullptr}};
+                     {"progpow-epic", &kawpow::kProgpow092, 3770000, run_epic},
+                     {"progpowz", &kawpow::kProgpowZ, 3300000, run_zano}};
     for (const auto& p : pp) {
       if (std::string(algo->name) != p.name) continue;
       if (cfg.benchmark) {

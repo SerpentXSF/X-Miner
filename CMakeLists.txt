@@ -83,6 +83,8 @@ add_library(xm_core STATIC
   src/pool/cfx_pool.cpp
   src/pool/iron_pool.cpp
   src/pool/kls_pool.cpp
+  src/pool/epic_pool.cpp
+  src/pool/zano_pool.cpp
   src/mining/fishhash_run.cpp
   src/algo/kawpow/kawpow_gpu.cpp
   src/algo/kawpow/bench.cpp
@@ -116,7 +118,7 @@ add_executable(x-miner src/main.cpp)
 target_link_libraries(x-miner PRIVATE xm_core)
 
 enable_testing()
-add_executable(xm_tests tests/test_main.cpp tests/test_core.cpp tests/test_blake3.cpp tests/test_pearl.cpp tests/test_noid.cpp tests/test_blake2b.cpp tests/test_quantus.cpp tests/test_kawpow.cpp tests/test_etchash.cpp tests/test_autolykos.cpp tests/test_octopus.cpp tests/test_fishhash.cpp)
+add_executable(xm_tests tests/test_main.cpp tests/test_core.cpp tests/test_blake3.cpp tests/test_pearl.cpp tests/test_noid.cpp tests/test_blake2b.cpp tests/test_quantus.cpp tests/test_kawpow.cpp tests/test_etchash.cpp tests/test_autolykos.cpp tests/test_octopus.cpp tests/test_fishhash.cpp tests/test_pools.cpp)
 target_compile_definitions(xm_tests PRIVATE XM_TEST_VECTORS="${CMAKE_SOURCE_DIR}/tests/vectors")
 target_link_libraries(xm_tests PRIVATE xm_core)
 add_test(NAME unit COMMAND xm_tests)

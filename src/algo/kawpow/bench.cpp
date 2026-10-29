@@ -78,8 +78,8 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs, c
     double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     double expected = total / 67108864.0;  // 2^26 nonces per share at this target
     char line[220];
-    std::snprintf(line, sizeof line, "%s average over %.0f s; %zu shares (expected %.0f), all CPU-verified%s",
-                  format_hashrate(total / secs).c_str(), secs, shares, expected,
+    std::snprintf(line, sizeof line, "%s average over %.0f s; %zu shares (expected %.0f), %llu GPU candidates failed the CPU check%s",
+                  format_hashrate(total / secs).c_str(), secs, shares, expected, static_cast<unsigned long long>(eng.cpu_rejects()),
                   samples ? (", " + std::to_string(int(watts / samples)) + " W").c_str() : "");
     bool plausible = std::abs(double(shares) - expected) <= 4 * std::sqrt(expected) + 2;  // Poisson, 4 sigma
     log_line(plausible ? Tone::Ok : Tone::Red, "DONE", line);

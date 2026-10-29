@@ -31,10 +31,15 @@ bool parse_int(const std::string& s, long lo, long hi, long& v) {
 
 }  // namespace
 
-std::string Config::login() const {
-  if (worker.empty() || wallet.find('.') != std::string::npos) return wallet;
+std::string join_login(const std::string& wallet, const std::string& worker) {
+  if (worker.empty()) return wallet;
+  if (wallet.find("@epicbox") != std::string::npos)
+    return wallet.find('+') != std::string::npos ? wallet : wallet + "+" + worker;
+  if (wallet.find('.') != std::string::npos) return wallet;
   return wallet + "." + worker;
 }
+
+std::string Config::login() const { return join_login(wallet, worker); }
 
 std::optional<std::string> parse_pool_list(const std::string& text, std::vector<PoolEndpoint>& out) {
   for (const auto& item : split(text, "!,")) {

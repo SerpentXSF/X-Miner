@@ -207,6 +207,24 @@ Design: the program of each 3-block period is generated as CUDA / HIP source wit
 fixed, compiled at run time (NVRTC / hipRTC; the next period compiles in the background), one hash per 16 lanes with
 the 16 KB cache in shared memory, and the DAG generated on the GPU from the light cache (512 parents per item).
 
+## FiroPow, ProgPoW 0.9.2 (Epic Cash) and ProgPowZ (Zano)
+
+| Card | FiroPow (epoch 650, 6.7 GB) | Epic Cash (epoch 125, 2 GB) | Zano (epoch 129, 2 GB) |
+|---|---|---|---|
+| RX 9070 XT (-30% power) | 33.1 MH/s | 39.9 MH/s | 40.0 MH/s |
+| RTX 3060 (170 W) | 20.5 MH/s | 20.6 MH/s | 20.6 MH/s |
+
+The same engine as KawPow. 0.9.2 / ProgPowZ have 50-block periods, 12 cache reads and 20 math operations per round
+and a 256-parent DAG, so the smaller DAG fits the 9070 XT's caches better than KawPow's 6.2 GB. Published: WildRig
+41.1 MH/s for Zano on a 9070 XT at 314 W; SRBMiner / WildRig 23.3 MH/s on an RTX 3060 at 132 W with a +2000 memory
+offset. 180 s benchmarks found 106 and 97 shares where 107 were expected (all CPU-verified, none rejected).
+
+Epic Cash on epic.pool-pay.com: the node's share difficulty is 200,000 (one share per 200,000 hashes, ~150 per second
+on the 9070 XT) and each share is credited at that difficulty, but the pool answers about 60 per second per
+connection and drops the rest (measured through a logging proxy: 10,944 replies to 25,970 submits in 3 minutes, up
+to 9 s late). X-Miner sends at most 50 per second for the current height and re-checks only that many on the CPU, so
+the pool credits ~9-10 MH/s per connection (live: 9,790 accepted / 161 rejected in 4 minutes).
+
 ## Etchash (Ethereum Classic)
 
 | Card | X-Miner |

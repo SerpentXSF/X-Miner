@@ -1,12 +1,12 @@
 @echo off
-REM X-Miner - Karlsen (KLS, KarlsenHashV2) on a Karlsen stratum pool (your KLS address; Kryptex has no KLS pool)
+REM X-Miner - Karlsen (KLS, KarlsenHashV2) on WoolyPooly (your karlsen:... address)
 REM Edit WALLET and WORKER below, then double-click this file.
-REM Pools: YOUR_POOL_HOST:PORT
+REM Pools: pool.woolypooly.com:3132
 cd /d "%~dp0"
 
 set WALLET=YOUR_KLS_ADDRESS
 set WORKER=%COMPUTERNAME%
-set POOL=YOUR_POOL_HOST:PORT
+set POOL=pool.woolypooly.com:3132
 
 REM Optional GPU tuning, one value per GPU or a comma list (see README, "GPU tuning"). Examples:
 REM   RX 9070 XT: set TUNING=--gpu-plimit 70%%

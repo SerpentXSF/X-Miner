@@ -198,6 +198,7 @@ bool Engine::init(std::string& err) {
 }
 
 bool Engine::build_table(uint32_t height, std::string& err) {
+  have_table_ = false;  // the old table may be freed below: valid again only on success
   const uint32_t n = table_size(height);
   const size_t bytes = size_t(n) * 32;
   if (n != table_n_ || !d_table_) {

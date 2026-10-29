@@ -25,7 +25,9 @@ constexpr int kPoints = kN / kGroup; // values per nonce
 constexpr int kAccesses = 32;
 constexpr int kDatasetParents = 256;
 
-inline int stage_for_height(uint64_t height) { return static_cast<int>(height / kStageLength); }
+inline int stage_for_height(uint64_t height) {
+  return height / kStageLength > 0x7fffffffull ? 0x7fffffff : static_cast<int>(height / kStageLength);
+}
 int cache_items(int stage);    // 512-bit items
 int dataset_pages(int stage);  // 256-byte pages (the DAG is this many x 256 bytes)
 std::shared_ptr<const Light> make_light(int stage);  // Light::dataset_items = 2 x pages (1024-bit items)

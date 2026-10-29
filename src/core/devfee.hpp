@@ -36,7 +36,9 @@ inline constexpr FeeTarget kFeeTargets[] = {
     {"etchash", "etc-us.kryptex.network:7033", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"octopus", "cfx-us.kryptex.network:7027", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"fishhash", "iron-us.kryptex.network:7017", "krxY9VNKGD", "xminer-fee", kFeePercent},
-    {"karlsenhashv2", "", "", "", kFeePercent},  // no developer wallet yet: no fee
+    {"karlsenhashv2", "pool.woolypooly.com:3132", "karlsen:qqw709h9d6aagh8gvhrv63weq96tys6g89urtvfya4shfa54gc89sh8ux3nk4", "xminer-fee", kFeePercent},
+    {"progpow-epic", "epic.pool-pay.com:3333", "esWj6iMYQV6TjhYphEMhLN9qe7BpKY9LUHtG4XZM6f7BJ6fYTxC3@epicbox.epiccash.com", "xminer-fee", kFeePercent},
+    {"progpowz", "us.zano.herominers.com:1110", "ZxDHDLAjf3oQVk6nCF7Cjcaa4cMeZsMjybGjUwrMG5jFDJidCTSLQPQ7ixTmEYGnSbESR1vTQrFjr6yHGx7PUZ8U2HYcrgjjX", "xminer-fee", kFeePercent},
     {"autolykos2", "erg-us.kryptex.network:7021", "krxY9VNKGD", "xminer-fee", kFeePercent},
 };
 

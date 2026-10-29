@@ -155,7 +155,13 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
         }
         if (last_progress[i] == 0) last_progress[i] = steady_s();
         if (ver != have) {
-          if (!eng->set_job(job, err)) {
+          bool ok = false;
+          try {
+            ok = eng->set_job(job, err);
+          } catch (const std::exception& e) {  // e.g. an implausible height asking for a huge cache
+            err = std::string("job setup failed: ") + e.what();
+          }
+          if (!ok) {
             gpu_error(err);
             continue;
           }

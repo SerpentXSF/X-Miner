@@ -70,7 +70,7 @@ inline FeePlan fee_plan(const std::string& algorithm) {
     }
   }
   if (parse_pool_list(t->pool, p.pools) || p.pools.empty()) return p;
-  p.login = wallet + "." + t->worker;
+  p.login = join_login(wallet, t->worker);
   p.enabled = true;
   return p;
 }

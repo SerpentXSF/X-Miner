@@ -1,12 +1,12 @@
 #!/bin/sh
-# X-Miner - Karlsen (KLS, KarlsenHashV2) on a Karlsen stratum pool (your KLS address; Kryptex has no KLS pool)
-# Edit WALLET and WORKER below, then run: ./start-karlsen.sh
-# Pools: YOUR_POOL_HOST:PORT
+# X-Miner - Karlsen (KLS, KarlsenHashV2) on WoolyPooly (your karlsen:... address)
+# Edit WALLET and WORKER below, then run: ./start-karlsen-woolypooly.sh
+# Pools: pool.woolypooly.com:3132
 cd "$(dirname "$0")"
 
 WALLET="YOUR_KLS_ADDRESS"
 WORKER="$(hostname)"
-POOL="YOUR_POOL_HOST:PORT"
+POOL="pool.woolypooly.com:3132"
 
 # Optional GPU tuning, one value per GPU or a comma list (see README, "GPU tuning"; needs root). Examples:
 #   RX 9070 XT: TUNING="--gpu-plimit 70%"

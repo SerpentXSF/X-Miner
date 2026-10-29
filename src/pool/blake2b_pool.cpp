@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <cstdio>
 
 #include "core/console.hpp"
@@ -266,7 +267,11 @@ bool Blake2bPool::session(const PoolEndpoint& ep) {
     }
     if (r > 0) {
       last_rx = std::chrono::steady_clock::now();
-      handle(line);
+      try {
+        handle(line);
+      } catch (const std::exception& e) {  // malformed pool data (types, numbers): drop the message
+        warn("POOL", std::string("ignored a malformed message from the pool (") + e.what() + ")");
+      }
     } else if (std::chrono::steady_clock::now() - last_rx > std::chrono::minutes(3)) {
       warn("POOL", "no data from the pool for 3 minutes; reconnecting");
       break;

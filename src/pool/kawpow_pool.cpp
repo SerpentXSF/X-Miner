@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <exception>
 #include <cmath>
 #include <cstdio>
 
@@ -141,8 +142,8 @@ void KawpowPool::handle(const std::string& line) {
   if (method == "mining.set_extranonce" && p.is_array() && !p.empty() && p[0].is_string()) {
     std::lock_guard<std::mutex> lk(mu_);
     const std::string en = p[0].get<std::string>();
-    prefix_bits_ = int(en.size()) * 4;
-    prefix_ = en.empty() || en.size() > 16 ? 0 : std::stoull(en, nullptr, 16) << (64 - prefix_bits_);
+    prefix_bits_ = en.size() <= 16 ? int(en.size()) * 4 : 0;  // longer: unusable, ignored
+    prefix_ = prefix_bits_ ? std::stoull(en, nullptr, 16) << (64 - prefix_bits_) : 0;
     return;
   }
   if (!m.contains("id") || !m["id"].is_number_integer()) return;
@@ -219,7 +220,11 @@ bool KawpowPool::session(const PoolEndpoint& ep) {
     }
     if (r > 0) {
       last_rx = std::chrono::steady_clock::now();
-      handle(line);
+      try {
+        handle(line);
+      } catch (const std::exception& e) {  // malformed pool data (types, numbers): drop the message
+        warn("POOL", std::string("ignored a malformed message from the pool (") + e.what() + ")");
+      }
     } else if (std::chrono::steady_clock::now() - last_rx > std::chrono::minutes(5)) {
       warn("POOL", "no data from the pool for 5 minutes; reconnecting");
       break;

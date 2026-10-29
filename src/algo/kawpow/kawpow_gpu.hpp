@@ -2,6 +2,7 @@
 // program compiled at run time (NVRTC / hipRTC), nonce search on the GPU, every candidate re-checked on the CPU.
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <future>
 #include <memory>
@@ -59,6 +60,9 @@ class Engine {
   // Tests `batch` nonces (multiple of the block size). Appends verified shares; returns nonces tested (0 = error).
   double iterate(uint32_t batch, std::vector<Share>& shares, std::string& err);
   uint64_t cpu_rejects() const { return cpu_rejects_; }
+  // At most this many candidates per second are re-checked on the CPU and returned (0 = all). For pools that cannot
+  // take more (Epic Cash's tiny share difficulty), so the CPU re-check does not hold the GPU back.
+  void set_share_rate_limit(double per_second) { share_rate_ = per_second; }
 
  private:
   bool build_dag(int epoch, std::string& err);
@@ -78,6 +82,8 @@ class Engine {
   uint64_t counter_ = 0;
   bool have_job_ = false;
   uint64_t cpu_rejects_ = 0;
+  double share_rate_ = 0, share_tokens_ = 0;
+  std::chrono::steady_clock::time_point share_refill_ = std::chrono::steady_clock::now();
   uint32_t tpb_ = 256;
   static constexpr uint32_t kMaxFound = 256;
 };

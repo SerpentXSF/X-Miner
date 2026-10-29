@@ -172,6 +172,11 @@ bool Engine::init(std::string& err) {
 bool Engine::set_job(const Job& job, std::string& err) {
   const int epoch = epoch_for_height(job.height);
   if (epoch != dag_epoch_) {
+    dag_epoch_ = -1;  // generate_dag frees the old DAG first: set again only on success
+    if (epoch < 0 || epoch > 4096) {
+      err = "implausible block height " + std::to_string(job.height);
+      return false;
+    }
     light_ = shared_light(job.height);
     if (!kawpow::generate_dag(dev_, *light_, d_dag_, err)) return false;
     dag_epoch_ = epoch;

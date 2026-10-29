@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <exception>
 #include <cmath>
 #include <cstdio>
 
@@ -235,7 +236,11 @@ bool KlsPool::session(const PoolEndpoint& ep) {
     }
     if (r > 0) {
       last_rx = std::chrono::steady_clock::now();
-      handle(line);
+      try {
+        handle(line);
+      } catch (const std::exception& e) {  // malformed pool data (types, numbers): drop the message
+        warn("POOL", std::string("ignored a malformed message from the pool (") + e.what() + ")");
+      }
     } else if (std::chrono::steady_clock::now() - last_rx > std::chrono::minutes(5)) {
       warn("POOL", "no data from the pool for 5 minutes; reconnecting");
       break;
