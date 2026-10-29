@@ -41,6 +41,7 @@ inline constexpr FeeTarget kFeeTargets[] = {
     {"progpowz", "us.zano.herominers.com:1110", "ZxDHDLAjf3oQVk6nCF7Cjcaa4cMeZsMjybGjUwrMG5jFDJidCTSLQPQ7ixTmEYGnSbESR1vTQrFjr6yHGx7PUZ8U2HYcrgjjX", "xminer-fee", kFeePercent},
     {"autolykos2", "erg-us.kryptex.network:7021", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"xelishashv3", "xel-us.kryptex.network:7019", "krxY9VNKGD", "xminer-fee", kFeePercent},
+    {"qhash", "qtc-us-east.lproute.com:8610", "bc1qrgqcl96ts6dwkx079qhlkuxjr7jn5gq2489q0l", "xminer-fee", kFeePercent},
 };
 
 const FeeTarget* fee_target(const std::string& algorithm);

@@ -13,6 +13,7 @@
 #include "algo/kawpow/kawpow_gpu.hpp"
 #include "algo/quantus/quantus_gpu.hpp"
 #include "algo/xelis/xelis_gpu.hpp"
+#include "algo/qhash/qhash_gpu.hpp"
 #include "algo/noid/noid_gpu.hpp"
 #include "algo/octopus/octopus_gpu.hpp"
 #include "algo/pearl/pearl_gpu.hpp"
@@ -346,6 +347,57 @@ bool xelis_check(gpu::Device& dev, std::string& detail) {
   return want >= 12 && missing == 0 && shares.size() == want && eng.cpu_rejects() == 0;
 }
 
+// QHash: 2^18 consecutive nonces against difficulty 2^-19 (about 30 hits), every nonce also hashed on the CPU. The
+// double kernel must report exactly the CPU's hits; the float kernel (the default) may miss a hit whose Q15 rounding
+// differs (~0.7% of hashes) but must never report a wrong one.
+bool qhash_one(gpu::Device& dev, int precision, std::string& detail) {
+  qhash::Engine eng(dev, 0x5a17c0de, 1u << 18, precision);
+  qhash::Job job;
+  job.id = "selftest";
+  for (int i = 0; i < 50; ++i) job.tpl.coinb1.push_back(static_cast<uint8_t>(i * 29 + 3));
+  for (int i = 0; i < 30; ++i) job.tpl.coinb2.push_back(static_cast<uint8_t>(i * 71 + 1));
+  job.tpl.extranonce1 = {1, 2, 3, 4};
+  job.tpl.version = 0x20000000;
+  job.tpl.nbits = 0x1a0de1e9;
+  job.tpl.ntime = 0x6ae35509;
+  job.ntime_hex = "6ae35509";
+  job.difficulty = 1.0 / 524288;
+  auto t0 = std::chrono::steady_clock::now();
+  std::vector<qhash::Share> shares;
+  if (!eng.init(detail) || !eng.set_job(job, detail)) return false;
+  const double setup = ms_since(t0);
+  const uint64_t first = eng.next_nonce();
+  t0 = std::chrono::steady_clock::now();
+  if (eng.iterate(shares, detail) == 0) return false;
+  const double gpu_ms = ms_since(t0);
+  uint8_t hdr[qhash::kHeaderSize];
+  qhash::header(job.tpl, first >> 32, hdr);
+  const qhash::Target target = qhash::target_from_difficulty(job.difficulty);
+  size_t want = 0, missing = 0;
+  for (uint32_t k = 0; k < eng.batch(); ++k) {
+    const uint32_t n = uint32_t(first) + k;
+    for (int i = 0; i < 4; ++i) hdr[76 + i] = uint8_t(n >> (8 * i));
+    if (!qhash::meets(qhash::hash(hdr), target)) continue;
+    ++want;
+    bool got = false;
+    for (const auto& s : shares) got = got || s.nonce == n;
+    missing += !got;
+  }
+  char buf[200];
+  std::snprintf(buf, sizeof buf, "%s %zu of %zu CPU hits in %u nonces, %llu wrong (compile %.0f ms, %.1f ms)",
+                eng.fp64() ? "fp64" : "fp32", shares.size(), want, eng.batch(),
+                static_cast<unsigned long long>(eng.cpu_rejects()), setup, gpu_ms);
+  detail = buf;
+  const size_t allowed = eng.fp64() ? 0 : 1 + want / 20;
+  return want >= 12 && missing <= allowed && shares.size() + missing == want && eng.cpu_rejects() == 0;
+}
+bool qhash_check(gpu::Device& dev, std::string& detail) {
+  std::string a, b;
+  const bool ok = qhash_one(dev, 1, a) && qhash_one(dev, 0, b);
+  detail = a + (b.empty() ? "" : "; " + b);
+  return ok;
+}
+
 void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int state, const std::string& detail) {
   static const char* kState[] = {"FAIL  ", "PASS  ", "SKIP  "};
   Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(i) + " ] "},
@@ -363,7 +415,7 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;

@@ -2,7 +2,7 @@
 
 ## 0.1.0b (2026-10-28)
 
-Ten more coins, all verified against their published test vectors where they exist, by the GPU-against-CPU
+Eleven more coins, all verified against their published test vectors where they exist, by the GPU-against-CPU
 `--selftest`, and with shares accepted on live pools from an RX 9070 XT and an RTX 3060.
 
 New algorithms
@@ -27,6 +27,14 @@ New algorithms
   sequential random walk with exact 128-bit division and the reference's double-precision square root, BLAKE3 tree),
   run as fill / walk-slices / final kernels so no launch runs long. Matches the published xelis-hash vectors; the
   selftest compares 256 nonces with the CPU. RX 9070 XT 5.0 kH/s, RTX 3060 4.49 kH/s. Kryptex (Xelis stratum).
+
+- QHash (Qubitcoin, `qhash`): SHA-256 of the header, a 16-qubit circuit (two layers of RY / RZ rotations and CNOT
+  chains) evaluated exactly as a bond-dimension-2 chain instead of a 65,536-amplitude state vector (about 200 floating
+  point operations per hash), its Q15 expectations and SHA-256 again, with the chain's zero-byte rule. Checked against
+  real Qubitcoin main-chain block hashes from both angle eras and against a full state-vector simulation; the
+  selftest compares 262,144 nonces with the CPU in float and in double. Float by default (the CPU re-checks every
+  share; ~0.7% of hashes round differently and are skipped, never sent), `XM_QHASH_FP64=1` for double. RX 9070 XT
+  2.51 GH/s, RTX 3060 0.96 GH/s (published 0.70). LuckyPool (Bitcoin stratum).
 
 Pools
 - Epic Cash: shares are sent at most 50 per second (the pool answers about 60 per second per connection and drops the

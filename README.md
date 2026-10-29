@@ -12,6 +12,7 @@ per 100 minutes of mining, shown in the console and API); none on BLAKE2b.
 | Ethereum Classic (ETC) | `etchash` | Epic Cash (EPIC) | `progpow-epic` |
 | Ergo (ERG) | `autolykos2` | Zano (ZANO) | `progpowz` |
 | Bitcoin Knots RDTS | `blake2b` | Xelis (XEL) | `xelishashv3` |
+| Qubitcoin (QTC) | `qhash` | | |
 
 Every algorithm is checked against its coin's published test vectors where they exist (ProgPowZ and Octopus have
 none: GPU against the CPU reference), by a GPU-against-CPU `--selftest`, and with shares accepted on a live pool from
@@ -35,6 +36,7 @@ both an RX 9070 XT and an RTX 3060.
    - `start-epic-poolpay.bat` / `.sh`: Epic Cash on epic.pool-pay.com (your epicbox address)
    - `start-zano-herominers.bat` / `.sh`: Zano on HeroMiners (your Zano address)
    - `start-xelis-kryptex.bat` / `.sh`: Xelis on Kryptex (your Kryptex `krx...` username)
+   - `start-qubitcoin-luckypool.bat` / `.sh`: Qubitcoin on LuckyPool (your Qubitcoin address)
    - `start-blake2b-alphapool.bat` / `.sh`: Bitcoin Knots BLAKE2b (RDTS) on AlphaPool (your RDTS address)
 3. Run it. The launcher restarts the miner if it ever exits.
 
@@ -60,11 +62,12 @@ x-miner --algorithm firopow --pool pool.woolypooly.com:3104 --wallet FIRO_ADDRES
 x-miner --algorithm progpow-epic --pool epic.pool-pay.com:3333 --wallet ADDRESS@epicbox.epiccash.com --worker rig1
 x-miner --algorithm progpowz --pool us.zano.herominers.com:1110 --wallet ZANO_ADDRESS --worker rig1
 x-miner --algorithm xelishashv3 --pool xel-us.kryptex.network:7019 --wallet krxXXXXXXX --worker rig1
+x-miner --algorithm qhash --pool qtc-us-east.lproute.com:8610 --wallet QTC_ADDRESS --worker rig1
 x-miner --algorithm blake2b --pool us1.alphapool.tech:5555 --wallet ADDRESS --worker rig1
 ```
 
 The ProgPoW coins (Ravencoin, Firo, Epic Cash, Zano) compile each new random program on the GPU's own compiler at run
-time, and Etchash, Autolykos2, Octopus, FishHash and XelisHashV3 compile their kernels the same way once per start: the packages ship
+time, and Etchash, Autolykos2, Octopus, FishHash, XelisHashV3 and QHash compile their kernels the same way once per start: the packages ship
 NVIDIA's NVRTC (and, on Windows, AMD's hipRTC) next to `x-miner`; on Linux, AMD GPUs use the hipRTC that ROCm installs.
 The first job of an epoch builds its light cache on the CPU and the DAG on the GPU, which takes 5-40 s. GPU memory
 needed (late 2026): Conflux about 10 GB (8.8 GB DAG), Ergo about 8 GB (a 7.6 GB table, rebuilt at every block in 5-9
@@ -151,6 +154,7 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 | Octopus (Conflux) | 42.7 MH/s | 24.2 MH/s | other miners: ~79 / ~42 (tensor-core method, not yet in X-Miner) |
 | FishHash (Iron Fish) / KarlsenHashV2 | 23.5 MH/s (25.2 with `--gpu-mclock 2700`) | 27.5 MH/s @ 140 W | |
 | XelisHashV3 (Xelis) | 5.0 kH/s @ ~170 W | 4.49 kH/s @ 112 W | published: RTX 3060 5.5 kH/s, RTX 4090 15 kH/s |
+| QHash (Qubitcoin) | 2.51 GH/s | 0.96 GH/s @ 147 W | published: RTX 3060 0.70 GH/s, RTX 3070 1.14 GH/s |
 | BLAKE2b | 4.63 GH/s | 1.97 GH/s | |
 
 The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share
@@ -189,6 +193,9 @@ Pool certificates are not verified, as with other miners (pools use self-signed 
   payment id).
 - XelisHashV3 (Xelis): the Xelis stratum (xel/v3), e.g. Kryptex (`xel-us.kryptex.network:7019`, share difficulty
   fixed at 1,048,576).
+- QHash (Qubitcoin): Bitcoin stratum (coinbase + merkle branches), e.g. LuckyPool (`qtc-us-east.lproute.com:8610`,
+  `qtc-eu.`, `qtc-hk.`, ...; starting difficulty 48 = 206 G hashes per share). Any Qubitcoin address type works;
+  a native SegWit `bc1q...` address is the cheapest to spend from later.
 - BLAKE2b (Bitcoin Knots RDTS chain): the DATUM gateway's Sia-style stratum, solo through your own DATUM gateway
   or on AlphaPool (`us1.alphapool.tech:5555`). Pool difficulties are sized for Sia-class ASICs, so GPU mining here
   is a lottery.

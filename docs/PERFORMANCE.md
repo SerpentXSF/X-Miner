@@ -278,6 +278,24 @@ A hash is 32 rounds of three random 128-byte reads from the 4.5 GB dataset (96 r
 23.53 MH/s for 4 or 8 lanes per hash and blocks of 64-256 threads: 2.26 G random reads per second, the same ceiling as
 KawPow and Etchash on this card, raised only by the memory clock. Karlsen runs at the same rate.
 
+## QHash (Qubitcoin)
+
+| Card | X-Miner (float) | X-Miner (double, exact) | Published |
+|---|---|---|---|
+| RX 9070 XT (-30% power) | 2.51 GH/s @ 237 W | 1.11 GH/s | - |
+| RTX 3060 (170 W cap) | 0.96 GH/s @ 147 W | 0.46 GH/s | 0.70 GH/s @ 60 W |
+
+QHash is SHA-256(header) -> 16-qubit circuit -> SHA-256. The reference simulates the circuit on a 2^16-amplitude
+state vector (cuStateVec); X-Miner evaluates it exactly in ~200 floating-point operations: after the first rotation
+layer and CNOT chain the state is a chain with a 2-dimensional bond, the second layer's RZ drops out of Z measurements,
+and the second CNOT chain turns each <Z_j> into a parity of the first j + 1 qubits, so every expectation is a
+contraction of 4-component transfer steps (bond density in the Pauli basis). Per hash the GPU does three SHA-256
+compressions (the header's second block from a host midstate with its first three rounds precomputed, the result
+block, and the constant padding block with a precomputed schedule) plus the contraction, so it is integer (SHA) bound.
+Float rounds the Q15 value differently from the double reference on ~0.7% of hashes (cancellation in the last steps);
+those can only be missed shares, since the CPU re-checks every candidate. Double runs at 1/16 - 1/64 rate on these
+cards, which costs more than it saves.
+
 ## XelisHashV3 (Xelis)
 
 | Card | X-Miner | Published |

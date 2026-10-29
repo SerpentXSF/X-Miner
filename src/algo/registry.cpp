@@ -33,6 +33,7 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"fishhash", "iron,ironfish", "Iron Fish (IRON)", "@rtc", true},
       {"karlsenhashv2", "kls,karlsen,karlsenhash", "Karlsen (KLS)", "@rtc", true},
       {"xelishashv3", "xel,xelis,xelishash", "Xelis (XEL)", "@rtc", true},
+      {"qhash", "qubitcoin", "Qubitcoin (QTC)", "@rtc", true},
       {"autolykos2", "ergo,erg,autolykos", "Ergo (ERG)", "@rtc", true},
   };
   return list;

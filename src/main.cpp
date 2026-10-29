@@ -47,6 +47,7 @@ int run_octopus(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_fishhash(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_karlsen(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_xelis(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_qhash(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::autolykos {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
@@ -54,6 +55,9 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 #include "algo/fishhash/fishhash.hpp"
 namespace xm::fishhash {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs, Variant v);
+}
+namespace xm::qhash {
+int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::xelis {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
@@ -370,6 +374,14 @@ int main(int argc, char** argv) {
     }
     print_section("MISSION START");
     return iron ? run_fishhash(cfg, devs) : run_karlsen(cfg, devs);
+  }
+  if (std::string(algo->name) == "qhash") {
+    if (cfg.benchmark) {
+      print_section("BENCHMARK");
+      return qhash::benchmark(cfg, devs);
+    }
+    print_section("MISSION START");
+    return run_qhash(cfg, devs);
   }
   if (std::string(algo->name) == "xelishashv3") {
     if (cfg.benchmark) {

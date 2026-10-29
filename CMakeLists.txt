@@ -43,6 +43,7 @@ add_library(xm_core STATIC
   src/net/tls.cpp
   src/core/gzip.cpp
   src/crypto/blake3.cpp
+  src/crypto/sha256.cpp
   src/algo/pearl/pearl.cpp
   src/algo/noid/noid.cpp
   src/algo/noid/noid_gpu.cpp
@@ -74,6 +75,9 @@ add_library(xm_core STATIC
   src/algo/xelis/xelis.cpp
   src/algo/xelis/xelis_gpu.cpp
   src/algo/xelis/bench.cpp
+  src/algo/qhash/qhash.cpp
+  src/algo/qhash/qhash_gpu.cpp
+  src/algo/qhash/bench.cpp
   src/algo/fishhash/fishhash.cpp
   src/algo/fishhash/fishhash_gpu.cpp
   src/algo/fishhash/bench.cpp
@@ -90,6 +94,8 @@ add_library(xm_core STATIC
   src/pool/zano_pool.cpp
   src/pool/xelis_pool.cpp
   src/mining/xelis_run.cpp
+  src/pool/qhash_pool.cpp
+  src/mining/qhash_run.cpp
   src/mining/fishhash_run.cpp
   src/algo/kawpow/kawpow_gpu.cpp
   src/algo/kawpow/bench.cpp
@@ -123,7 +129,7 @@ add_executable(x-miner src/main.cpp)
 target_link_libraries(x-miner PRIVATE xm_core)
 
 enable_testing()
-add_executable(xm_tests tests/test_main.cpp tests/test_core.cpp tests/test_blake3.cpp tests/test_pearl.cpp tests/test_noid.cpp tests/test_blake2b.cpp tests/test_quantus.cpp tests/test_kawpow.cpp tests/test_etchash.cpp tests/test_autolykos.cpp tests/test_octopus.cpp tests/test_fishhash.cpp tests/test_pools.cpp tests/test_xelis.cpp)
+add_executable(xm_tests tests/test_main.cpp tests/test_core.cpp tests/test_blake3.cpp tests/test_pearl.cpp tests/test_noid.cpp tests/test_blake2b.cpp tests/test_quantus.cpp tests/test_kawpow.cpp tests/test_etchash.cpp tests/test_autolykos.cpp tests/test_octopus.cpp tests/test_fishhash.cpp tests/test_pools.cpp tests/test_xelis.cpp tests/test_qhash.cpp)
 target_compile_definitions(xm_tests PRIVATE XM_TEST_VECTORS="${CMAKE_SOURCE_DIR}/tests/vectors")
 target_link_libraries(xm_tests PRIVATE xm_core)
 add_test(NAME unit COMMAND xm_tests)

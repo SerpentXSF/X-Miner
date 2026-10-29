@@ -15,6 +15,14 @@
 | Quantus prestate split and multiply-pipe reduction | src/algo/quantus/quantus.cpp, kernels/quantus/quantus.cu | Apache-2.0 (Quantus Network) | https://github.com/Quantus-Network/quantus-miner @8e2d27219c crates/pow-core, crates/engine-cuda reduce128 |
 | KawPow / Ethash CPU reference (Keccak, light cache, dataset items, ProgPoW program and hash; ported) | src/algo/kawpow/kawpow.cpp | Apache-2.0 (Pawel Bylica, Ravencoin developers) | https://github.com/RavenCommunity/cpp-kawpow @061d341 lib/ethash, lib/keccak; see NOTICE |
 | KawPow test vectors | tests/test_kawpow.cpp | Apache-2.0 | cpp-kawpow test/unittests/progpow_test_vectors.hpp @061d341 |
+| Etchash algorithm (ECIP-1099 epochs; re-implemented on the KawPow / Ethash code above) | src/algo/etchash/ | LGPL-3.0 reference, no code copied | https://github.com/etclabscore/core-geth consensus/ethash |
+| Autolykos v2 algorithm (re-implemented) | src/algo/autolykos/ | CC0 (Ergo) | https://github.com/ergoplatform/ergo @c1a69f6 AutolykosPowScheme.scala |
+| Octopus algorithm (re-implemented from the algorithm) | src/algo/octopus/ | GPL-3.0 reference, no code copied | https://github.com/Conflux-Chain/conflux-rust crates/cfxcore/pow |
+| FishHash algorithm and fixed dataset seed (re-implemented) | src/algo/fishhash/ | MPL-2.0 reference | https://github.com/iron-fish/fish-hash rust/src/lib.rs |
+| KarlsenHashV2 algorithm (re-implemented) | src/algo/fishhash/ | ISC (Karlsen) | https://github.com/karlsen-network/rusty-karlsen crypto/hashes, consensus/pow |
+| XelisHash v3 algorithm and test vectors (re-implemented) | src/algo/xelis/, tests/test_xelis.cpp | MIT (Xelis) | https://github.com/xelis-project/xelis-hash src/v3.rs |
+| QHash algorithm and consensus switch times (re-implemented; the circuit is evaluated by a different method) | src/algo/qhash/ | MIT (Qubitcoin) | https://github.com/super-quantum/qubitcoin src/crypto/qhash.cpp |
+| Qubitcoin main-chain block headers (test vectors) | tests/test_qhash.cpp | public chain data | https://explorer.superquantum.io |
 | NVRTC runtime compiler (nvrtc64_*.dll, libnvrtc.so.*; shipped unmodified in release packages) | release packages only | NVIDIA CUDA Toolkit EULA, Attachment A (redistributable) | CUDA Toolkit 12.5 |
 | hipRTC and AMD code-object manager (hiprtc*.dll, amd_comgr*.dll; shipped unmodified in Windows packages) | release packages only | MIT (hipRTC), Apache-2.0 with LLVM exception (comgr) | AMD HIP SDK 7.2 for Windows |
 | ADL structure layouts and IDs (AdapterInfo, PMLog, Overdrive8) | src/gpu/sensors.cpp, src/gpu/tuning.cpp | MIT (Copyright (c) Advanced Micro Devices, Inc.) | https://github.com/GPUOpen-LibrariesAndSDKs/display-library include/adl_defines.h, adl_structures.h |
