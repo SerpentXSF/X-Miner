@@ -13,7 +13,14 @@
   multiplies on AMD) plus the 256-byte-page DAG mix, Conflux stratum. RX 9070 XT 42.7 MH/s @ 237 W, RTX 3060 24.2 MH/s
   @ 169 W; the selftest matches the CPU on 1024 consecutive nonces; live accepted on both (Kryptex). Other miners do about 79 / 42
   MH/s on these cards with tensor-core / matrix evaluation of the polynomial, not done here yet.
-- FiroPow (Firo, `--algorithm firopow`) on the ProgPoW engine, checked against Firo's vectors; kawpowminer stratum.
+- FishHash (Iron Fish, `--algorithm fishhash`) and KarlsenHashV2 (Karlsen, `--algorithm karlsenhashv2`): one fixed
+  4.5 GB dataset built on the GPU, BLAKE3 + 32 rounds of three 128-byte reads, 8 lanes per hash; CPU reference matches
+  the published Iron Fish and rusty-karlsen vectors, selftest matches the CPU nonce for nonce. Native Iron Fish stratum
+  (live accepted on Kryptex, both cards) and the Kaspa-style Karlsen stratum (not yet live-tested). RX 9070 XT 23.5
+  MH/s (25.2 with `--gpu-mclock 2700`), RTX 3060 27.5 MH/s @ 140 W.
+- Pool clients: recent jobs are kept in arrival order (a sorted set could drop the current job when job ids are random,
+  turning good shares into "job expired" on Iron Fish).
+- FiroPow (Firo, `--algorithm firopow`) on the ProgPoW engine, checked against Firo's vectors; kawpowminer stratum; live accepted on WoolyPooly (RX 9070 XT 33.5 MH/s, 5/0).
 - Epic Cash ProgPoW 0.9.2 (`progpow-epic`) and Zano ProgPowZ (`progpowz`) kernels: selftest and benchmark only,
   pool protocols next. ProgPowZ has no published test vectors; it is checked GPU-against-CPU only.
 - RX 9060 (gfx1200), native RTX 40 (sm_89) and RTX 50 (sm_120, CUDA 12.8) kernel builds (untested on hardware).

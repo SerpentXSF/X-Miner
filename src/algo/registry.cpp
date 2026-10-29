@@ -30,6 +30,8 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"progpowz", "zano,progpow-zano", "Zano (ZANO)", "@rtc", true},
       {"etchash", "etc,ethash-etc", "Ethereum Classic (ETC)", "@rtc", true},
       {"octopus", "cfx,conflux", "Conflux (CFX)", "@rtc", true},
+      {"fishhash", "iron,ironfish", "Iron Fish (IRON)", "@rtc", true},
+      {"karlsenhashv2", "kls,karlsen,karlsenhash", "Karlsen (KLS)", "@rtc", true},
       {"autolykos2", "ergo,erg,autolykos", "Ergo (ERG)", "@rtc", true},
   };
   return list;

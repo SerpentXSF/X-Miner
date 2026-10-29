@@ -94,6 +94,9 @@ std::shared_ptr<const Light> make_light(int epoch, int parents = 512, uint64_t d
 // The same cache with explicit sizes (Octopus: other size formulas, the seed of stage `seed_epoch`).
 std::shared_ptr<const Light> make_light_sized(int epoch, int parents, int cache_items, int dataset_items,
                                               int seed_epoch);
+// ... and from an explicit 32-byte seed (FishHash: one fixed dataset).
+std::shared_ptr<const Light> make_light_seeded(int epoch, int parents, int cache_items, int dataset_items,
+                                               const Hash256& seed);
 int largest_prime(int n);  // the largest prime <= n
 
 // Dataset (DAG) item `index` of 512 bits from the light cache (16 words).

@@ -180,6 +180,11 @@ std::shared_ptr<const Light> make_light(int epoch, int parents, uint64_t dataset
 
 std::shared_ptr<const Light> make_light_sized(int epoch, int parents, int cache_items, int dataset_items,
                                               int seed_epoch) {
+  return make_light_seeded(epoch, parents, cache_items, dataset_items, epoch_seed(seed_epoch));
+}
+
+std::shared_ptr<const Light> make_light_seeded(int epoch, int parents, int cache_items, int dataset_items,
+                                               const Hash256& seed) {
   auto L = std::make_shared<Light>();
   L->epoch = epoch;
   L->parents = parents;
@@ -188,7 +193,6 @@ std::shared_ptr<const Light> make_light_sized(int epoch, int parents, int cache_
   const int n = L->cache_items;
   L->cache.resize(size_t(n) * 16);
   auto item = [&](int i) { return reinterpret_cast<uint8_t*>(&L->cache[size_t(i) * 16]); };
-  const Hash256 seed = epoch_seed(seed_epoch);
   auto h = keccak512(reinterpret_cast<const uint8_t*>(seed.data()), 32);
   std::memcpy(item(0), h.data(), 64);
   for (int i = 1; i < n; ++i) {

@@ -1,5 +1,6 @@
 #include "pool/kawpow_pool.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -64,7 +65,7 @@ bool KawpowPool::job(kawpow::Job& out, uint64_t& version) const {
 
 void KawpowPool::submit(const kawpow::Share& s, int tag) {
   std::lock_guard<std::mutex> lk(mu_);
-  if (!live_jobs_.count(s.job_id) || !authorized_) {
+  if (std::find(live_jobs_.begin(), live_jobs_.end(), s.job_id) == live_jobs_.end() || !authorized_) {
     on_result_(false, "job expired before submit", s.job_id, tag, s.work);
     return;
   }
@@ -123,8 +124,8 @@ void KawpowPool::handle(const std::string& line) {
     j.prefix_bits = prefix_bits_;
     const bool clean = p.size() > 4 && p[4].is_boolean() ? p[4].get<bool>() : true;
     if (clean) live_jobs_.clear();
-    while (live_jobs_.size() >= 16) live_jobs_.erase(live_jobs_.begin());
-    live_jobs_.insert(j.id);
+    if (std::find(live_jobs_.begin(), live_jobs_.end(), j.id) == live_jobs_.end()) live_jobs_.push_back(j.id);
+    while (live_jobs_.size() > 16) live_jobs_.pop_front();
     job_ = j;
     have_job_ = true;
     ++version_;

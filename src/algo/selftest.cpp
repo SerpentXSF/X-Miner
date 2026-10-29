@@ -2,12 +2,14 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
 #include "algo/autolykos/autolykos_gpu.hpp"
 #include "algo/blake2b/blake2b_gpu.hpp"
 #include "algo/etchash/etchash_gpu.hpp"
+#include "algo/fishhash/fishhash_gpu.hpp"
 #include "algo/kawpow/kawpow_gpu.hpp"
 #include "algo/quantus/quantus_gpu.hpp"
 #include "algo/noid/noid_gpu.hpp"
@@ -260,6 +262,55 @@ bool octopus_check(gpu::Device& dev, std::string& detail) {
   return want >= 32 && missing == 0 && shares.size() == want && eng.cpu_rejects() == 0;
 }
 
+// FishHash / KarlsenHashV2: the fixed 4.5 GB dataset and 256 consecutive nonces against a 2^-3 target (about 32
+// hits). Every nonce is also hashed on the CPU: the GPU must report exactly the CPU's hits.
+bool fish_check(gpu::Device& dev, std::string& detail, fishhash::Variant v) {
+  const bool iron = v == fishhash::Variant::Iron;
+  fishhash::Engine eng(dev, 0xf15e1f7, v);
+  fishhash::Job job;
+  job.id = "selftest";
+  for (int i = 0; i < 180; ++i) job.header[i] = static_cast<uint8_t>(i * 29 + 3);
+  for (int i = 0; i < 32; ++i) job.pre_pow[i] = static_cast<uint8_t>(i * 41 + 9);
+  job.timestamp = 5435345234ull;
+  job.target[iron ? 0 : 31] = 0x20;
+  job.nonce_prefix = 0x0766ull << 48;
+  job.prefix_bits = 16;
+  auto t0 = std::chrono::steady_clock::now();
+  std::vector<fishhash::Share> shares;
+  if (!eng.init(detail) || !eng.set_job(job, detail)) return false;
+  const double setup = ms_since(t0);
+  t0 = std::chrono::steady_clock::now();
+  const uint64_t first = eng.next_nonce();
+  if (eng.iterate(256, shares, detail) == 0) return false;
+  const double gpu_ms = ms_since(t0);
+  const auto light = fishhash::make_light();
+  size_t want = 0, missing = 0;
+  for (uint64_t k = 0; k < 256; ++k) {
+    const uint64_t n = first + k;
+    fishhash::Bytes32 h;
+    if (iron) {
+      uint8_t header[180];
+      std::memcpy(header, job.header, 172);
+      for (int b = 0; b < 8; ++b) header[172 + b] = static_cast<uint8_t>(n >> (56 - 8 * b));
+      h = fishhash::iron_hash(*light, header, 180);
+    } else {
+      h = fishhash::karlsen_hash(*light, job.pre_pow, job.timestamp, n);
+    }
+    if (!(iron ? fishhash::be_less_equal(h, job.target) : fishhash::le_less_equal(h, job.target))) continue;
+    ++want;
+    bool got = false;
+    for (const auto& s : shares) got = got || s.nonce == n;
+    missing += !got;
+  }
+  char buf[200];
+  std::snprintf(buf, sizeof buf, "%zu of %zu CPU hits found in 256 nonces, %llu wrong (dataset + compile %.0f ms, %.0f ms)",
+                shares.size(), want, static_cast<unsigned long long>(eng.cpu_rejects()), setup, gpu_ms);
+  detail = buf;
+  return want >= 12 && missing == 0 && shares.size() == want && eng.cpu_rejects() == 0;
+}
+bool fishhash_check(gpu::Device& dev, std::string& d) { return fish_check(dev, d, fishhash::Variant::Iron); }
+bool karlsen_check(gpu::Device& dev, std::string& d) { return fish_check(dev, d, fishhash::Variant::Karlsen); }
+
 void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int state, const std::string& detail) {
   static const char* kState[] = {"FAIL  ", "PASS  ", "SKIP  "};
   Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(i) + " ] "},
@@ -277,7 +328,7 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;

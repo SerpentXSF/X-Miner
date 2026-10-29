@@ -1,5 +1,6 @@
 #include "pool/ergo_pool.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -56,7 +57,7 @@ bool ErgoPool::job(autolykos::Job& out, uint64_t& version) const {
 
 void ErgoPool::submit(const autolykos::Share& s, int tag) {
   std::lock_guard<std::mutex> lk(mu_);
-  if (!live_jobs_.count(s.job_id) || !authorized_) {
+  if (std::find(live_jobs_.begin(), live_jobs_.end(), s.job_id) == live_jobs_.end() || !authorized_) {
     on_result_(false, "job expired before submit", s.job_id, tag, s.work);
     return;
   }
@@ -100,8 +101,8 @@ void ErgoPool::handle(const std::string& line) {
     j.nonce_prefix = j.prefix_bits ? std::stoull(extranonce1_, nullptr, 16) << (64 - j.prefix_bits) : 0;
     const bool clean = p.size() > 8 && p[8].is_boolean() ? p[8].get<bool>() : true;
     if (clean) live_jobs_.clear();
-    while (live_jobs_.size() >= 16) live_jobs_.erase(live_jobs_.begin());
-    live_jobs_.insert(j.id);
+    if (std::find(live_jobs_.begin(), live_jobs_.end(), j.id) == live_jobs_.end()) live_jobs_.push_back(j.id);
+    while (live_jobs_.size() > 16) live_jobs_.pop_front();
     job_ = j;
     have_job_ = true;
     ++version_;

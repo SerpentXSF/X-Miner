@@ -16,7 +16,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
-#include <set>
+#include <deque>
 #include <string>
 #include <thread>
 #include <vector>
@@ -64,7 +64,7 @@ class QuantusPool {
   std::string session_id_;
   bool keepalive_ = false;
   double last_difficulty_ = 0;
-  std::set<std::string> live_jobs_;  // jobs whose shares the pool still takes
+  std::deque<std::string> live_jobs_;  // in arrival order: jobs whose shares the pool still takes
   size_t pool_index_ = 0;
   int next_id_ = 10;
   struct Pending {

@@ -1,12 +1,12 @@
 #!/bin/sh
-# X-Miner - Firo (FIRO, FiroPow) on rplant.xyz (your FIRO address; not yet live-tested by us)
-# Edit WALLET and WORKER below, then run: ./start-firo-rplant.sh
-# Pools: na.rplant.xyz:7045
+# X-Miner - Firo (FIRO, FiroPow) on WoolyPooly (your FIRO address)
+# Edit WALLET and WORKER below, then run: ./start-firo-woolypooly.sh
+# Pools: pool.woolypooly.com:3104
 cd "$(dirname "$0")"
 
 WALLET="YOUR_FIRO_ADDRESS"
 WORKER="$(hostname)"
-POOL="na.rplant.xyz:7045"
+POOL="pool.woolypooly.com:3104"
 
 # Optional GPU tuning, one value per GPU or a comma list (see README, "GPU tuning"; needs root). Examples:
 #   RX 9070 XT: TUNING="--gpu-plimit 70%"

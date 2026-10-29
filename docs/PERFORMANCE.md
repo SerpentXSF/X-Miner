@@ -249,6 +249,17 @@ group's coefficients) that int8 tensor cores / WMMA can do in limbs, which is ho
 the memory limit (8 KB of DAG reads per hash: 3060 ~44 MH/s, 9070 XT ~78 MH/s); a GTX 1080 Ti without tensor
 cores is listed at 13.6 MH/s.
 
+## FishHash (Iron Fish) and KarlsenHashV2 (Karlsen)
+
+| Card | X-Miner | Published (Kryptex) |
+|---|---|---|
+| RX 9070 XT | 23.5 MH/s @ ~190 W; 25.2 with `--gpu-mclock 2700` | 30 MH/s @ 185 W (settings unknown) |
+| RTX 3060 | 27.5 MH/s @ 140 W | 31 MH/s |
+
+A hash is 32 rounds of three random 128-byte reads from the 4.5 GB dataset (96 reads, 12 KB). The RX 9070 XT gives
+23.53 MH/s for 4 or 8 lanes per hash and blocks of 64-256 threads: 2.26 G random reads per second, the same ceiling as
+KawPow and Etchash on this card, raised only by the memory clock. Karlsen runs at the same rate.
+
 ## BLAKE2b (Bitcoin Knots RDTS)
 
 | Card | X-Miner | Reference |

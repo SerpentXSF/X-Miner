@@ -1,5 +1,6 @@
 #include "pool/blake2b_pool.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 
@@ -109,7 +110,7 @@ bool Blake2bPool::job(b2b::Job& out, uint64_t& version) const {
 
 void Blake2bPool::submit(const b2b::Share& s, int tag) {
   std::lock_guard<std::mutex> lk(mu_);
-  if (!live_jobs_.count(s.job_id)) {
+  if (std::find(live_jobs_.begin(), live_jobs_.end(), s.job_id) == live_jobs_.end()) {
     on_result_(false, "job expired before submit", s.job_id, tag, s.work);
     return;
   }
@@ -144,8 +145,8 @@ void Blake2bPool::handle(const std::string& line) {
     j.share_target = b2b::target_for_difficulty(difficulty_);
     j.block_target = b2b::target_from_nbits(nbits);
     if (clean) live_jobs_.clear();
-    while (live_jobs_.size() >= 16) live_jobs_.erase(live_jobs_.begin());
-    live_jobs_.insert(j.id);
+    if (std::find(live_jobs_.begin(), live_jobs_.end(), j.id) == live_jobs_.end()) live_jobs_.push_back(j.id);
+    while (live_jobs_.size() > 16) live_jobs_.pop_front();
     job_ = j;
     have_job_ = true;
     ++version_;

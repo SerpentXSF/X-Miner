@@ -12,7 +12,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
-#include <set>
+#include <deque>
 #include <string>
 #include <thread>
 #include <vector>
@@ -58,7 +58,7 @@ class KawpowPool {
   uint64_t prefix_ = 0;
   int prefix_bits_ = 0;
   double last_difficulty_ = 0;
-  std::set<std::string> live_jobs_;
+  std::deque<std::string> live_jobs_;  // in arrival order
   size_t pool_index_ = 0;
   int next_id_ = 10;
   struct Pending {

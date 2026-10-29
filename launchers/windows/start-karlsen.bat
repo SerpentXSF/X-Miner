@@ -1,20 +1,20 @@
 @echo off
-REM X-Miner - Firo (FIRO, FiroPow) on rplant.xyz (your FIRO address; not yet live-tested by us)
+REM X-Miner - Karlsen (KLS, KarlsenHashV2) on a Karlsen stratum pool (your KLS address; Kryptex has no KLS pool)
 REM Edit WALLET and WORKER below, then double-click this file.
-REM Pools: na.rplant.xyz:7045
+REM Pools: YOUR_POOL_HOST:PORT
 cd /d "%~dp0"
 
-set WALLET=YOUR_FIRO_ADDRESS
+set WALLET=YOUR_KLS_ADDRESS
 set WORKER=%COMPUTERNAME%
-set POOL=na.rplant.xyz:7045
+set POOL=YOUR_POOL_HOST:PORT
 
 REM Optional GPU tuning, one value per GPU or a comma list (see README, "GPU tuning"). Examples:
 REM   RX 9070 XT: set TUNING=--gpu-plimit 70%%
-REM   FiroPow is limited by memory bandwidth: the memory clock / offset raise it, the core clock does not.
+REM   KarlsenHashV2 reads the same 4.5 GB dataset as FishHash: a memory overclock helps.
 set TUNING=
 
 :loop
-x-miner.exe --algorithm firopow --pool %POOL% --wallet %WALLET% --worker %WORKER% %TUNING%
+x-miner.exe --algorithm karlsenhashv2 --pool %POOL% --wallet %WALLET% --worker %WORKER% %TUNING%
 echo X-Miner exited (code %ERRORLEVEL%). Restarting in 10 seconds... (close this window to stop)
 timeout /t 10 >nul
 goto loop

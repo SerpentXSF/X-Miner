@@ -17,7 +17,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
-#include <set>
+#include <deque>
 #include <string>
 #include <thread>
 #include <vector>
@@ -64,7 +64,7 @@ class Blake2bPool {
   std::vector<uint8_t> extranonce1_;
   int extranonce2_size_ = 0;
   double difficulty_ = 1, last_difficulty_ = 0;
-  std::set<std::string> live_jobs_;  // jobs whose shares the pool still takes
+  std::deque<std::string> live_jobs_;  // in arrival order: jobs whose shares the pool still takes
   size_t pool_index_ = 0;
   int next_id_ = 10;
   struct Pending {
