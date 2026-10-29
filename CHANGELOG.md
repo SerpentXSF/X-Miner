@@ -37,6 +37,8 @@ Other
 - A DAG or table that fails to rebuild is no longer taken as current on the next job; implausible block heights are
   rejected instead of building a huge cache.
 - Dev fee (1%) on every new coin; `XM_RTC_DUMP=<dir>` saves the run-time compiled kernels (developers).
+- Linux packages preload the shipped NVRTC builtins library, so the run-time compiled algorithms work on NVIDIA
+  from the package.
 
 ## 0.1.0 (first release)
 
