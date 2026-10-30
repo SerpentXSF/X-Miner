@@ -28,6 +28,12 @@ struct NeuraiTag {  // KawPow unchanged; its own name so the dev fee mines on a 
   using Pool = KawpowPool;
   static constexpr double kShareRateLimit = 0;
 };
+struct QuaiTag {  // KawPow over Ravencoin-format donor headers (go-quai consensus/kawpow); pools send RVN-style jobs
+  static constexpr const char* kName = "quai";
+  static const kawpow::Variant& variant() { return kawpow::kKawpow; }
+  using Pool = KawpowPool;
+  static constexpr double kShareRateLimit = 0;
+};
 struct EpicTag {
   static constexpr const char* kName = "progpow-epic";
   static const kawpow::Variant& variant() { return kawpow::kProgpow092; }
@@ -82,6 +88,10 @@ int run_firopow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
 
 int run_neurai(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   return run_mining<ProgpowTraits<NeuraiTag>>(cfg, devs);
+}
+
+int run_quai(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
+  return run_mining<ProgpowTraits<QuaiTag>>(cfg, devs);
 }
 
 int run_epic(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {

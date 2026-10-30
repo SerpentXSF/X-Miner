@@ -125,21 +125,22 @@ extern "C" __global__ __launch_bounds__(TPB) void xm_etchash_search(const uint4*
 }
 )KRN";
 
-std::shared_ptr<const Light> shared_light(int height) {
+std::shared_ptr<const Light> shared_light(int height, bool ecip1099) {
   static std::mutex mu;
-  static std::map<int, std::shared_ptr<const Light>> cache;  // by epoch
-  const int epoch = epoch_for_height(height);
+  static std::map<int, std::shared_ptr<const Light>> cache;  // by seed epoch (unique for both rules)
+  const int epoch = epoch_for_height(height, ecip1099), seed = seed_epoch_for_height(height, ecip1099);
   std::lock_guard<std::mutex> lk(mu);
-  auto it = cache.find(epoch);
+  auto it = cache.find(seed);
   if (it != cache.end()) return it->second;
-  for (auto i = cache.begin(); i != cache.end();) i = i->first < epoch - 1 ? cache.erase(i) : std::next(i);
-  info("DAG", "building the Etchash epoch " + std::to_string(epoch) + " light cache");
-  return cache[epoch] = make_light(height);
+  for (auto i = cache.begin(); i != cache.end();) i = i->first < seed - 2 ? cache.erase(i) : std::next(i);
+  info("DAG", std::string(ecip1099 ? "building the Etchash epoch " : "building the Ethash epoch ") +
+                  std::to_string(epoch) + " light cache");
+  return cache[seed] = make_light(height, ecip1099);
 }
 
 }  // namespace
 
-Engine::Engine(gpu::Device& dev, uint64_t seed) : dev_(dev), rng_(seed) {}
+Engine::Engine(gpu::Device& dev, uint64_t seed, bool ecip1099) : dev_(dev), rng_(seed), ecip1099_(ecip1099) {}
 
 Engine::~Engine() {
   dev_.free(d_found_);
@@ -170,14 +171,14 @@ bool Engine::init(std::string& err) {
 }
 
 bool Engine::set_job(const Job& job, std::string& err) {
-  const int epoch = epoch_for_height(job.height);
+  const int epoch = epoch_for_height(job.height, ecip1099_);
   if (epoch != dag_epoch_) {
     dag_epoch_ = -1;  // generate_dag frees the old DAG first: set again only on success
     if (epoch < 0 || epoch > 4096) {
       err = "implausible block height " + std::to_string(job.height);
       return false;
     }
-    light_ = shared_light(job.height);
+    light_ = shared_light(job.height, ecip1099_);
     if (!kawpow::generate_dag(dev_, *light_, d_dag_, err)) return false;
     dag_epoch_ = epoch;
   }

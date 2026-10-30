@@ -40,9 +40,11 @@ int run_quantus(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_kawpow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_firopow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_neurai(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_quai(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_epic(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_zano(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_etchash(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_ethash(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_autolykos(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_octopus(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_fishhash(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
@@ -67,7 +69,7 @@ namespace xm::octopus {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::etchash {
-int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs, bool ecip1099);
 }
 namespace xm::kawpow {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs, const Variant& v, int height);
@@ -333,7 +335,7 @@ int main(int argc, char** argv) {
   }
   {
     // ProgPoW family. Benchmark heights: late 2026 chains (Ravencoin epoch 613; Firo past the epoch-650 clamp;
-    // Neurai epoch 246; Epic ~3.77 M; Zano ~3.3 M).
+    // Neurai epoch 246; Quai on Ravencoin donor heights; Epic ~3.77 M; Zano ~3.3 M).
     struct Pp {
       const char* name;
       const kawpow::Variant* v;
@@ -343,6 +345,7 @@ int main(int argc, char** argv) {
     const Pp pp[] = {{"kawpow", &kawpow::kKawpow, 4600000, run_kawpow},
                      {"firopow", &kawpow::kFiropow, 1250000, run_firopow},
                      {"neurai", &kawpow::kKawpow, 1845000, run_neurai},
+                     {"quai", &kawpow::kKawpow, 4600000, run_quai},
                      {"progpow-epic", &kawpow::kProgpow092, 3770000, run_epic},
                      {"progpowz", &kawpow::kProgpowZ, 3300000, run_zano}};
     for (const auto& p : pp) {
@@ -401,13 +404,14 @@ int main(int argc, char** argv) {
     print_section("MISSION START");
     return run_octopus(cfg, devs);
   }
-  if (std::string(algo->name) == "etchash") {
+  if (std::string(algo->name) == "etchash" || std::string(algo->name) == "ethash") {
+    const bool etc = std::string(algo->name) == "etchash";  // ECIP-1099 epochs; ethash = EthereumPoW, 30000 blocks
     if (cfg.benchmark) {
       print_section("BENCHMARK");
-      return etchash::benchmark(cfg, devs);
+      return etchash::benchmark(cfg, devs, etc);
     }
     print_section("MISSION START");
-    return run_etchash(cfg, devs);
+    return etc ? run_etchash(cfg, devs) : run_ethash(cfg, devs);
   }
   if (std::string(algo->name) == "pearlhash") {
     if (cfg.benchmark) {

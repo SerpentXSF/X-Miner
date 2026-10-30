@@ -41,7 +41,7 @@ inline uint32_t batch_nonces(int intensity) {
 
 class Engine {
  public:
-  Engine(gpu::Device& dev, uint64_t seed);
+  Engine(gpu::Device& dev, uint64_t seed, bool ecip1099 = true);  // false: plain Ethash (ETHW)
   ~Engine();
   bool init(std::string& err);
   bool set_job(const Job& job, std::string& err);
@@ -51,6 +51,7 @@ class Engine {
  private:
   gpu::Device& dev_;
   uint64_t rng_;
+  bool ecip1099_;
   gpu::DevPtr d_found_ = 0, d_dag_ = 0;
   int dag_epoch_ = -1;
   gpu::RtcOutput module_;

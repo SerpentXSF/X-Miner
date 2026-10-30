@@ -13,6 +13,7 @@ per 100 minutes of mining, shown in the console and API); none on BLAKE2b.
 | Ergo (ERG) | `autolykos2` | Zano (ZANO) | `progpowz` |
 | Bitcoin Knots RDTS | `blake2b` | Xelis (XEL) | `xelishashv3` |
 | Qubitcoin (QTC) | `qhash` | Neurai (XNA) | `neurai` |
+| EthereumPoW (ETHW) | `ethash` | Quai (QUAI) | `quai` |
 
 Every algorithm is checked against its coin's published test vectors where they exist (ProgPowZ and Octopus have
 none: GPU against the CPU reference), by a GPU-against-CPU `--selftest`, and with shares accepted on a live pool from
@@ -29,6 +30,8 @@ both an RX 9070 XT and an RTX 3060.
    - `start-kawpow-kryptex.bat` / `.sh`: Ravencoin on Kryptex (your Kryptex `krx...` username)
    - `start-neurai-kryptex.bat` / `.sh`: Neurai on Kryptex (your Kryptex `krx...` username)
    - `start-etchash-kryptex.bat` / `.sh`: Ethereum Classic on Kryptex (your Kryptex `krx...` username)
+   - `start-ethw-kryptex.bat` / `.sh`: EthereumPoW on Kryptex (your Kryptex `krx...` username)
+   - `start-quai-kryptex.bat` / `.sh`: Quai on Kryptex (your Quai `0x...` address; Kryptex has no username login for Quai)
    - `start-ergo-kryptex.bat` / `.sh`: Ergo on Kryptex (your Kryptex `krx...` username)
    - `start-octopus-kryptex.bat` / `.sh`: Conflux on Kryptex (your Kryptex `krx...` username)
    - `start-fishhash-kryptex.bat` / `.sh`: Iron Fish on Kryptex (your Kryptex `krx...` username)
@@ -56,6 +59,8 @@ x-miner --algorithm quantus --pool qtc-us.kryptex.network:7049 --wallet krxXXXXX
 x-miner --algorithm kawpow --pool rvn-us.kryptex.network:7031 --wallet krxXXXXXXX --worker rig1
 x-miner --algorithm neurai --pool xna-us.kryptex.network:7024 --wallet krxXXXXXXX --worker rig1
 x-miner --algorithm etchash --pool etc-us.kryptex.network:7033 --wallet krxXXXXXXX --worker rig1
+x-miner --algorithm ethash --pool ethw-us.kryptex.network:7034 --wallet krxXXXXXXX --worker rig1
+x-miner --algorithm quai --pool quai-kawpow-us.kryptex.network:7043 --wallet 0xYOUR_QUAI_ADDRESS --worker rig1
 x-miner --algorithm autolykos2 --pool erg-us.kryptex.network:7021 --wallet krxXXXXXXX --worker rig1
 x-miner --algorithm octopus --pool cfx-us.kryptex.network:7027 --wallet krxXXXXXXX --worker rig1
 x-miner --algorithm fishhash --pool iron-us.kryptex.network:7017 --wallet krxXXXXXXX --worker rig1
@@ -153,6 +158,7 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 | ProgPoW 0.9.2 (Epic Cash) | 39.9 MH/s | 20.6 MH/s | see "Epic Cash" below |
 | ProgPowZ (Zano) | 40.0 MH/s | 20.6 MH/s | WildRig: 41.1 MH/s on a 9070 XT at 314 W |
 | Etchash (Ethereum Classic) | 35.5 MH/s | 41.0 MH/s | |
+| Ethash (EthereumPoW) | 32.5 MH/s | 41.1 MH/s | 8.1 GB DAG |
 | Autolykos2 (Ergo) | 64.5 MH/s | 96.3 MH/s @ 137 W | |
 | Octopus (Conflux) | 42.7 MH/s | 24.2 MH/s | other miners: ~79 / ~42 (tensor-core method, not yet in X-Miner) |
 | FishHash (Iron Fish) / KarlsenHashV2 | 23.5 MH/s (25.2 with `--gpu-mclock 2700`) | 27.5 MH/s @ 140 W | |
@@ -184,6 +190,9 @@ Pool certificates are not verified, as with other miners (pools use self-signed 
 - FiroPow (Firo): the same kawpowminer stratum, e.g. WoolyPooly (`pool.woolypooly.com:3104`). rplant
   (`na.rplant.xyz:7045`) rejected every share from every miner we tried, WildRig included, on 2026-10-28.
 - Etchash (Ethereum Classic): EthereumStratum/1.0.0 pools, e.g. Kryptex (`etc-us.kryptex.network:7033`).
+- Ethash (EthereumPoW): the same stratum, e.g. Kryptex (`ethw-us.kryptex.network:7034`).
+- Quai: KawPow over Ravencoin-format donor headers, mined with the Ravencoin stratum and heights, e.g. Kryptex
+  (`quai-kawpow-us.kryptex.network:7043`; log in with a Quai `0x...` address, not a `krx...` username).
 - Autolykos2 (Ergo): Ergo stratum pools, e.g. Kryptex (`erg-us.kryptex.network:7021`).
 - Octopus (Conflux): Conflux stratum pools, e.g. Kryptex (`cfx-us.kryptex.network:7027`).
 - FishHash (Iron Fish): the native Iron Fish stratum, e.g. Kryptex (`iron-us.kryptex.network:7017`).

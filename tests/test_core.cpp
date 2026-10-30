@@ -90,7 +90,9 @@ TEST(algorithm_aliases) {
   CHECK(find_algorithm("PearlHash") && std::string(find_algorithm("PearlHash")->name) == "pearlhash");
   CHECK(find_algorithm("parano1d") && std::string(find_algorithm("parano1d")->name) == "noid");
   CHECK(find_algorithm("RVN") && std::string(find_algorithm("RVN")->name) == "kawpow");
-  CHECK(find_algorithm("ethash") == nullptr);
+  CHECK(find_algorithm("ETHW") && std::string(find_algorithm("ETHW")->name) == "ethash");
+  CHECK(find_algorithm("xna") && std::string(find_algorithm("xna")->name) == "neurai");
+  CHECK(find_algorithm("nexapow") == nullptr);
 }
 
 TEST(hashrate_formatting) {

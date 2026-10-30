@@ -30,6 +30,8 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"progpow-epic", "epic,epiccash,progpow092", "Epic Cash (EPIC)", "@rtc", true},
       {"progpowz", "zano,progpow-zano", "Zano (ZANO)", "@rtc", true},
       {"etchash", "etc,ethash-etc", "Ethereum Classic (ETC)", "@rtc", true},
+      {"ethash", "ethw,ethereumpow", "EthereumPoW (ETHW)", "@rtc", true},
+      {"quai", "quai-kawpow,kawpow-quai", "Quai (QUAI)", "@rtc", true},
       {"octopus", "cfx,conflux", "Conflux (CFX)", "@rtc", true},
       {"fishhash", "iron,ironfish", "Iron Fish (IRON)", "@rtc", true},
       {"karlsenhashv2", "kls,karlsen,karlsenhash", "Karlsen (KLS)", "@rtc", true},

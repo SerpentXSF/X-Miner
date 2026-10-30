@@ -6,6 +6,15 @@
   its own algorithm name so the dev fee mines Neurai. CPU reference reproduces real main-chain blocks (mix and final
   hash); live on Kryptex (`xna-us.kryptex.network:7024`) from both cards with 0 rejects. RX 9070 XT 39.4 MH/s, RTX 3060
   20.6 MH/s. `start-neurai-kryptex` launchers.
+- EthereumPoW (ETHW, `ethash`): plain Ethash on the Etchash engine (30000-block epochs, no ECIP-1099). CPU reference
+  reproduces the mix digest of real EthereumPoW blocks; live on Kryptex (`ethw-us.kryptex.network:7034`) from both
+  cards, dev-fee shares included. RX 9070 XT 32.5 MH/s, RTX 3060 41.1 MH/s (8.1 GB DAG). `start-ethw-kryptex` launchers.
+- Quai (QUAI, `quai`): KawPow over Ravencoin-format donor headers; pools send Ravencoin-style jobs with Ravencoin
+  heights. Live on Kryptex (`quai-kawpow-us.kryptex.network:7043`, which needs a Quai `0x...` address): 20 accepted
+  in 20 minutes on the RX 9070 XT (34.0 MH/s), shares from the RTX 3060 (20.6 MH/s), dev-fee shares accepted.
+  `start-quai-kryptex` launchers.
+- Pool jobs without a height on EthereumStratum pools now map the seed's epoch to its first block (right for ETC and
+  ETHW alike).
 
 ## 0.1.0b (2026-10-28)
 

@@ -111,13 +111,13 @@ void EthStratumPool::handle(const std::string& line) {
     j.header = kawpow::hash_from_hex(header);
     if (m.contains("height") && m["height"].is_number_integer()) {
       j.height = m["height"].get<int>();
-    } else {  // no height: the epoch from the seed (Ethash epoch S = 2 x Etchash epoch past ECIP-1099)
+    } else {  // no height: the first block of the seed's Ethash epoch S (S x 30000), right for ETC and ETHW alike
       const int s = kawpow::epoch_from_seed(j.seed);
       if (s < 0) {
         warn("POOL", "job with an unknown seed hash");
         return;
       }
-      j.height = s * 30000 >= etchash::kEcip1099Block ? (s / 2) * 60000 : s * 30000;
+      j.height = s * 30000;
     }
     std::lock_guard<std::mutex> lk(mu_);
     j.target = target_for(difficulty_);

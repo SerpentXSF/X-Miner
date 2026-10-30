@@ -4,15 +4,18 @@
 
 namespace xm::etchash {
 
-int epoch_for_height(int height) { return height >= kEcip1099Block ? height / 60000 : height / 30000; }
-
-int seed_epoch_for_height(int height) {
-  // core-geth seedHash(epoch * epochLength + 1): keccak256 applied block / 30000 times.
-  return height >= kEcip1099Block ? 2 * (height / 60000) : height / 30000;
+int epoch_for_height(int height, bool ecip1099) {
+  return ecip1099 && height >= kEcip1099Block ? height / 60000 : height / 30000;
 }
 
-std::shared_ptr<const Light> make_light(int height) {
-  return kawpow::make_light(epoch_for_height(height), kDatasetParents, 1ull << 30, seed_epoch_for_height(height));
+int seed_epoch_for_height(int height, bool ecip1099) {
+  // core-geth seedHash(epoch * epochLength + 1): keccak256 applied block / 30000 times.
+  return ecip1099 && height >= kEcip1099Block ? 2 * (height / 60000) : height / 30000;
+}
+
+std::shared_ptr<const Light> make_light(int height, bool ecip1099) {
+  return kawpow::make_light(epoch_for_height(height, ecip1099), kDatasetParents, 1ull << 30,
+                            seed_epoch_for_height(height, ecip1099));
 }
 
 Result hash(const Light& light, const Hash256& header_hash, uint64_t nonce) {

@@ -1,4 +1,5 @@
-// --benchmark for etchash: a fixed header at Ethereum Classic's late-2026 height (25.6 M, epoch 427, a 4.4 GB DAG)
+// --benchmark for etchash: a fixed header at Ethereum Classic's late-2026 height (25.6 M, epoch 427, a 4.4 GB DAG);
+// for ethash at EthereumPoW's (25.36 M, epoch 845, an 8.1 GB DAG)
 // with an easy share target; every GPU candidate is re-checked with the CPU reference and the share count is compared
 // with the expected rate.
 #include <chrono>
@@ -29,21 +30,22 @@ Job bench_job() {
   return job;
 }
 
-int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
+int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs, bool ecip1099) {
   Job job = bench_job();
+  if (!ecip1099) job.height = 25358333;
   if (const char* e = std::getenv("XM_BENCH_HEIGHT")) job.height = std::atoi(e);  // developer: other DAG sizes
   int failures = 0;
   gpu::Sensors sensors(devs);
   for (size_t d = 0; d < devs.size() && !stop_requested(); ++d) {
     auto dev = gpu::open(devs[d]);
-    Engine eng(*dev, 0xe7c0a0b0 + d);
+    Engine eng(*dev, 0xe7c0a0b0 + d, ecip1099);
     std::string err;
     if (!eng.init(err) || !eng.set_job(job, err)) {
       error("GPU", "GPU " + std::to_string(d) + " " + devs[d].name + ": " + err);
       ++failures;
       continue;
     }
-    info("BENCH", "GPU " + std::to_string(d) + " " + devs[d].name + ": etchash (epoch " + std::to_string(epoch_for_height(job.height)) + "), " +
+    info("BENCH", "GPU " + std::to_string(d) + " " + devs[d].name + (ecip1099 ? ": etchash (epoch " : ": ethash (epoch ") + std::to_string(epoch_for_height(job.height, ecip1099)) + "), " +
                       std::to_string(cfg.benchmark_seconds) + " s");
     const uint32_t batch = batch_nonces(cfg.intensity_for(d));
     auto t0 = std::chrono::steady_clock::now(), last = t0;

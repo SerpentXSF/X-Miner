@@ -17,6 +17,8 @@
 | KawPow test vectors | tests/test_kawpow.cpp | Apache-2.0 | cpp-kawpow test/unittests/progpow_test_vectors.hpp @061d341 |
 | Neurai block headers (test vectors: heights 1, 1000000, 1845000) | tests/test_kawpow.cpp | public chain data | https://neuraiexplorer.com |
 | Etchash algorithm (ECIP-1099 epochs; re-implemented on the KawPow / Ethash code above) | src/algo/etchash/ | LGPL-3.0 reference, no code copied | https://github.com/etclabscore/core-geth consensus/ethash |
+| EthereumPoW block headers (test vectors: heights 15600000, 20000000, 25358000) | tests/test_etchash.cpp | public chain data | https://mainnet.ethereumpow.org (JSON-RPC) |
+| Quai KawPow (Ravencoin donor headers; no code used, behaviour only) | src/mining/kawpow_run.cpp | GPL-3.0 reference, no code copied | https://github.com/dominant-strategies/go-quai consensus/kawpow |
 | Autolykos v2 algorithm (re-implemented) | src/algo/autolykos/ | CC0 (Ergo) | https://github.com/ergoplatform/ergo @c1a69f6 AutolykosPowScheme.scala |
 | Octopus algorithm (re-implemented from the algorithm) | src/algo/octopus/ | GPL-3.0 reference, no code copied | https://github.com/Conflux-Chain/conflux-rust crates/cfxcore/pow |
 | FishHash algorithm and fixed dataset seed (re-implemented) | src/algo/fishhash/ | MPL-2.0 reference | https://github.com/iron-fish/fish-hash rust/src/lib.rs |

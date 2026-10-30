@@ -242,6 +242,10 @@ for 1-8 lanes, any block size and with a reciprocal-multiply modulo; 41.4 MH/s w
 Like KawPow (2.2 G reads/s of 256 B) it sits at ~2.3 G random reads per second, so on this card the limit is the
 memory's random-access rate, which a memory overclock raises.
 
+EthereumPoW (`ethash`) is plain Ethash on the same engine (no ECIP-1099: 30000-block epochs, the cache from the epoch's
+own seed): height 25.36 M, epoch 845, an 8.1 GB DAG. RX 9070 XT 32.5 MH/s @ ~200 W (the bigger DAG costs it more
+address translation than ETC's), RTX 3060 41.1 MH/s @ 157 W (live).
+
 ## Autolykos v2 (Ergo)
 
 | Card | X-Miner | Table build (per block) |
