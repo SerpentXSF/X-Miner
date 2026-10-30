@@ -207,6 +207,10 @@ Design: the program of each 3-block period is generated as CUDA / HIP source wit
 fixed, compiled at run time (NVRTC / hipRTC; the next period compiles in the background), one hash per 16 lanes with
 the 16 KB cache in shared memory, and the DAG generated on the GPU from the light cache (512 parents per item).
 
+Neurai (`neurai`) is KawPow unchanged (NeuraiProject/Neurai src/crypto/ethash: the same padding words, epoch length
+and sizes), at a younger chain: epoch 246, a 3.1 GB DAG. RX 9070 XT 39.4 MH/s @ 237 W (the smaller DAG costs fewer
+address translations, as above), RTX 3060 20.6 MH/s @ 170 W (bandwidth-bound either way).
+
 ## FiroPow, ProgPoW 0.9.2 (Epic Cash) and ProgPowZ (Zano)
 
 | Card | FiroPow (epoch 650, 6.7 GB) | Epic Cash (epoch 125, 2 GB) | Zano (epoch 129, 2 GB) |

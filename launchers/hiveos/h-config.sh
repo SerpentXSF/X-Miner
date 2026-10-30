@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the x-miner command line from the flight sheet:
-#   Hash algorithm -> CUSTOM_ALGO (pearlhash | noid | quantus | blake2b | kawpow | etchash | autolykos2 | firopow | progpow-epic | progpowz | octopus | fishhash | karlsenhashv2 | xelishashv3 | qhash), Pool URL -> CUSTOM_URL (several = failover),
+#   Hash algorithm -> CUSTOM_ALGO (pearlhash | noid | quantus | blake2b | kawpow | neurai | etchash | autolykos2 | firopow | progpow-epic | progpowz | octopus | fishhash | karlsenhashv2 | xelishashv3 | qhash), Pool URL -> CUSTOM_URL (several = failover),
 #   Wallet and worker template -> CUSTOM_TEMPLATE, Pass -> CUSTOM_PASS, Extra config arguments -> CUSTOM_USER_CONFIG.
 cd "$(dirname "$0")"
 . h-manifest.conf

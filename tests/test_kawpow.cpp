@@ -131,3 +131,25 @@ TEST(kawpow_hash_vectors) {
     CHECK_EQ(hash_to_hex(r.final_hash), std::string(v.final));
   }
 }
+
+// Neurai (XNA) runs KawPow unchanged (NeuraiProject/Neurai src/crypto/ethash: same padding words, epoch 7500, sizes).
+// Real main-chain blocks from neuraiexplorer.com: {height, header hash, nonce, mix hash, block hash}.
+TEST(neurai_block_vectors) {
+  const Vector blocks[] = {
+      {1, "c167c80eee641760096de15e1cb92c1b08357f23f797502b8d8019538eee63da", 0x0000000000000000ull,
+       "2c6b319e3953174e1964bbda114e7e94f5927065baffa98795b5aa2f26af5ef1",
+       "b439bb2c2a24432bf236ea6bfd5dc0dba211ef0f45bea4268f5afc5913a568d9"},
+      {1000000, "59c064b3a28cc39118adced2285eb5612ceaea013ff0fbf24e7e341fbf16966d", 0xbbe0705aa3c33d6full,
+       "97ebd36e04698f6aaf74ef6d449bfd4e15fa047a85610dc23174309208107d37",
+       "000000000002370f2552985148f4231c5af71aa13d975a0205d6bc2df8d6cfbc"},
+      {1845000, "ece6764b8b1b6950440b364bc7b9d0fcb6154a7b86a0a65181c4cc33a4635cdc", 0x6a00000395cfea08ull,
+       "72fc7162427650044009b1186ec67a0e8d78089f8b5ca9cd729a8295031e7f80",
+       "00000000005a3e64d52bf1870f3e06e3a5804588d8c877547017ca75672b8d5d"},
+  };
+  for (const auto& v : blocks) {
+    const auto light = make_light(v.height / kEpochLength);
+    const Result r = hash(*light, v.height, hash_from_hex(v.header), v.nonce);
+    CHECK_EQ(hash_to_hex(r.mix_hash), std::string(v.mix));
+    CHECK_EQ(hash_to_hex(r.final_hash), std::string(v.final));
+  }
+}

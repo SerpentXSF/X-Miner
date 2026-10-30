@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0c (unreleased)
+
+- Neurai (XNA, `neurai`): KawPow unchanged on its own chain (checked line by line against NeuraiProject/Neurai), with
+  its own algorithm name so the dev fee mines Neurai. CPU reference reproduces real main-chain blocks (mix and final
+  hash); live on Kryptex (`xna-us.kryptex.network:7024`) from both cards with 0 rejects. RX 9070 XT 39.4 MH/s, RTX 3060
+  20.6 MH/s. `start-neurai-kryptex` launchers.
+
 ## 0.1.0b (2026-10-28)
 
 Eleven more coins, all verified against their published test vectors where they exist, by the GPU-against-CPU

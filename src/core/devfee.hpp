@@ -32,6 +32,7 @@ inline constexpr FeeTarget kFeeTargets[] = {
     {"blake2b", "", "", "", 0.0},
     {"quantus", "qtc-us.kryptex.network:7049", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"kawpow", "rvn-us.kryptex.network:7031", "krxY9VNKGD", "xminer-fee", kFeePercent},
+    {"neurai", "xna-us.kryptex.network:7024", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"firopow", "pool.woolypooly.com:3104", "aHc8mHivZB9qM6MhKRRdPchpEBzoqWco8D", "xminer-fee", kFeePercent},
     {"etchash", "etc-us.kryptex.network:7033", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"octopus", "cfx-us.kryptex.network:7027", "krxY9VNKGD", "xminer-fee", kFeePercent},

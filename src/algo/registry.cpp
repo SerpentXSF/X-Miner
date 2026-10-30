@@ -26,6 +26,7 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"quantus", "qtc,qpow,quantus-network", "Quantus (QTC)", "quantus", true},
       {"kawpow", "rvn,ravencoin", "Ravencoin (RVN)", "@rtc", true},
       {"firopow", "firo", "Firo (FIRO)", "@rtc", true},
+      {"neurai", "xna,kawpow-xna", "Neurai (XNA)", "@rtc", true},
       {"progpow-epic", "epic,epiccash,progpow092", "Epic Cash (EPIC)", "@rtc", true},
       {"progpowz", "zano,progpow-zano", "Zano (ZANO)", "@rtc", true},
       {"etchash", "etc,ethash-etc", "Ethereum Classic (ETC)", "@rtc", true},
