@@ -53,6 +53,9 @@ struct Cuda {
   CUresult (*cuStreamSynchronize)(CUstream) = nullptr;
   CUresult (*cuEventCreate)(CUevent*, unsigned) = nullptr;  // optional: blocking waits
   CUresult (*cuEventRecord)(CUevent, CUstream) = nullptr;
+  CUresult (*cuStreamWaitEvent)(CUstream, CUevent, unsigned) = nullptr;  // optional: the second stream
+  CUresult (*cuStreamCreateWithPriority)(CUstream*, unsigned, int) = nullptr;
+  CUresult (*cuCtxGetStreamPriorityRange)(int*, int*) = nullptr;
   CUresult (*cuEventSynchronize)(CUevent) = nullptr;
   CUresult (*cuGetErrorString)(CUresult, const char**) = nullptr;
   CUresult (*cuFuncSetAttribute)(CUfunction, int, int) = nullptr;  // optional: > 48 KB dynamic shared memory
@@ -84,6 +87,9 @@ struct Cuda {
       lib.sym("cuDevicePrimaryCtxSetFlags", cuDevicePrimaryCtxSetFlags);
     lib.sym("cuEventCreate", cuEventCreate);
     lib.sym("cuEventRecord", cuEventRecord);
+    lib.sym("cuStreamWaitEvent", cuStreamWaitEvent);
+    lib.sym("cuStreamCreateWithPriority", cuStreamCreateWithPriority);
+    lib.sym("cuCtxGetStreamPriorityRange", cuCtxGetStreamPriorityRange);
     lib.sym("cuEventSynchronize", cuEventSynchronize);
     ready = all && cuInit(0) == 0;
     if (ready) cuDriverGetVersion(&driver_version);
@@ -151,11 +157,28 @@ class CudaDevice : public Device {
         set = shared;
       }
     }
-    return check(cuda().cuLaunchKernel(f, gx, gy, gz, bx, by, bz, shared, stream_, args, nullptr));
+    return check(cuda().cuLaunchKernel(f, gx, gy, gz, bx, by, bz, shared, cur_ ? stream2_ : stream_, args, nullptr));
   }
-  bool sync() override { return check(cuda().cuStreamSynchronize(stream_)); }
+  bool set_stream(int s) override {
+    auto& C = cuda();
+    if (s == 1 && !stream2_) {
+      // Highest priority: its blocks are dispatched as soon as the default stream's free an SM, so the two
+      // kernels share the GPU instead of running back to back.
+      int least = 0, greatest = 0;
+      const bool prio = C.cuStreamCreateWithPriority && C.cuCtxGetStreamPriorityRange &&
+                        C.cuCtxGetStreamPriorityRange(&least, &greatest) == 0;
+      if (!C.cuStreamWaitEvent || !C.cuEventCreate || !C.cuEventRecord ||
+          !check(prio ? C.cuStreamCreateWithPriority(&stream2_, 0, greatest) : C.cuStreamCreate(&stream2_, 0)) ||
+          !check(C.cuEventCreate(&event2_, 0x2)))  // CU_EVENT_DISABLE_TIMING
+        return false;
+    }
+    cur_ = s == 1;
+    return true;
+  }
+  bool sync() override { return join() && check(cuda().cuStreamSynchronize(stream_)); }
   bool wait() override {
     auto& C = cuda();
+    if (!join()) return false;
     if (!event_ && C.cuEventCreate && C.cuEventRecord && C.cuEventSynchronize)
       C.cuEventCreate(&event_, 0x1 | 0x2);  // CU_EVENT_BLOCKING_SYNC | CU_EVENT_DISABLE_TIMING
     static const bool spin = std::getenv("XM_SPIN_WAIT") != nullptr;  // developer A/B switch
@@ -165,6 +188,11 @@ class CudaDevice : public Device {
   std::string last_error() const override { return err_; }
 
  private:
+  // Makes the default stream wait for everything queued on the second one.
+  bool join() {
+    if (!stream2_) return true;
+    return check(cuda().cuEventRecord(event2_, stream2_)) && check(cuda().cuStreamWaitEvent(stream_, event2_, 0));
+  }
   bool check(CUresult e) {
     if (e == 0) return true;
     const char* s = nullptr;
@@ -177,6 +205,9 @@ class CudaDevice : public Device {
   CUcontext ctx_ = nullptr;
   CUstream stream_ = nullptr;
   CUevent event_ = nullptr;
+  CUstream stream2_ = nullptr;  // the second stream (set_stream(1)), created on first use
+  CUevent event2_ = nullptr;
+  bool cur_ = false;            // launches go to stream2_
   CUmodule module_ = nullptr;
   std::map<std::string, CUfunction> funcs_;
   std::map<CUfunction, unsigned> big_shared_;  // dynamic shared memory opted in per function

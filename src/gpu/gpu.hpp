@@ -49,6 +49,9 @@ class Device {
   // Launch a kernel from the loaded module. args are pointers to each argument value, like cuLaunchKernel.
   virtual bool launch(const char* kernel, unsigned gx, unsigned gy, unsigned gz, unsigned bx, unsigned by,
                       unsigned bz, unsigned shared_bytes, void** args) = 0;
+  // Selects the stream later launches go to: 0 (default) or 1, so independent work can overlap. Backends without a
+  // second stream return false for 1 and keep launching in order. wait() waits for both streams.
+  virtual bool set_stream(int s) { return s == 0; }
   virtual bool sync() = 0;
   // Waits for queued work like sync(), but parks the thread on a blocking-sync event instead of letting the
   // runtime spin a CPU core (falls back to sync() if events are unavailable).

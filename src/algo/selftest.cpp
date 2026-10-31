@@ -244,13 +244,13 @@ bool octopus_check(gpu::Device& dev, std::string& detail) {
   const double setup = ms_since(t0);
   t0 = std::chrono::steady_clock::now();
   const uint64_t first = eng.next_nonce();
-  if (eng.iterate(1024, shares, detail) == 0) return false;
+  if (eng.iterate(2048, shares, detail) == 0) return false;  // 2048: the matrix path's unit
   const double gpu_ms = ms_since(t0);
   const auto light = octopus::make_light(0);
   octopus::Points pts;
   octopus::make_points(job.header, pts);
   size_t want = 0, missing = 0;
-  for (uint64_t k = 0; k < 1024; ++k) {
+  for (uint64_t k = 0; k < 2048; ++k) {
     if (!octopus::below(octopus::hash(*light, pts, job.header, first + k), job.boundary)) continue;
     ++want;
     bool got = false;
@@ -258,7 +258,7 @@ bool octopus_check(gpu::Device& dev, std::string& detail) {
     missing += !got;
   }
   char buf[200];
-  std::snprintf(buf, sizeof buf, "%zu of %zu CPU hits found in 1024 nonces, %llu wrong (DAG + compile %.0f ms, %.0f ms)",
+  std::snprintf(buf, sizeof buf, "%zu of %zu CPU hits found in 2048 nonces, %llu wrong (DAG + compile %.0f ms, %.0f ms)",
                 shares.size(), want, static_cast<unsigned long long>(eng.cpu_rejects()), setup, gpu_ms);
   detail = buf;
   return want >= 32 && missing == 0 && shares.size() == want && eng.cpu_rejects() == 0;
