@@ -10,7 +10,8 @@ POOL="cfx-us.kryptex.network:7027!cfx.kryptex.network:7027"
 
 # Optional GPU tuning, one value per GPU or a comma list (see README, "GPU tuning"; needs root). Examples:
 #   RX 9070 XT: TUNING="--gpu-plimit 70%"
-#   Octopus is mostly compute (a polynomial per nonce) plus a DAG mix; it needs a GPU with 10 GB or more.
+#   Octopus is limited by the DAG mix's memory bandwidth (it needs a GPU with 10 GB or more): a memory overclock
+#   helps, e.g. --gpu-mclock 2700 on the RX 9070 XT (+7.5%).
 TUNING=""
 
 trap 'exit 0' INT TERM   # Ctrl+C: the miner restores the GPU and exits, then the loop ends too

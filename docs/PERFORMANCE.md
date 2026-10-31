@@ -290,6 +290,12 @@ need more than the mix: the operands are stored in WMMA fragment order (a wave r
 products faster on their own (4.75 vs 6.3 ms; ~67% of int8 peak). An LDS-staged fused version reached 55.5 (214
 VGPRs and 23 KB LDS per block cut the mix's waves). The scalar path remains for other GPUs and as `XM_OCTOPUS_TC=0`.
 
+Memory clock on the RX 9070 XT (-30% power; 60-120 s benchmarks, every share CPU-verified): stock 2518 MHz 58.6-58.8,
+`--gpu-mclock` 2600 60.5, 2650 61.7, 2700 63.0 (+7.3%), 2725 63.4, 2750 64.0, then a cliff: 2775 52.9, 2800 39.9 MH/s
+(the memory starts retrying; no bad results reach the pool, it just gets slower). Speed follows the memory clock almost
+1:1, power stays at ~234 W. Adrenalin's fast memory timing (Overdrive8 setting 14) changed nothing (62.90 vs 62.89 at
+2700). 2700 leaves a margin below this card's cliff; live on Kryptex 16 min at 62.3 MH/s, 3 accepted / 0 rejected.
+
 ## FishHash (Iron Fish) and KarlsenHashV2 (Karlsen)
 
 | Card | X-Miner | Published (Kryptex) |
