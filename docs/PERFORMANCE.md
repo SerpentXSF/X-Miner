@@ -260,20 +260,27 @@ occupancy); RX 9070 XT unroll 8 64.5, 1-4 62.8 MH/s. The first version (four 8-b
 
 ## Octopus (Conflux)
 
-| Card | X-Miner | Published figures for other miners |
-|---|---|---|
-| RX 9070 XT | 42.7 MH/s @ 237 W | 79 MH/s @ 230 W |
-| RTX 3060 | 24.2 MH/s @ 169 W | 42 MH/s @ 140 W |
+| Card | X-Miner 0.2.0 (matrix) | X-Miner 0.1.0b (scalar) | Published figures for other miners |
+|---|---|---|---|
+| RX 9070 XT (-30% power) | 52.6 MH/s @ 237 W | 42.7 MH/s @ 237 W | 79 MH/s @ 230 W |
+| RTX 3060 (170 W cap) | 31.4 MH/s @ 169 W | 24.2 MH/s @ 169 W | 42 MH/s @ 140 W |
 
-Height 160.2 M, stage 305, an 8.8 GB DAG. Per nonce, 32 values of a degree-1023 polynomial mod p = 1032193 (32,768
-multiply-add-reduce steps, shared coefficients per group of 32 nonces), then 32 dependent 256-byte DAG reads. The
-polynomial dominates: one Horner step is a Shoup multiply (NVIDIA: one high and two low 32-bit multiply-adds; AMD: six
-full-rate 24-bit operations in inline asm; the compiler's own code used quarter-rate 32-bit multiplies and re-loaded
-the constants, 25.8 -> 42.7 MH/s on the 9070 XT). Both cards run at their power cap at ~90% ALU use, so the next step
-is a different method, not tuning: the evaluation is a matrix product (the 1024 fixed points of a job times each
-group's coefficients) that int8 tensor cores / WMMA can do in limbs, which is how the published figures reach about
-the memory limit (8 KB of DAG reads per hash: 3060 ~44 MH/s, 9070 XT ~78 MH/s); a GTX 1080 Ti without tensor
-cores is listed at 13.6 MH/s.
+Height 160.2 M, stage 305, an 8.8 GB DAG. Per nonce, 32 values of a degree-1023 polynomial mod p = 1032193 (shared
+coefficients per group of 32 nonces), then 32 dependent 256-byte DAG reads (8 KB per hash: 3060 ~44 MH/s, 9070 XT ~78
+MH/s at full memory bandwidth).
+
+The values a group of 32 nonces needs are its polynomial at all 1024 header points, i.e. one row of a matrix product:
+coefficients (groups x 1024) times the job's Vandermonde matrix V[i][k] = x_k^i (1024 x 1024). Both factors are below
+2^20 and go in as three bytes each, so it is nine u8 x u8 -> s32 products (3060: mma.sync m16n8k32; 9070 XT: WMMA
+16x16x16 iu8) summed by byte shift and reduced once: about 295 k int8 multiply-adds per nonce instead of 32 k
+scalar multiply-add-reduce steps. Per 2^21-nonce batch (serial times): 3060 matrix 19 ms + DAG mix 55 ms; 9070 XT
+matrix 7 ms + mix 33 ms. The mix reads at ~87% (3060) / ~81% (9070 XT) of DRAM bandwidth, so it is the limit now.
+
+The next batch's coefficients and matrix products run on a second, high-priority stream while this batch's mix runs.
+On the 3060 that only pays when the matrix kernel is persistent and small (two 4-warp blocks per SM, 31.4 MH/s; one
+block per tile: 26.3; a cp.async double-buffered version with 46 KB of shared memory per block: 26.8, it takes L1
+from the mix); the card is then at its 170 W cap. On the 9070 XT the overlap does not help and one block per tile is
+best (52.6; two per WGP: 44.4). The scalar path remains for other GPUs and as `XM_OCTOPUS_TC=0`.
 
 ## FishHash (Iron Fish) and KarlsenHashV2 (Karlsen)
 

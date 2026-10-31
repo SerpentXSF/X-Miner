@@ -42,6 +42,9 @@ struct Hip {
   hipError_t (*hipEventCreateWithFlags)(hipEvent_t*, unsigned) = nullptr;  // optional: blocking waits
   hipError_t (*hipEventRecord)(hipEvent_t, hipStream_t) = nullptr;
   hipError_t (*hipEventSynchronize)(hipEvent_t) = nullptr;
+  hipError_t (*hipStreamWaitEvent)(hipStream_t, hipEvent_t, unsigned) = nullptr;  // optional: the second stream
+  hipError_t (*hipStreamCreateWithPriority)(hipStream_t*, unsigned, int) = nullptr;
+  hipError_t (*hipDeviceGetStreamPriorityRange)(int*, int*) = nullptr;
   const char* (*hipGetErrorString)(hipError_t) = nullptr;
   bool ready = false;
 
@@ -69,6 +72,9 @@ struct Hip {
                lib.sym("hipGetErrorString", hipGetErrorString);
     lib.sym("hipSetDeviceFlags", hipSetDeviceFlags);
     lib.sym("hipModuleUnload", hipModuleUnload);
+    lib.sym("hipStreamWaitEvent", hipStreamWaitEvent);
+    lib.sym("hipStreamCreateWithPriority", hipStreamCreateWithPriority);
+    lib.sym("hipDeviceGetStreamPriorityRange", hipDeviceGetStreamPriorityRange);
     ready = all && hipInit(0) == 0;
   }
 };
@@ -127,11 +133,27 @@ class HipDevice : public Device {
       if (!check(hip().hipModuleGetFunction(&f, module_, kernel))) return false;
       funcs_[kernel] = f;
     }
-    return check(hip().hipModuleLaunchKernel(f, gx, gy, gz, bx, by, bz, shared, stream_, args, nullptr));
+    return check(hip().hipModuleLaunchKernel(f, gx, gy, gz, bx, by, bz, shared, cur_ ? stream2_ : stream_, args, nullptr));
   }
-  bool sync() override { return check(hip().hipStreamSynchronize(stream_)); }
+  bool set_stream(int s) override {
+    auto& H = hip();
+    if (s == 1 && !stream2_) {
+      // Highest priority, as on CUDA: its workgroups are dispatched as soon as the default stream's free a CU.
+      int least = 0, greatest = 0;
+      const bool prio = H.hipStreamCreateWithPriority && H.hipDeviceGetStreamPriorityRange &&
+                        H.hipDeviceGetStreamPriorityRange(&least, &greatest) == 0;
+      if (!H.hipStreamWaitEvent || !H.hipEventCreateWithFlags || !H.hipEventRecord ||
+          !check(prio ? H.hipStreamCreateWithPriority(&stream2_, 0, greatest) : H.hipStreamCreate(&stream2_)) ||
+          !check(H.hipEventCreateWithFlags(&event2_, 0x2)))  // hipEventDisableTiming
+        return false;
+    }
+    cur_ = s == 1;
+    return true;
+  }
+  bool sync() override { return join() && check(hip().hipStreamSynchronize(stream_)); }
   bool wait() override {
     auto& H = hip();
+    if (!join()) return false;
     if (!event_ && H.hipEventCreateWithFlags && H.hipEventRecord && H.hipEventSynchronize)
       H.hipEventCreateWithFlags(&event_, 0x1 | 0x2);  // hipEventBlockingSync | hipEventDisableTiming
     static const bool spin = std::getenv("XM_SPIN_WAIT") != nullptr;  // developer A/B switch
@@ -141,6 +163,11 @@ class HipDevice : public Device {
   std::string last_error() const override { return err_; }
 
  private:
+  // Makes the default stream wait for everything queued on the second one.
+  bool join() {
+    if (!stream2_) return true;
+    return check(hip().hipEventRecord(event2_, stream2_)) && check(hip().hipStreamWaitEvent(stream_, event2_, 0));
+  }
   bool check(hipError_t e) {
     if (e == 0) return true;
     err_ = std::string("HIP error ") + std::to_string(e) + ": " + hip().hipGetErrorString(e);
@@ -149,6 +176,9 @@ class HipDevice : public Device {
   DeviceInfo info_;
   hipStream_t stream_ = nullptr;
   hipEvent_t event_ = nullptr;
+  hipStream_t stream2_ = nullptr;  // the second stream (set_stream(1)), created on first use
+  hipEvent_t event2_ = nullptr;
+  bool cur_ = false;               // launches go to stream2_
   hipModule_t module_ = nullptr;
   std::map<std::string, hipFunction_t> funcs_;
   std::string err_;

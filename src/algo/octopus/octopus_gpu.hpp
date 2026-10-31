@@ -59,7 +59,7 @@ class Engine {
   uint64_t prep_base_ = 0;
   uint32_t prep_batch_ = 0;
   uint32_t tc_bm_ = 32;    // groups per matrix tile (XM_OCTOPUS_BM)
-  uint32_t tc_grid_ = 0;   // matrix kernel blocks, 0 = two per SM (XM_OCTOPUS_EGRID)
+  uint32_t tc_grid_ = 0;   // matrix kernel blocks, 0 = per vendor (XM_OCTOPUS_EGRID)
   int dag_stage_ = -1;
   gpu::RtcOutput module_;
   std::shared_ptr<const Light> light_;
@@ -69,7 +69,7 @@ class Engine {
   bool have_job_ = false;
   uint64_t cpu_rejects_ = 0;
   uint32_t tpb_ = 128;
-  bool tc_ = false;     // NVIDIA sm_80+: polynomial values as int8 tensor-core products (XM_OCTOPUS_TC=0: scalar)
+  bool tc_ = false;     // NVIDIA sm_80+ / AMD RDNA4: polynomial values as int8 matrix products (XM_OCTOPUS_TC=0: scalar)
   bool mul24_ = false;  // AMD: 24-bit multiplies in the polynomial (XM_OCTOPUS_MUL24=0: the 32-bit path)
   uint32_t lanes_ = 8;  // lanes per hash in the DAG mix (XM_OCTOPUS_LANES: 4, 8 or 16)
   static constexpr uint32_t kMaxFound = 256;

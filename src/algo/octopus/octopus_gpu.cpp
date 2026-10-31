@@ -16,9 +16,9 @@ namespace xm::octopus {
 namespace {
 
 // Two ways to the polynomial values, then the same DAG mix (octopus_finish): the scalar xm_octopus_search (Horner with
-// Shoup's multiply, one thread per nonce) or, on NVIDIA sm_80+, the matrix path (OCT_TC): per-job Vandermonde bytes
-// (xm_octopus_vand), per-batch coefficient bytes (xm_octopus_coef), int8 tensor-core products (xm_octopus_eval) and
-// the mix (xm_octopus_mix).
+// Shoup's multiply, one thread per nonce) or, on NVIDIA sm_80+ and AMD RDNA4, the matrix path (OCT_TC): per-job
+// Vandermonde bytes (xm_octopus_vand), per-batch coefficient bytes (xm_octopus_coef), int8 matrix products
+// (xm_octopus_eval: mma.sync on NVIDIA, WMMA on AMD) and the mix (xm_octopus_mix).
 const char* kSearch = R"KRN(
 #if defined(__HIPCC_RTC__) || defined(__HIP__)
 #define SHFLL(v, src) __shfl((v), (src), OCT_LANES)
@@ -133,7 +133,8 @@ __device__ __forceinline__ void octopus_finish(const uint4* __restrict__ dag, u3
   }
 }
 
-// Scalar path: one thread per nonce; each aligned group of 32 threads is one Octopus nonce group. Thread i of the
+)KRN"
+    R"KRN(// Scalar path: one thread per nonce; each aligned group of 32 threads is one Octopus nonce group. Thread i of the
 // group runs SipHash on its nonce and writes coefficients j * 32 + i (j < 32) to shared memory; every thread then
 // evaluates the group's polynomial (Horner, 1024 steps) at its 32 points together, with Shoup's multiply: q = hi(acc *
 // xs), acc * x - q * p is in [0, 2p) for any 32-bit acc, so the accumulators stay below 3p without a reduction inside
@@ -204,7 +205,8 @@ extern "C" __global__ __launch_bounds__(TPB) void xm_octopus_search(const uint4*
   octopus_finish(dag, pages, magic, hdr, nonce, res, result, target_hi, found, max_found);
 }
 
-#if OCT_TC
+)KRN"
+    R"KRN(#if OCT_TC
 // Matrix path. The values a group needs, P_g(x_k) for all 1024 header points k, are the product of the group's
 // coefficient row c_g (1024) and the Vandermonde matrix V[i][k] = x_k^i mod p. Both factors are below 2^20 and are
 // split into three bytes, so the product is nine u8 x u8 -> s32 matrix products, summed by byte shift (T_s, s = a + b)
@@ -252,6 +254,8 @@ extern "C" __global__ __launch_bounds__(256) void xm_octopus_coef(Hdr hdr, u64 s
 #define TC_LD 48   // shared-memory row stride in bytes (32 used; 48 keeps fragment loads conflict-free)
 #define TC_THREADS (TC_BM / 16 * TC_BN / 32 * 32)
 
+)KRN"
+    R"KRN(#if !(defined(__HIPCC_RTC__) || defined(__HIP__))
 __device__ __forceinline__ void mma_u8(int (&d)[4], const u32 (&a)[4], u32 b0, u32 b1) {
   asm volatile(
       "mma.sync.aligned.m16n8k32.row.col.s32.u8.u8.s32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};"
@@ -330,7 +334,76 @@ extern "C" __global__ __launch_bounds__(TC_THREADS) void xm_octopus_eval(const u
   }
 }
 
-// The DAG part per nonce, with the polynomial values from xm_octopus_eval: nonce lane i of group g uses points
+)KRN"
+    R"KRN(#else
+typedef int v2i __attribute__((ext_vector_type(2)));
+typedef int v8i __attribute__((ext_vector_type(8)));
+
+// AMD RDNA4 (gfx12, wave32): the same tiles with v_wmma_i32_16x16x16_iu8 (unsigned bytes). Fragments: lane l holds
+// row (A) / column (B) l % 16, k in [8 (l / 16), +8); the accumulator holds rows 8 (l / 16) + 0..7 of column l % 16.
+// Waves as (TC_BM / 16) x 2, a wave 16 groups x 32 points (two 16-point tiles).
+extern "C" __global__ __launch_bounds__(TC_THREADS) void xm_octopus_eval(const unsigned char* __restrict__ coef,
+                                                                         const unsigned char* __restrict__ vand,
+                                                                         u32 groups, u32* __restrict__ vals) {
+  __shared__ __align__(16) unsigned char sa[3][TC_BM][TC_LD];
+  __shared__ __align__(16) unsigned char sb[3][TC_BN][TC_LD];
+  const u32 wave = threadIdx.x >> 5, lane = threadIdx.x & 31u;
+  const u32 wm = wave % (TC_BM / 16), wn = wave / (TC_BM / 16);
+  const u32 lr = lane & 15u, lk = 8 * (lane >> 4);
+  const size_t aplane = (size_t)groups * 1024;
+  const u32 tiles = groups / TC_BM * (1024 / TC_BN);
+#pragma unroll 1
+  for (u32 tile = blockIdx.x; tile < tiles; tile += gridDim.x) {
+    const u32 g0 = tile / (1024 / TC_BN) * TC_BM, n0 = tile % (1024 / TC_BN) * TC_BN;
+    v8i acc[5][2];
+#pragma unroll
+    for (int s = 0; s < 5; ++s)
+#pragma unroll
+      for (int n = 0; n < 2; ++n) acc[s][n] = (v8i){0, 0, 0, 0, 0, 0, 0, 0};
+#pragma unroll 1
+    for (u32 k0 = 0; k0 < 1024; k0 += 32) {
+      for (u32 q = threadIdx.x; q < 3 * TC_BM * 2; q += TC_THREADS) {
+        const u32 pl = q / (TC_BM * 2), row = (q >> 1) % TC_BM, half = q & 1u;
+        *(uint4*)&sa[pl][row][half * 16] = *(const uint4*)(coef + pl * aplane + (size_t)(g0 + row) * 1024 + k0 + half * 16);
+      }
+      for (u32 q = threadIdx.x; q < 3 * TC_BN * 2; q += TC_THREADS) {
+        const u32 pl = q / (TC_BN * 2), row = (q >> 1) % TC_BN, half = q & 1u;
+        *(uint4*)&sb[pl][row][half * 16] = *(const uint4*)(vand + ((size_t)pl << 20) + (size_t)(n0 + row) * 1024 + k0 + half * 16);
+      }
+      __syncthreads();
+#pragma unroll
+      for (u32 kk = 0; kk < 32; kk += 16) {
+        v2i af[3];
+#pragma unroll
+        for (int a = 0; a < 3; ++a) af[a] = *(const v2i*)&sa[a][wm * 16 + lr][kk + lk];
+#pragma unroll
+        for (int n = 0; n < 2; ++n) {
+#pragma unroll
+          for (int b = 0; b < 3; ++b) {
+            const v2i bf = *(const v2i*)&sb[b][wn * 32 + n * 16 + lr][kk + lk];
+#pragma unroll
+            for (int a = 0; a < 3; ++a)
+              acc[a + b][n] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(false, af[a], false, bf, acc[a + b][n], false);
+          }
+        }
+      }
+      __syncthreads();
+    }
+#pragma unroll
+    for (int n = 0; n < 2; ++n)
+#pragma unroll
+      for (int r = 0; r < 8; ++r) {
+        u64 v = (u64)(u32)acc[0][n][r] + ((u64)(u32)acc[1][n][r] << 8) + ((u64)(u32)acc[2][n][r] << 16) +
+                ((u64)(u32)acc[3][n][r] << 24) + ((u64)(u32)acc[4][n][r] << 32);
+        const u32 g = g0 + wm * 16 + lk + r, k = n0 + wn * 32 + n * 16 + lr;
+        vals[(size_t)g * 1024 + k] = (u32)(v % OCT_P);
+      }
+  }
+}
+#endif
+
+)KRN"
+    R"KRN(// The DAG part per nonce, with the polynomial values from xm_octopus_eval: nonce lane i of group g uses points
 // i + 32 t (t < 32).
 extern "C" __global__ __launch_bounds__(TPB) void xm_octopus_mix(const uint4* __restrict__ dag, u32 pages, u32 magic,
                                                                   const u32* __restrict__ vals, Hdr hdr,
@@ -383,7 +456,8 @@ bool Engine::init(std::string& err) {
   mul24_ = dev_.info().vendor == gpu::Vendor::Amd;
   // The matrix path needs mma.sync m16n8k32 u8 (sm_80+). XM_OCTOPUS_TC=0: the scalar path.
   const std::string& arch = dev_.info().arch;
-  tc_ = dev_.info().vendor == gpu::Vendor::Nvidia && arch.rfind("sm_", 0) == 0 && std::atoi(arch.c_str() + 3) >= 80;
+  tc_ = (dev_.info().vendor == gpu::Vendor::Nvidia && arch.rfind("sm_", 0) == 0 && std::atoi(arch.c_str() + 3) >= 80) ||
+        (dev_.info().vendor == gpu::Vendor::Amd && arch.rfind("gfx12", 0) == 0);  // RDNA4 WMMA
   if (const char* e = std::getenv("XM_OCTOPUS_TC")) tc_ = tc_ && std::atoi(e) != 0;
   // Developer tuning: groups per matrix tile (32: 4 warps, 64: 8 warps) and the matrix grid (blocks; 0 = one per tile).
   if (const char* e = std::getenv("XM_OCTOPUS_BM")) tc_bm_ = std::atoi(e) == 32 ? 32 : 64;
@@ -503,8 +577,10 @@ double Engine::iterate(uint32_t batch, std::vector<Share>& shares, std::string& 
     };
     uint32_t groups = batch / 32;
     const uint32_t tiles = groups / tc_bm_ * (kN / 64);
-    // Default: two resident matrix blocks per SM beside the mix (RTX 3060: 31.4 MH/s vs 26.3 with one block per tile).
-    const uint32_t want = tc_grid_ ? tc_grid_ : 2 * uint32_t(std::max(dev_.info().compute_units, 1));
+    // Default grid: NVIDIA two resident matrix blocks per SM beside the mix (RTX 3060: 31.4 MH/s vs 26.3 with one
+    // block per tile); AMD one block per tile (RX 9070 XT: 52.6 MH/s vs 44.4 with two per WGP, 51.5 with 512).
+    const bool amd = dev_.info().vendor == gpu::Vendor::Amd;
+    const uint32_t want = tc_grid_ ? tc_grid_ : amd ? tiles : 2 * uint32_t(std::max(dev_.info().compute_units, 1));
     const uint32_t egrid = std::min(want, tiles);
     // Polynomial values of the batch at `at` into buffer i: coefficients, then the matrix products.
     auto values = [&](uint64_t at, int i) {
