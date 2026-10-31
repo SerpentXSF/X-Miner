@@ -212,7 +212,19 @@ extern "C" __global__ __launch_bounds__(TPB) void xm_octopus_search(const uint4*
 // split into three bytes, so the product is nine u8 x u8 -> s32 matrix products, summed by byte shift (T_s, s = a + b)
 // and reduced: P = sum_s 2^(8s) T_s mod p. Each T_s sum is below 3 * 1024 * 255^2 < 2^28.
 
-// V as three byte planes, point-major: vand[b][k][i] = byte b of x_k^i. One thread per (point, 32 powers).
+// Byte layouts. NVIDIA: row-major planes (vand[b][k][i], coef[a][g][j * 32 + i]). AMD (OCT_PACKED): WMMA
+// fragment order, so a wave loads a whole 16 x 16 fragment as one coalesced 256-byte read without LDS: for 16-row
+// tile t (16 points / 16 groups), 16-k step s and plane p, 32 lanes x 8 bytes at ((t * 64 + s) * 3 + p) * 256, lane l
+// holding row l % 16, k in [16 s + 8 (l / 16), +8).
+#if defined(__HIPCC_RTC__) || defined(__HIP__)
+#define OCT_PACKED 1
+#endif
+__device__ __forceinline__ size_t packed_at(u32 row, u32 k, u32 plane) {
+  const u32 lane = (row & 15u) + 16u * ((k >> 3) & 1u);
+  return ((size_t)((row >> 4) * 64u + (k >> 4)) * 3u + plane) * 256u + lane * 8u + (k & 7u);
+}
+
+// V as three byte planes: vand[b][k][i] = byte b of x_k^i (or packed). One thread per (point, 32 powers).
 extern "C" __global__ void xm_octopus_vand(const uint2* __restrict__ pts, unsigned char* __restrict__ vand) {
   const u32 t = blockIdx.x * blockDim.x + threadIdx.x;  // 32768 threads
   const u32 k = t >> 5, c = t & 31u;
@@ -222,7 +234,13 @@ extern "C" __global__ void xm_octopus_vand(const uint2* __restrict__ pts, unsign
     if (e & 1) pw = pw * b % OCT_P;
   for (u32 i = 32 * c; i < 32 * c + 32; ++i) {
 #pragma unroll
-    for (int l = 0; l < 3; ++l) vand[(size_t)l << 20 | (size_t)k << 10 | i] = (unsigned char)(pw >> (8 * l));
+    for (int l = 0; l < 3; ++l) {
+#ifdef OCT_PACKED
+      vand[packed_at(k, i, l)] = (unsigned char)(pw >> (8 * l));
+#else
+      vand[(size_t)l << 20 | (size_t)k << 10 | i] = (unsigned char)(pw >> (8 * l));
+#endif
+    }
     pw = pw * x % OCT_P;
   }
 }
@@ -241,9 +259,14 @@ extern "C" __global__ __launch_bounds__(256) void xm_octopus_coef(Hdr hdr, u64 s
   for (u32 j = 0; j < 32; ++j) {
     SIPROUND;
     const u32 d = fast_mod((u32)(v0 ^ v1 ^ v2 ^ v3), OCT_P, 4161u);
+#ifdef OCT_PACKED
+#pragma unroll
+    for (u32 l = 0; l < 3; ++l) coef[packed_at(g, j * 32 + lane, l)] = (unsigned char)(d >> (8 * l));
+#else
     row[j * 32] = (unsigned char)d;
     row[plane + j * 32] = (unsigned char)(d >> 8);
     row[2 * plane + j * 32] = (unsigned char)(d >> 16);
+#endif
   }
 }
 
@@ -341,53 +364,69 @@ typedef int v8i __attribute__((ext_vector_type(8)));
 
 // AMD RDNA4 (gfx12, wave32): the same tiles with v_wmma_i32_16x16x16_iu8 (unsigned bytes). Fragments: lane l holds
 // row (A) / column (B) l % 16, k in [8 (l / 16), +8); the accumulator holds rows 8 (l / 16) + 0..7 of column l % 16.
-// Waves as (TC_BM / 16) x 2, a wave 16 groups x 32 points (two 16-point tiles).
-extern "C" __global__ __launch_bounds__(TC_THREADS) void xm_octopus_eval(const unsigned char* __restrict__ coef,
-                                                                         const unsigned char* __restrict__ vand,
-                                                                         u32 groups, u32* __restrict__ vals) {
-  __shared__ __align__(16) unsigned char sa[3][TC_BM][TC_LD];
-  __shared__ __align__(16) unsigned char sb[3][TC_BN][TC_LD];
+// Waves as (TC_BM / 16) x 2, a wave 16 groups x 32 points (two 16-point tiles). The operands are packed in fragment
+// order, so each wave reads its fragments directly (L2 / Infinity Cache) with the next steps' reads in flight, and
+// uses no LDS: in the fused kernel every mix block would otherwise reserve the matrix blocks' LDS too.
+#ifndef AMD_PF
+#define AMD_PF 2  // 16-k steps of fragments in flight
+#endif
+__device__ __forceinline__ void eval_tiles(const unsigned char* __restrict__ coef, const unsigned char* __restrict__ vand,
+                                           u32 groups, u32* __restrict__ vals, u32 first, u32 stride) {
   const u32 wave = threadIdx.x >> 5, lane = threadIdx.x & 31u;
   const u32 wm = wave % (TC_BM / 16), wn = wave / (TC_BM / 16);
   const u32 lr = lane & 15u, lk = 8 * (lane >> 4);
-  const size_t aplane = (size_t)groups * 1024;
   const u32 tiles = groups / TC_BM * (1024 / TC_BN);
+  const v2i* A = (const v2i*)coef;
+  const v2i* B = (const v2i*)vand;
 #pragma unroll 1
-  for (u32 tile = blockIdx.x; tile < tiles; tile += gridDim.x) {
+  for (u32 tile = first; tile < tiles; tile += stride) {
     const u32 g0 = tile / (1024 / TC_BN) * TC_BM, n0 = tile % (1024 / TC_BN) * TC_BN;
+    const v2i* pa = A + (size_t)((g0 / 16 + wm) * 64) * 96 + lane;                 // 96 v2i per (tile, step)
+    const v2i* pb0 = B + (size_t)(((n0 + wn * 32) / 16) * 64) * 96 + lane;
+    const v2i* pb1 = pb0 + (size_t)64 * 96;
     v8i acc[5][2];
 #pragma unroll
     for (int s = 0; s < 5; ++s)
 #pragma unroll
       for (int n = 0; n < 2; ++n) acc[s][n] = (v8i){0, 0, 0, 0, 0, 0, 0, 0};
+    v2i fa[AMD_PF][3], fb[AMD_PF][2][3];
+#pragma unroll
+    for (int p = 0; p < AMD_PF; ++p)
+#pragma unroll
+      for (int l = 0; l < 3; ++l) {
+        fa[p][l] = pa[(p * 3 + l) * 32];
+        fb[p][0][l] = pb0[(p * 3 + l) * 32];
+        fb[p][1][l] = pb1[(p * 3 + l) * 32];
+      }
 #pragma unroll 1
-    for (u32 k0 = 0; k0 < 1024; k0 += 32) {
-      for (u32 q = threadIdx.x; q < 3 * TC_BM * 2; q += TC_THREADS) {
-        const u32 pl = q / (TC_BM * 2), row = (q >> 1) % TC_BM, half = q & 1u;
-        *(uint4*)&sa[pl][row][half * 16] = *(const uint4*)(coef + pl * aplane + (size_t)(g0 + row) * 1024 + k0 + half * 16);
-      }
-      for (u32 q = threadIdx.x; q < 3 * TC_BN * 2; q += TC_THREADS) {
-        const u32 pl = q / (TC_BN * 2), row = (q >> 1) % TC_BN, half = q & 1u;
-        *(uint4*)&sb[pl][row][half * 16] = *(const uint4*)(vand + ((size_t)pl << 20) + (size_t)(n0 + row) * 1024 + k0 + half * 16);
-      }
-      __syncthreads();
+    for (u32 st = 0; st < 64; st += AMD_PF) {
 #pragma unroll
-      for (u32 kk = 0; kk < 32; kk += 16) {
-        v2i af[3];
+      for (int p = 0; p < AMD_PF; ++p) {
+        const v2i a0 = fa[p][0], a1 = fa[p][1], a2 = fa[p][2];
+        v2i b[2][3];
 #pragma unroll
-        for (int a = 0; a < 3; ++a) af[a] = *(const v2i*)&sa[a][wm * 16 + lr][kk + lk];
+        for (int n = 0; n < 2; ++n)
 #pragma unroll
-        for (int n = 0; n < 2; ++n) {
+          for (int l = 0; l < 3; ++l) b[n][l] = fb[p][n][l];
+        const u32 nx = st + AMD_PF + p;  // refill this slot with step nx
+        if (nx < 64) {
 #pragma unroll
-          for (int b = 0; b < 3; ++b) {
-            const v2i bf = *(const v2i*)&sb[b][wn * 32 + n * 16 + lr][kk + lk];
-#pragma unroll
-            for (int a = 0; a < 3; ++a)
-              acc[a + b][n] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(false, af[a], false, bf, acc[a + b][n], false);
+          for (int l = 0; l < 3; ++l) {
+            fa[p][l] = pa[(nx * 3 + l) * 32];
+            fb[p][0][l] = pb0[(nx * 3 + l) * 32];
+            fb[p][1][l] = pb1[(nx * 3 + l) * 32];
           }
         }
+        const v2i af[3] = {a0, a1, a2};
+#pragma unroll
+        for (int n = 0; n < 2; ++n)
+#pragma unroll
+          for (int bb = 0; bb < 3; ++bb)
+#pragma unroll
+            for (int aa = 0; aa < 3; ++aa)
+              acc[aa + bb][n] =
+                  __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(false, af[aa], false, b[n][bb], acc[aa + bb][n], false);
       }
-      __syncthreads();
     }
 #pragma unroll
     for (int n = 0; n < 2; ++n)
@@ -400,16 +439,22 @@ extern "C" __global__ __launch_bounds__(TC_THREADS) void xm_octopus_eval(const u
       }
   }
 }
+
+extern "C" __global__ __launch_bounds__(TC_THREADS) void xm_octopus_eval(const unsigned char* __restrict__ coef,
+                                                                         const unsigned char* __restrict__ vand,
+                                                                         u32 groups, u32* __restrict__ vals) {
+  eval_tiles(coef, vand, groups, vals, blockIdx.x, gridDim.x);
+}
+#define OCT_FUSED 1  // xm_octopus_fused below (AMD: its runtime runs two streams one after the other)
 #endif
 
 )KRN"
     R"KRN(// The DAG part per nonce, with the polynomial values from xm_octopus_eval: nonce lane i of group g uses points
 // i + 32 t (t < 32).
-extern "C" __global__ __launch_bounds__(TPB) void xm_octopus_mix(const uint4* __restrict__ dag, u32 pages, u32 magic,
-                                                                  const u32* __restrict__ vals, Hdr hdr,
-                                                                  u64 start_nonce, u64 target_hi,
-                                                                  u32* __restrict__ found, u32 max_found) {
-  const u32 t = blockIdx.x * TPB + threadIdx.x;
+__device__ __forceinline__ void mix_block(const uint4* __restrict__ dag, u32 pages, u32 magic,
+                                          const u32* __restrict__ vals, const Hdr& hdr, u64 start_nonce, u64 target_hi,
+                                          u32* __restrict__ found, u32 max_found, u32 blk) {
+  const u32 t = blk * TPB + threadIdx.x;
   const u32* v = vals + (size_t)(t >> 5) * 1024 + (t & 31u);
   u32 res[32];
   u64 result = 0;
@@ -420,6 +465,30 @@ extern "C" __global__ __launch_bounds__(TPB) void xm_octopus_mix(const uint4* __
   }
   octopus_finish(dag, pages, magic, hdr, start_nonce + t, res, result, target_hi, found, max_found);
 }
+
+extern "C" __global__ __launch_bounds__(TPB) void xm_octopus_mix(const uint4* __restrict__ dag, u32 pages, u32 magic,
+                                                                  const u32* __restrict__ vals, Hdr hdr,
+                                                                  u64 start_nonce, u64 target_hi,
+                                                                  u32* __restrict__ found, u32 max_found) {
+  mix_block(dag, pages, magic, vals, hdr, start_nonce, target_hi, found, max_found, blockIdx.x);
+}
+
+#if defined(OCT_FUSED) && TPB == TC_THREADS
+// One launch, two jobs: blocks below `eblocks` compute the next batch's polynomial values (persistent, tiles
+// blockIdx.x, + eblocks, ...), the rest run this batch's DAG mix, so the matrix units and the memory work overlap.
+extern "C" __global__ __launch_bounds__(TPB) void xm_octopus_fused(const unsigned char* __restrict__ coef,
+                                                                    const unsigned char* __restrict__ vand,
+                                                                    u32 groups, u32* __restrict__ vals_next,
+                                                                    u32 eblocks, const uint4* __restrict__ dag,
+                                                                    u32 pages, u32 magic, const u32* __restrict__ vals,
+                                                                    Hdr hdr, u64 start_nonce, u64 target_hi,
+                                                                    u32* __restrict__ found, u32 max_found) {
+  if (blockIdx.x < eblocks)
+    eval_tiles(coef, vand, groups, vals_next, blockIdx.x, eblocks);
+  else
+    mix_block(dag, pages, magic, vals, hdr, start_nonce, target_hi, found, max_found, blockIdx.x - eblocks);
+}
+#endif
 #endif
 )KRN";
 
@@ -462,6 +531,9 @@ bool Engine::init(std::string& err) {
   // Developer tuning: groups per matrix tile (32: 4 warps, 64: 8 warps) and the matrix grid (blocks; 0 = one per tile).
   if (const char* e = std::getenv("XM_OCTOPUS_BM")) tc_bm_ = std::atoi(e) == 32 ? 32 : 64;
   if (const char* e = std::getenv("XM_OCTOPUS_EGRID")) tc_grid_ = static_cast<uint32_t>(std::atoi(e));
+  // AMD: one fused launch (matrix blocks + mix blocks); XM_OCTOPUS_FUSE=<matrix blocks>, 0 = separate launches.
+  if (tc_ && dev_.info().vendor == gpu::Vendor::Amd && tpb_ == 128) fused_ = 128;  // RX 9070 XT: 58.5 vs 51.5 separate
+  if (const char* e = std::getenv("XM_OCTOPUS_FUSE")) fused_ = tc_ && tpb_ == 128 ? static_cast<uint32_t>(std::atoi(e)) : 0;
   if (const char* e = std::getenv("XM_OCTOPUS_MUL24")) mul24_ = mul24_ && std::atoi(e) != 0;
   if (tpb_ % 32 || lanes_ < 4 || lanes_ > 16 || (lanes_ & (lanes_ - 1))) {
     err = "XM_OCTOPUS_TPB must be a multiple of 32 and XM_OCTOPUS_LANES 4, 8 or 16";
@@ -578,7 +650,7 @@ double Engine::iterate(uint32_t batch, std::vector<Share>& shares, std::string& 
     uint32_t groups = batch / 32;
     const uint32_t tiles = groups / tc_bm_ * (kN / 64);
     // Default grid: NVIDIA two resident matrix blocks per SM beside the mix (RTX 3060: 31.4 MH/s vs 26.3 with one
-    // block per tile); AMD one block per tile (RX 9070 XT: 52.6 MH/s vs 44.4 with two per WGP, 51.5 with 512).
+    // block per tile); AMD (when not fused) one block per tile.
     const bool amd = dev_.info().vendor == gpu::Vendor::Amd;
     const uint32_t want = tc_grid_ ? tc_grid_ : amd ? tiles : 2 * uint32_t(std::max(dev_.info().compute_units, 1));
     const uint32_t egrid = std::min(want, tiles);
@@ -590,16 +662,29 @@ double Engine::iterate(uint32_t batch, std::vector<Share>& shares, std::string& 
              dev_.launch("xm_octopus_eval", egrid, 1, 1, tc_bm_ / 16 * 64, 1, 1, 0, eargs) && lap(1);
     };
     if (!prepared_ || prep_base_ != base || prep_batch_ != batch) ok = ok && values(base, cur_);
-    void* margs[] = {&d_dag_, &pages, &magic, &d_vals_[cur_], &hdr, &base, &target_hi, &d_found_, &maxf};
-    ok = ok && dev_.launch("xm_octopus_mix", batch / tpb_, 1, 1, tpb_, 1, 1, 0, margs) && lap(2);
-    // The next batch's values on the second stream, overlapping the mix (in order when there is no second stream).
-    const bool two = !prof && dev_.set_stream(1);
-    ok = ok && values(base + batch, cur_ ^ 1);
-    if (two) dev_.set_stream(0);
+    uint64_t next = base + batch;
+    const int o = cur_ ^ 1;
+    if (fused_ && !prof) {
+      // AMD: its runtime runs a second stream's work after the first's, so one launch carries both: the next batch's
+      // matrix products (persistent blocks) and this batch's mix, after the next batch's coefficients.
+      uint32_t eb = std::min(fused_, tiles);
+      void* cargs[] = {&hdr, &next, &groups, &d_coef_[o]};
+      void* fargs[] = {&d_coef_[o], &d_vand_, &groups, &d_vals_[o], &eb, &d_dag_, &pages, &magic, &d_vals_[cur_],
+                       &hdr, &base, &target_hi, &d_found_, &maxf};
+      ok = ok && dev_.launch("xm_octopus_coef", batch / 256, 1, 1, 256, 1, 1, 0, cargs) &&
+           dev_.launch("xm_octopus_fused", eb + batch / tpb_, 1, 1, tpb_, 1, 1, 0, fargs);
+    } else {
+      void* margs[] = {&d_dag_, &pages, &magic, &d_vals_[cur_], &hdr, &base, &target_hi, &d_found_, &maxf};
+      ok = ok && dev_.launch("xm_octopus_mix", batch / tpb_, 1, 1, tpb_, 1, 1, 0, margs) && lap(2);
+      // The next batch's values on the second stream, overlapping the mix (in order when there is no second stream).
+      const bool two = !prof && dev_.set_stream(1);
+      ok = ok && values(next, o);
+      if (two) dev_.set_stream(0);
+    }
     prepared_ = ok;
-    prep_base_ = base + batch;
+    prep_base_ = next;
     prep_batch_ = batch;
-    cur_ ^= 1;
+    cur_ = o;
     if (prof && ++tn % 20 == 0) {
       char b[160];
       std::snprintf(b, sizeof b, "per batch of %u: coef %.2f ms, eval %.2f ms, mix %.2f ms", batch, tsum[0] / tn,

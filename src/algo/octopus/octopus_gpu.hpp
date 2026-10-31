@@ -60,6 +60,7 @@ class Engine {
   uint32_t prep_batch_ = 0;
   uint32_t tc_bm_ = 32;    // groups per matrix tile (XM_OCTOPUS_BM)
   uint32_t tc_grid_ = 0;   // matrix kernel blocks, 0 = per vendor (XM_OCTOPUS_EGRID)
+  uint32_t fused_ = 0;     // AMD: matrix blocks in the fused launch (XM_OCTOPUS_FUSE), 0 = separate launches
   int dag_stage_ = -1;
   gpu::RtcOutput module_;
   std::shared_ptr<const Light> light_;

@@ -160,7 +160,7 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 | Etchash (Ethereum Classic) | 35.5 MH/s | 41.0 MH/s | |
 | Ethash (EthereumPoW) | 32.5 MH/s | 41.1 MH/s | 8.1 GB DAG |
 | Autolykos2 (Ergo) | 64.5 MH/s | 96.3 MH/s @ 137 W | |
-| Octopus (Conflux) | 52.6 MH/s | 31.4 MH/s | int8 matrix units (RDNA4 WMMA / NVIDIA sm_80+); other miners: ~79 / ~42 |
+| Octopus (Conflux) | 58.5 MH/s | 31.4 MH/s | int8 matrix units (RDNA4 WMMA / NVIDIA sm_80+); other miners: ~79 / ~42 |
 | FishHash (Iron Fish) / KarlsenHashV2 | 23.5 MH/s (25.2 with `--gpu-mclock 2700`) | 27.5 MH/s @ 140 W | |
 | XelisHashV3 (Xelis) | 5.0 kH/s @ ~170 W | 4.49 kH/s @ 112 W | published: RTX 3060 5.5 kH/s, RTX 4090 15 kH/s |
 | QHash (Qubitcoin) | 2.51 GH/s | 0.96 GH/s @ 147 W | published: RTX 3060 0.70 GH/s, RTX 3070 1.14 GH/s |

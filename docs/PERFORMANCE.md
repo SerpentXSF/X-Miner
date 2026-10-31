@@ -262,7 +262,7 @@ occupancy); RX 9070 XT unroll 8 64.5, 1-4 62.8 MH/s. The first version (four 8-b
 
 | Card | X-Miner 0.2.0 (matrix) | X-Miner 0.1.0b (scalar) | Published figures for other miners |
 |---|---|---|---|
-| RX 9070 XT (-30% power) | 52.6 MH/s @ 237 W | 42.7 MH/s @ 237 W | 79 MH/s @ 230 W |
+| RX 9070 XT (-30% power) | 58.5 MH/s @ 236 W | 42.7 MH/s @ 237 W | 79 MH/s @ 230 W |
 | RTX 3060 (170 W cap) | 31.4 MH/s @ 169 W | 24.2 MH/s @ 169 W | 42 MH/s @ 140 W |
 
 Height 160.2 M, stage 305, an 8.8 GB DAG. Per nonce, 32 values of a degree-1023 polynomial mod p = 1032193 (shared
@@ -274,13 +274,21 @@ coefficients (groups x 1024) times the job's Vandermonde matrix V[i][k] = x_k^i 
 2^20 and go in as three bytes each, so it is nine u8 x u8 -> s32 products (3060: mma.sync m16n8k32; 9070 XT: WMMA
 16x16x16 iu8) summed by byte shift and reduced once: about 295 k int8 multiply-adds per nonce instead of 32 k
 scalar multiply-add-reduce steps. Per 2^21-nonce batch (serial times): 3060 matrix 19 ms + DAG mix 55 ms; 9070 XT
-matrix 7 ms + mix 33 ms. The mix reads at ~87% (3060) / ~81% (9070 XT) of DRAM bandwidth, so it is the limit now.
+matrix 4.75 ms + mix 33 ms. The mix reads at ~87% (3060) / ~81% (9070 XT) of DRAM bandwidth, so it is the limit
+now: mix alone would be ~44 / ~63 MH/s.
 
 The next batch's coefficients and matrix products run on a second, high-priority stream while this batch's mix runs.
 On the 3060 that only pays when the matrix kernel is persistent and small (two 4-warp blocks per SM, 31.4 MH/s; one
 block per tile: 26.3; a cp.async double-buffered version with 46 KB of shared memory per block: 26.8, it takes L1
 from the mix); the card is then at its 170 W cap. On the 9070 XT the overlap does not help and one block per tile is
-best (52.6; two per WGP: 44.4). The scalar path remains for other GPUs and as `XM_OCTOPUS_TC=0`.
+best for separate launches (52.6; two per WGP: 44.4), but the AMD runtime on Windows runs a second stream's work
+after the first's (a CU-masked second stream changed nothing), so AMD uses one fused launch instead: the first 128
+blocks compute the next batch's matrix products (persistent), the rest run this batch's mix (58.5 MH/s; 64 blocks:
+53.5, 256: 54.6). A fused kernel reserves the same registers and LDS for every block, so the matrix part must not
+need more than the mix: the operands are stored in WMMA fragment order (a wave reads each 16 x 16 fragment as one
+256-byte load from L2 / Infinity Cache, two 16-k steps in flight) and it uses no LDS. That layout also made the matrix
+products faster on their own (4.75 vs 6.3 ms; ~67% of int8 peak). An LDS-staged fused version reached 55.5 (214
+VGPRs and 23 KB LDS per block cut the mix's waves). The scalar path remains for other GPUs and as `XM_OCTOPUS_TC=0`.
 
 ## FishHash (Iron Fish) and KarlsenHashV2 (Karlsen)
 

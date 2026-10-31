@@ -239,29 +239,40 @@ bool octopus_check(gpu::Device& dev, std::string& detail) {
   for (int i = 0; i < 32; ++i) h[i] = static_cast<uint8_t>(i * 29 + 3);
   reinterpret_cast<uint8_t*>(job.boundary.data())[0] = 0x10;
   auto t0 = std::chrono::steady_clock::now();
-  std::vector<octopus::Share> shares;
   if (!eng.init(detail) || !eng.set_job(job, detail)) return false;
   const double setup = ms_since(t0);
-  t0 = std::chrono::steady_clock::now();
-  const uint64_t first = eng.next_nonce();
-  if (eng.iterate(2048, shares, detail) == 0) return false;  // 2048: the matrix path's unit
-  const double gpu_ms = ms_since(t0);
   const auto light = octopus::make_light(0);
-  octopus::Points pts;
-  octopus::make_points(job.header, pts);
-  size_t want = 0, missing = 0;
-  for (uint64_t k = 0; k < 2048; ++k) {
-    if (!octopus::below(octopus::hash(*light, pts, job.header, first + k), job.boundary)) continue;
-    ++want;
-    bool got = false;
-    for (const auto& s : shares) got = got || s.nonce == first + k;
-    missing += !got;
+  // Three batches of 2048 (the matrix path's unit): the first computes its own polynomial values, the second uses the
+  // values computed ahead during the first, the third follows a job change (new header, values recomputed).
+  size_t want = 0, missing = 0, got_total = 0;
+  double gpu_ms = 0;
+  for (int b = 0; b < 3; ++b) {
+    if (b == 2) {
+      h[0] ^= 0x5a;
+      if (!eng.set_job(job, detail)) return false;
+    }
+    octopus::Points pts;
+    octopus::make_points(job.header, pts);
+    std::vector<octopus::Share> shares;
+    const uint64_t first = eng.next_nonce();
+    t0 = std::chrono::steady_clock::now();
+    if (eng.iterate(2048, shares, detail) == 0) return false;
+    gpu_ms += ms_since(t0);
+    for (uint64_t k = 0; k < 2048; ++k) {
+      if (!octopus::below(octopus::hash(*light, pts, job.header, first + k), job.boundary)) continue;
+      ++want;
+      bool got = false;
+      for (const auto& s : shares) got = got || s.nonce == first + k;
+      missing += !got;
+    }
+    got_total += shares.size();
   }
   char buf[200];
-  std::snprintf(buf, sizeof buf, "%zu of %zu CPU hits found in 2048 nonces, %llu wrong (DAG + compile %.0f ms, %.0f ms)",
-                shares.size(), want, static_cast<unsigned long long>(eng.cpu_rejects()), setup, gpu_ms);
+  std::snprintf(buf, sizeof buf,
+                "%zu of %zu CPU hits found in 3 x 2048 nonces, %llu wrong (DAG + compile %.0f ms, %.0f ms)", got_total,
+                want, static_cast<unsigned long long>(eng.cpu_rejects()), setup, gpu_ms);
   detail = buf;
-  return want >= 32 && missing == 0 && shares.size() == want && eng.cpu_rejects() == 0;
+  return want >= 96 && missing == 0 && got_total == want && eng.cpu_rejects() == 0;
 }
 
 // FishHash / KarlsenHashV2: the fixed 4.5 GB dataset and 256 consecutive nonces against a 2^-3 target (about 32

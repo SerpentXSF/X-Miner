@@ -5,7 +5,8 @@
 - Octopus (Conflux): the polynomial values as int8 matrix products on the GPU's matrix units (NVIDIA sm_80+ tensor
   cores, AMD RDNA4 WMMA): the job's Vandermonde matrix and each nonce group's coefficients as bytes, nine products
   summed by byte shift and reduced once. The next batch's products run on a second GPU stream beside the DAG mix. RX
-  9070 XT 42.7 -> 52.6 MH/s, RTX 3060 24.2 -> 31.4 MH/s, same power. Other GPUs keep the scalar path
+  9070 XT 42.7 -> 58.5 MH/s (one fused launch: the next batch's products in persistent blocks beside this batch's
+  mix, operands in WMMA fragment order), RTX 3060 24.2 -> 31.4 MH/s, same power. Other GPUs keep the scalar path
   (`XM_OCTOPUS_TC=0` selects it everywhere).
 - GPU backends: an optional second stream (`set_stream`), created at the highest priority.
 

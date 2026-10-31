@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <map>
+#include <vector>
 #include <mutex>
 
 #include "gpu/dynlib.hpp"
@@ -45,6 +46,7 @@ struct Hip {
   hipError_t (*hipStreamWaitEvent)(hipStream_t, hipEvent_t, unsigned) = nullptr;  // optional: the second stream
   hipError_t (*hipStreamCreateWithPriority)(hipStream_t*, unsigned, int) = nullptr;
   hipError_t (*hipDeviceGetStreamPriorityRange)(int*, int*) = nullptr;
+  hipError_t (*hipExtStreamCreateWithCUMask)(hipStream_t*, uint32_t, const uint32_t*) = nullptr;
   const char* (*hipGetErrorString)(hipError_t) = nullptr;
   bool ready = false;
 
@@ -75,6 +77,7 @@ struct Hip {
     lib.sym("hipStreamWaitEvent", hipStreamWaitEvent);
     lib.sym("hipStreamCreateWithPriority", hipStreamCreateWithPriority);
     lib.sym("hipDeviceGetStreamPriorityRange", hipDeviceGetStreamPriorityRange);
+    lib.sym("hipExtStreamCreateWithCUMask", hipExtStreamCreateWithCUMask);
     ready = all && hipInit(0) == 0;
   }
 };
@@ -142,8 +145,20 @@ class HipDevice : public Device {
       int least = 0, greatest = 0;
       const bool prio = H.hipStreamCreateWithPriority && H.hipDeviceGetStreamPriorityRange &&
                         H.hipDeviceGetStreamPriorityRange(&least, &greatest) == 0;
+      // Developer: XM_HIP_CUMASK=N confines the second stream to N compute units spread over the GPU (the default
+      // stream keeps all of them).
+      int cus = 0;
+      if (const char* e = std::getenv("XM_HIP_CUMASK")) cus = std::atoi(e);
+      std::vector<uint32_t> mask;
+      if (cus > 0 && H.hipExtStreamCreateWithCUMask && info_.compute_units > 0) {
+        const int total = 2 * info_.compute_units;  // compute_units counts WGPs (two CUs each)
+        mask.assign((total + 31) / 32, 0u);
+        for (int i = 0, step = std::max(1, total / cus); i < total && cus > 0; i += step, --cus) mask[i / 32] |= 1u << (i % 32);
+      }
       if (!H.hipStreamWaitEvent || !H.hipEventCreateWithFlags || !H.hipEventRecord ||
-          !check(prio ? H.hipStreamCreateWithPriority(&stream2_, 0, greatest) : H.hipStreamCreate(&stream2_)) ||
+          !check(!mask.empty() ? H.hipExtStreamCreateWithCUMask(&stream2_, uint32_t(mask.size()), mask.data())
+                 : prio      ? H.hipStreamCreateWithPriority(&stream2_, 0, greatest)
+                             : H.hipStreamCreate(&stream2_)) ||
           !check(H.hipEventCreateWithFlags(&event2_, 0x2)))  // hipEventDisableTiming
         return false;
     }
