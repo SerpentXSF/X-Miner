@@ -57,6 +57,10 @@ NVIDIA findings (RTX 3060):
   (35.0 TMAC/s, 81% of peak) natively and under WSL2 alike, and register-only IMMA (100% of peak), streaming reads
   (341 GB/s) and random gathers match too, with 4 KB/64 KB or 2 MB (VMM) pages. The WSL2 figures elsewhere in
   this file remain valid for comparisons with each other, not as absolute rates. Real gap to SRBMiner: ~17%.
+  Re-confirmed 2026-10-31 for integer work (Quantus-like multiply-add probe, same cubin, driver API): native Windows
+  and WSL2 both 22.88 M SM clocks per launch at 1940 MHz, CUDA-event time 11.96 vs 11.94 ms; only WSL2's host clock
+  disagreed (10.84 ms per launch; `sleep 30` = 33.5 s, while the NTP-synced wall clock stays right). So the later
+  "WSL2 ~10% faster on every algorithm" readings were this clock too: the native Windows rates are the true ones.
 - Where the time goes (bare harness, locked 1500 MHz, kernel shape kept, 2026-10-23): register-only IMMA with 8 warps
   of 4x8 accumulators 99.6% of peak; + ldmatrix from shared memory 99.6%; + a barrier per 128 k 97.3%; + the XOR fold
   92.3%; real kernel 81.4%, of which the global -> shared copies cost ~7.7% even when the data sits in L2 (so not
@@ -110,7 +114,7 @@ NVIDIA findings (RTX 3060):
 - SRBMiner sustains ~97% of the int8 tensor peak per clock (48.7 TH/s at 1755 MHz = 28.7K MAC/clk x 0.97) and still
   holds 1755 MHz inside 127 W, so its energy per MAC is ~25% lower than ours. Our loop is already lean (128 IMMA vs
   ~200 other instructions per 128 k, most of them the fold's XORs); finding the rest needs a profiler (Nsight).
-- Windows vs Linux (same RTX 3060, same driver, same cubin, ~1750 MHz both): native Windows x-miner.exe runs the
+- (Superseded by the correction above.) Windows vs Linux (same RTX 3060, same driver, same cubin, ~1750 MHz both): native Windows x-miner.exe runs the
   GEMM ~10% slower (60 vs 55 ms per pass): Pearl 35.5 TH/s, Parano1d 8.7 MH/s on Windows against 39.1 / 9.6 under
   WSL2 Linux. Not the wait mode (spin vs blocking identical), pass size or shared-memory carveout. SRBMiner reaches
   48.7 natively on Windows. Open question.
