@@ -76,7 +76,7 @@ Engine::~Engine() {
 bool Engine::init(std::string& err) {
   dev_.make_current();
   if (const char* e = std::getenv("XM_NEXA_TPB")) tpb_ = std::max(32u, uint32_t(std::atoi(e)));  // developer tuning
-  if (const char* e = std::getenv("XM_NEXA_W")) w_ = std::clamp(std::atoi(e), 4, 16);
+  if (const char* e = std::getenv("XM_NEXA_W")) w_ = std::clamp(std::atoi(e), 4, 22);
   if (batch_ == 0) {
     batch_ = 1u << 20;
     if (const char* e = std::getenv("XM_NEXA_BATCH")) batch_ = uint32_t(std::strtoul(e, nullptr, 10));
@@ -84,12 +84,8 @@ bool Engine::init(std::string& err) {
   batch_ = std::max(tpb_, batch_ / tpb_ * tpb_);
   const int nw = (256 + w_ - 1) / w_ + (256 % w_ == 0 ? 1 : 0);
   // comb table: x then y, 8 little-endian limbs each, per entry
-  const auto pts = crypto::secp256k1::comb_table(w_, nw);
-  std::vector<uint32_t> tab(pts.size() * 16);
-  for (size_t i = 0; i < pts.size(); ++i) {
-    std::memcpy(&tab[16 * i], pts[i].x.w, 32);
-    std::memcpy(&tab[16 * i + 8], pts[i].y.w, 32);
-  }
+  std::vector<uint32_t> tab((size_t(1) << (w_ - 1)) * size_t(nw) * 16);
+  crypto::secp256k1::comb_table(w_, nw, tab.data());
   d_found_ = dev_.alloc((1 + kMaxFound) * 4);
   d_table_ = dev_.alloc(tab.size() * 4);
   if (!d_found_ || !d_table_ || !dev_.upload(d_table_, tab.data(), tab.size() * 4)) {

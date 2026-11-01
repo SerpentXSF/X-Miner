@@ -15,10 +15,15 @@
 - GPU backends: an optional second stream (`set_stream`), created at the highest priority.
 - Nexa (NEXA, `nexapow`), new: SHA256d of the header commitment and nonce, then a BCH Schnorr signature with that hash
   as the private key (RFC6979 nonce, secp256k1), then SHA256 of the signature. The CPU reference reproduces the Echelon
-  spec vectors and real main-chain blocks. The GPU kernel (run-time compiled) uses a signed 16-bit fixed-base comb
-  table, 29-bit limbs, one batched inversion per block and a binary Legendre symbol; the selftest compares 512
-  signatures with the CPU. Kryptex (Miningcore Nexa stratum): 4 accepted / 0 rejected in 15 minutes from the RX 9070 XT.
-  RTX 3060 16.8 MH/s, RX 9070 XT 18.2 MH/s, well below lolMiner (~50 / ~95); the speed work continues.
+  spec vectors and real main-chain blocks. The GPU kernel (compiled at run time) uses:
+  - a signed 20-bit fixed-base comb (13 point additions per scalar, a 436 MB table built on all CPU cores);
+  - 29-bit field limbs;
+  - one batched inversion per block, by Bernstein-Yang divsteps, overlapped with the other warps' work;
+  - divsteps with Jacobi tracking for the quadratic-residue test.
+
+  The selftest compares 512 signatures with the CPU. Kryptex (Miningcore Nexa stratum): 9 accepted / 0 rejected in
+  25 minutes from the RX 9070 XT. RX 9070 XT 49.1 MH/s, RTX 3060 25.1 MH/s (lolMiner ~95 / ~50). The AMD compiler
+  (gfx1201) miscompiles the inlined field reduction unless an empty asm fence separates it from the products.
 
 ## 0.1.0c (unreleased)
 

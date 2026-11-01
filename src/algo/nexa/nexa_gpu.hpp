@@ -63,7 +63,7 @@ class Engine {
   bool have_job_ = false;
   uint64_t cpu_rejects_ = 0;
   uint32_t batch_ = 0, tpb_ = 256;
-  int w_ = 16;  // comb window: 17 point additions per scalar, a 36 MB table (developer: XM_NEXA_W)
+  int w_ = 20;  // comb window: 13 point additions per scalar, a 436 MB table (developer: XM_NEXA_W)
   std::vector<uint32_t> params_;
   static constexpr uint32_t kMaxFound = 64;
 };

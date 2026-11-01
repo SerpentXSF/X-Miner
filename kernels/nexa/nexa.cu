@@ -154,12 +154,13 @@ __device__ __forceinline__ void fe_norm64(u32 r[9], u64 c[9]) {
 
 // 17 product columns -> m1. High columns become 29-bit digits; 2^261 = 2^37 + 31264 (mod p), so digit 9 + k adds
 // 31264 d to column k and d << 8 to column k + 1.
-#if defined(__HIPCC__) && !defined(RED_INLINE)
-// AMD: inlined at the squaring sites, the reduction is miscompiled at -O1 and above (gfx1201: results depend on other
-// lanes' data); kept out of line there.
-__device__ __attribute__((noinline)) void fe_red(u32 r[9], u64 c[17]) {
-#else
 __device__ __forceinline__ void fe_red(u32 r[9], u64 c[17]) {
+#ifdef __HIPCC__
+  // AMD gfx12: without this (empty) fence between the products and the reduction, the compiler miscompiles the
+  // inlined reduction at -O1 and above (results depend on other lanes' data). It costs nothing; out of line instead
+  // halves the RX 9070 XT's speed.
+#pragma unroll
+  for (int k = 0; k < 17; ++k) asm volatile("" : "+v"(c[k]));
 #endif
 #pragma unroll
   for (int k = 9; k < 16; ++k) {
@@ -499,53 +500,195 @@ __device__ __forceinline__ void comb_mul(u32 X[9], u32 Y[9], u32 Z[9], const u32
   }
 }
 
-// Legendre symbol (a / p) = 1 for a canonical, nonzero a: the binary Jacobi algorithm, one bit per step, branch
-// free. (a, b) = (a, p); a odd: if a < b swap to (b - a, a) (sign flips when a = b = 3 mod 4), else a -= b; then
-// a /= 2 (sign flips when b = 3 or 5 mod 8). Ends at a = 0 with b = gcd = 1.
-__device__ __forceinline__ bool is_qr(const u32 a_in[8]) {
-  u32 a[8], b[8], s = 0;
-#pragma unroll
-  for (int i = 0; i < 8; ++i) { a[i] = a_in[i]; b[i] = FP[i]; }
+// Legendre symbol (a / p) = 1 for a canonical, nonzero a, by Bernstein-Yang "posdivsteps" with Jacobi tracking
+// (the method of libsecp256k1's secp256k1_jacobi32_maybe_var, MIT, written here for the GPU): batches of 30 steps
+// are decided on the low 32 bits of f and g alone and collected in a 2x2 matrix, which is then applied to the full
+// numbers (9 signed 30-bit limbs). The sign flips when g is divided by an odd power of 2 while f = 3, 5 mod 8, and
+// when f and g are swapped while both are 3 mod 4. Converges (f = 1) after ~25 batches; 50 is the cap, after which
+// the nonce is counted as a residue (a wrong guess there only loses that nonce: the CPU re-checks candidates).
+#define M30 0x3FFFFFFF
+__device__ __forceinline__ void to30(int r[9], const u32 a[8]) {
+  r[0] = (int)(a[0] & M30);
+  r[1] = (int)((a[0] >> 30 | a[1] << 2) & M30);
+  r[2] = (int)((a[1] >> 28 | a[2] << 4) & M30);
+  r[3] = (int)((a[2] >> 26 | a[3] << 6) & M30);
+  r[4] = (int)((a[3] >> 24 | a[4] << 8) & M30);
+  r[5] = (int)((a[4] >> 22 | a[5] << 10) & M30);
+  r[6] = (int)((a[5] >> 20 | a[6] << 12) & M30);
+  r[7] = (int)((a[6] >> 18 | a[7] << 14) & M30);
+  r[8] = (int)(a[7] >> 16);
+}
+
+// 30 posdivsteps decided on the low 32 bits of f and g: the transition matrix [u v; q r] (entries as two's complement
+// 32-bit values), eta and the Jacobi sign bit are updated.
+__device__ __forceinline__ void posdivsteps30(int& eta, int& jac, u32 ff, u32 gg, u32& u, u32& v, u32& q, u32& r) {
+  u = 1; v = 0; q = 0; r = 1;
+  int i = 30;
 #pragma unroll 1
   for (;;) {
-    u32 any = 0;
+    const int zeros = __ffs(gg | (0xFFFFFFFFu << i)) - 1;  // the sentinel bit stops at i
+    gg >>= zeros;
+    u <<= zeros;
+    v <<= zeros;
+    eta -= zeros;
+    i -= zeros;
+    jac ^= zeros & (int)((ff >> 1) ^ (ff >> 2));
+    if (i == 0) break;
+    if (eta < 0) {
+      eta = -eta;
+      jac ^= (int)((ff & gg) >> 1);
+      u32 tmp = ff; ff = gg; gg = tmp;
+      tmp = u; u = q; q = tmp;
+      tmp = v; v = r; r = tmp;
+    }
+    const int limit = eta + 1 > i ? i : eta + 1;
+    const u32 m = (0xFFFFFFFFu >> (32 - limit)) & 255u;
+    u32 x = ff;  // 1 / f mod 2^3, then Newton steps to mod 2^12
+    x *= 2u - ff * x;
+    x *= 2u - ff * x;
+    const u32 w = (gg * (0u - x)) & m;  // cancels the bottom bits of g: g + f w = 0 mod 2^limit
+    gg += ff * w;
+    q += u * w;
+    r += v * w;
+  }
+}
+
+// (f, g) = [u v; q r] (f, g) / 2^30, 9 signed 30-bit limbs
+__device__ __forceinline__ void update_fg(int f[9], int g[9], u32 u, u32 v, u32 q, u32 r) {
+  const long long tu = (int)u, tv = (int)v, tq = (int)q, tr = (int)r;
+  long long cf = tu * f[0] + tv * g[0], cg = tq * f[0] + tr * g[0];
+  cf >>= 30;
+  cg >>= 30;
 #pragma unroll
-    for (int i = 0; i < 8; ++i) any |= a[i];
-    if (!any) break;
+  for (int k = 1; k < 9; ++k) {
+    cf += tu * f[k] + tv * g[k];
+    cg += tq * f[k] + tr * g[k];
+    f[k - 1] = (int)cf & M30;
+    cf >>= 30;
+    g[k - 1] = (int)cg & M30;
+    cg >>= 30;
+  }
+  f[8] = (int)cf;
+  g[8] = (int)cg;
+}
+
+__device__ __forceinline__ bool is_one30(const int f[9]) {
+  int rest = f[0] ^ 1;
+#pragma unroll
+  for (int k = 1; k < 9; ++k) rest |= f[k];
+  return rest == 0;
+}
+
+__device__ __forceinline__ bool is_qr(const u32 a_in[8]) {
+  int f[9], g[9];
+  to30(f, FP);
+  to30(g, a_in);
+  int eta = -1, jac = 0;
 #pragma unroll 1
-    for (int rep = 0; rep < 4; ++rep) {  // four steps per zero check (extra steps on a = 0 change nothing)
-      const u32 odd = a[0] & 1u;
-      u32 d[8], nd[8];
-      long long c = 0;
+  for (int it = 0; it < 50; ++it) {
+    u32 u, v, q, r;
+    posdivsteps30(eta, jac, (u32)f[0] | (u32)f[1] << 30, (u32)g[0] | (u32)g[1] << 30, u, v, q, r);
+    update_fg(f, g, u, v, q, r);
+    if (is_one30(f)) return (jac & 1) == 0;
+  }
+  return true;
+}
+
+// 1 / a mod p (a canonical, nonzero) with the same posdivsteps (variable time; thread 0 inverts the block's product
+// with it): f = d a, g = e a (mod p) throughout, so d = 1 / a when f reaches 1. (d, e) take the same matrix plus a
+// multiple of p that makes the division by 2^30 exact, and are kept in [0, p).
+__constant__ int P30[9] = {0x3ffffc2f, 0x3ffffffb, 0x3fffffff, 0x3fffffff, 0x3fffffff,
+                           0x3fffffff, 0x3fffffff, 0x3fffffff, 0xffff};
+#define PINV30 0x2ddacacfu  // p^-1 mod 2^30
+
+// x (limbs in [0, 2^30) except a signed top limb, value in (-p, 2p)) -> [0, p)
+__device__ __forceinline__ void reduce30(int x[9]) {
+  if (x[8] < 0) {  // + p
+    long long c = 0;
 #pragma unroll
-      for (int i = 0; i < 8; ++i) {
-        c += (long long)a[i] - (long long)b[i];
-        d[i] = (u32)c;
-        c >>= 32;
-      }
-      const u32 br = (u32)c & 1u;  // a < b
-      c = 0;
+    for (int k = 0; k < 9; ++k) {
+      c += (long long)x[k] + P30[k];
+      x[k] = k < 8 ? (int)c & M30 : (int)c;
+      c >>= 30;
+    }
+  } else {  // - p unless that goes negative
+    int y[9];
+    long long c = 0;
 #pragma unroll
-      for (int i = 0; i < 8; ++i) {
-        c -= (long long)d[i];
-        nd[i] = (u32)c;
-        c >>= 32;
-      }
-      const u32 sw = odd & br;
-      s ^= sw & (a[0] & b[0]) >> 1;
+    for (int k = 0; k < 9; ++k) {
+      c += (long long)x[k] - P30[k];
+      y[k] = k < 8 ? (int)c & M30 : (int)c;
+      c >>= 30;
+    }
+    if (y[8] >= 0) {
 #pragma unroll
-      for (int i = 0; i < 8; ++i) {
-        const u32 na = odd ? (br ? nd[i] : d[i]) : a[i];
-        b[i] = sw ? a[i] : b[i];
-        a[i] = na;
-      }
-      s ^= ((b[0] >> 1) ^ (b[0] >> 2)) & 1u;
-#pragma unroll
-      for (int i = 0; i < 7; ++i) a[i] = (a[i] >> 1) | (a[i + 1] << 31);
-      a[7] >>= 1;
+      for (int k = 0; k < 9; ++k) x[k] = y[k];
     }
   }
-  return (s & 1u) == 0u;
+}
+
+__device__ __forceinline__ void update_de(int d[9], int e[9], u32 u, u32 v, u32 q, u32 r) {
+  const long long tu = (int)u, tv = (int)v, tq = (int)q, tr = (int)r;
+  long long cd = tu * d[0] + tv * e[0], ce = tq * d[0] + tr * e[0];
+  const long long md = (long long)((0u - (u32)cd * PINV30) & M30), me = (long long)((0u - (u32)ce * PINV30) & M30);
+  cd += md * P30[0];
+  ce += me * P30[0];
+  cd >>= 30;
+  ce >>= 30;
+#pragma unroll
+  for (int k = 1; k < 9; ++k) {
+    cd += tu * d[k] + tv * e[k] + md * P30[k];
+    ce += tq * d[k] + tr * e[k] + me * P30[k];
+    d[k - 1] = (int)cd & M30;
+    cd >>= 30;
+    e[k - 1] = (int)ce & M30;
+    ce >>= 30;
+  }
+  d[8] = (int)cd;
+  e[8] = (int)ce;
+  reduce30(d);
+  reduce30(e);
+}
+
+__device__ __forceinline__ void fe_inv_var(u32 r9[9], const u32 a9[9]) {
+  u32 a[9], w[8];
+  fe_copy(a, a9);
+  fe_canon(a);
+  fe_to32(w, a);
+  int f[9], g[9], d[9], e[9];
+  to30(f, FP);
+  to30(g, w);
+#pragma unroll
+  for (int k = 0; k < 9; ++k) { d[k] = 0; e[k] = k ? 0 : 1; }
+  int eta = -1, jac = 0;
+#pragma unroll 1
+  for (int it = 0; it < 60; ++it) {
+    u32 u, v, q, r;
+    posdivsteps30(eta, jac, (u32)f[0] | (u32)f[1] << 30, (u32)g[0] | (u32)g[1] << 30, u, v, q, r);
+    update_fg(f, g, u, v, q, r);
+    update_de(d, e, u, v, q, r);
+    if (is_one30(f)) break;
+  }
+  // d (signed 30-bit limbs, in [0, p)) -> 32-bit limbs -> 9 x 29
+  u32 o[8];
+  o[0] = (u32)d[0] | (u32)d[1] << 30;
+  o[1] = (u32)d[1] >> 2 | (u32)d[2] << 28;
+  o[2] = (u32)d[2] >> 4 | (u32)d[3] << 26;
+  o[3] = (u32)d[3] >> 6 | (u32)d[4] << 24;
+  o[4] = (u32)d[4] >> 8 | (u32)d[5] << 22;
+  o[5] = (u32)d[5] >> 10 | (u32)d[6] << 20;
+  o[6] = (u32)d[6] >> 12 | (u32)d[7] << 18;
+  o[7] = (u32)d[7] >> 14 | (u32)d[8] << 16;
+  fe_from32(r9, o);
+}
+
+// R.y = RY / RZ^3 is a quadratic residue (same Legendre symbol as RY RZ)
+__device__ __forceinline__ bool ry_is_qr(const u32 RY[9], const u32 RZ[9]) {
+  u32 t[9], a[8];
+  fe_mul(t, RY, RZ);
+  fe_canon(t);
+  fe_to32(a, t);
+  return is_qr(a);
 }
 
 // big-endian SHA words <-> little-endian 32-bit limbs
@@ -706,15 +849,23 @@ extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const 
     }
     __syncthreads();
   }
-  if (tid == 0) {
-    u32 tot[9], inv[9];
+  // The block's one inversion is a long dependent chain on thread 0: warp 0 runs it while the other warps take their
+  // quadratic-residue test (R.y = RY / RZ^3 has the Legendre symbol of RY RZ), instead of all waiting at the barrier.
+  bool qr = true;
+  if (tid < 32) {
+    if (tid == 0) {
+      u32 tot[9], inv[9];
 #pragma unroll
-    for (int i = 0; i < 9; ++i) tot[i] = sh_pre[TPB - 1][i];
-    fe_pow_chain(inv, tot, 0);
+      for (int i = 0; i < 9; ++i) tot[i] = sh_pre[TPB - 1][i];
+      fe_inv_var(inv, tot);
 #pragma unroll
-    for (int i = 0; i < 9; ++i) sh_inv[i] = inv[i];
+      for (int i = 0; i < 9; ++i) sh_inv[i] = inv[i];
+    }
+  } else {
+    qr = ry_is_qr(RY, RZ);
   }
   __syncthreads();
+  if (tid < 32) qr = ry_is_qr(RY, RZ);
   u32 iq[9];  // 1 / q = inv(total) * prefix(tid - 1) * suffix(tid + 1)
 #pragma unroll
   for (int i = 0; i < 9; ++i) iq[i] = sh_inv[i];
@@ -744,14 +895,8 @@ extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const 
   fe_sqr(zi2, zi);
   fe_mul(rx9, RX, zi2);
 
-  // ---- k -> n - k unless R.y = RY / RZ^3 is a quadratic residue (same Legendre symbol as RY RZ) ----
-  fe_mul(t, RY, RZ);
-  fe_canon(t);
-  {
-    u32 a[8];
-    fe_to32(a, t);
-    if (!is_qr(a)) sc_neg(kk, kk);
-  }
+  // ---- k -> n - k unless R.y is a quadratic residue ----
+  if (!qr) sc_neg(kk, kk);
 
   // ---- e = SHA256(R.x | 02/03 | P.x | h1) mod n (97 bytes), s = k + e x ----
   u32 rxw[8], pxw[8], e[8], sw[8];

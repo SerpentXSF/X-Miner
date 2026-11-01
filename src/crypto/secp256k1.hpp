@@ -43,8 +43,9 @@ struct Point {
 Point mul_g(const U256& k);
 const Point& generator();
 // Fixed-base comb table for GPU scalar multiplication: entry [i * half + j - 1] = j * 2^(w i) * G for window
-// i < windows and 1 <= j <= half = 2^(w - 1), affine (one batched inversion).
-std::vector<Point> comb_table(int w, int windows);
+// i < windows and 1 <= j <= half = 2^(w - 1), affine x then y as 8 little-endian 32-bit limbs each (16 words per
+// entry) into out. Built on all cores, chunks with one batched inversion each.
+void comb_table(int w, int windows, uint32_t* out);
 
 // RFC6979 nonce for (key32, msg32) with libsecp256k1's seed key32 | msg32 | algo16 (no extra data); counter > 0
 // gives the retries.

@@ -1,6 +1,9 @@
 #include "crypto/secp256k1.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #include "crypto/sha256.hpp"
@@ -240,39 +243,59 @@ Point mul_g(const U256& k) {
   return out;
 }
 
-std::vector<Point> comb_table(int w, int windows) {
+void comb_table(int w, int windows, uint32_t* out) {
   const size_t half = size_t(1) << (w - 1);
   const U256 one = make(0, 0, 0, 0, 0, 0, 0, 1);
-  std::vector<Jac> jac;
-  jac.reserve(half * windows);
+  // window bases 2^(w i) G
+  std::vector<Jac> bases(windows);
   const Point& g = generator();
   Jac base{g.x, g.y, one};
   for (int i = 0; i < windows; ++i) {
-    Jac acc = base;
-    for (size_t j = 1; j <= half; ++j) {
-      jac.push_back(acc);
-      if (j < half) acc = jadd(acc, base);
-    }
+    bases[i] = base;
     for (int d = 0; d < w; ++d) base = jdouble(base);
   }
-  // Montgomery's trick: prefix products of z, one inversion, then back to front.
-  std::vector<U256> pre(jac.size());
-  U256 run = one;
-  for (size_t k = 0; k < jac.size(); ++k) {
-    pre[k] = run;
-    run = fe_mul(run, jac[k].z);
-  }
-  U256 inv = fe_inv(run);
-  std::vector<Point> out(jac.size());
-  for (size_t k = jac.size(); k-- > 0;) {
-    const U256 zi = fe_mul(inv, pre[k]);
-    inv = fe_mul(inv, jac[k].z);
-    const U256 zi2 = fe_mul(zi, zi);
-    out[k].x = fe_mul(jac[k].x, zi2);
-    out[k].y = fe_mul(jac[k].y, fe_mul(zi2, zi));
-    out[k].inf = false;
-  }
-  return out;
+  // chunks of consecutive multiples j B (j = j0 .. j0 + len - 1), each with its own batched inversion, on all cores
+  const size_t chunk = std::min<size_t>(half, 8192);
+  const size_t per_window = (half + chunk - 1) / chunk, tasks = per_window * size_t(windows);
+  std::atomic<size_t> next{0};
+  auto work = [&] {
+    std::vector<Jac> jac(chunk);
+    std::vector<U256> pre(chunk);
+    for (size_t t; (t = next++) < tasks;) {
+      const int wi = int(t / per_window);
+      const size_t j0 = 1 + (t % per_window) * chunk, len = std::min(chunk, half + 1 - j0);
+      const Jac& b = bases[wi];
+      Jac acc{U256{}, U256{}, U256{}};  // j0 B by double-and-add
+      for (int bit = 63; bit >= 0; --bit) {
+        acc = jdouble(acc);
+        if (j0 >> bit & 1) acc = jadd(acc, b);
+      }
+      for (size_t k = 0; k < len; ++k) {
+        jac[k] = acc;
+        if (k + 1 < len) acc = jadd(acc, b);
+      }
+      U256 run = one;  // Montgomery's trick: prefix products of z, one inversion, then back to front
+      for (size_t k = 0; k < len; ++k) {
+        pre[k] = run;
+        run = fe_mul(run, jac[k].z);
+      }
+      U256 inv = fe_inv(run);
+      for (size_t k = len; k-- > 0;) {
+        const U256 zi = fe_mul(inv, pre[k]);
+        inv = fe_mul(inv, jac[k].z);
+        const U256 zi2 = fe_mul(zi, zi);
+        const U256 x = fe_mul(jac[k].x, zi2), y = fe_mul(jac[k].y, fe_mul(zi2, zi));
+        uint32_t* o = out + 16 * (size_t(wi) * half + j0 - 1 + k);
+        std::memcpy(o, x.w, 32);
+        std::memcpy(o + 8, y.w, 32);
+      }
+    }
+  };
+  const unsigned n = std::max(1u, std::min(32u, std::thread::hardware_concurrency()));
+  std::vector<std::thread> pool;
+  for (unsigned k = 1; k < n; ++k) pool.emplace_back(work);
+  work();
+  for (auto& th : pool) th.join();
 }
 
 std::array<uint8_t, 32> hmac_sha256(const uint8_t* key, size_t key_len, const uint8_t* msg, size_t msg_len) {
