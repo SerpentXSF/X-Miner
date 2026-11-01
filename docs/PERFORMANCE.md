@@ -463,3 +463,58 @@ IADD3 adds, SHF funnel rotates), bound by the integer pipe.
   needs the memory: locked 7301 MHz 41.1, 5001 MHz 32.2, unlocked 44.5 TH/s.
 - Pearl intensity 64 (16384 x 65536 columns per pass) vs 32: RX 9070 XT 103.0 -> 103.9 TH/s, RTX 3060 44.47 -> 44.80
   TH/s; now the default. Quantus intensity 26 vs 24: no change (148.1 vs 147.9 MH/s).
+
+## NexaPow (Nexa)
+
+Per nonce: SHA256d of the commitment and nonce (the mining hash, used as the private key), SHA256 of that (h1),
+the RFC6979 nonce k (an HMAC-SHA256 DRBG: 16 SHA-256 compressions), P = x G and R = k G, the quadratic-residue test
+on R.y, e = SHA256(R.x | P | h1), s = k + e x, then SHA256 of the signature.
+
+The kernel:
+- **Scalar multiplications:** a signed fixed-base comb with no doublings. A 20-bit window gives 13 point additions per
+  scalar (Jacobian + affine, 7M + 4S). The 436 MB table is built at start on all CPU cores.
+- **Field arithmetic:** 9 limbs of 29 bits, so each product is one 64-bit multiply-add and the carries are resolved
+  once per multiply.
+- **Inversion:** one per block, by Montgomery's trick over the block's z values. The inverse itself uses
+  Bernstein-Yang divsteps on thread 0, overlapped with the other warps' quadratic-residue test.
+- **Quadratic-residue test:** divsteps with Jacobi tracking (the method of libsecp256k1's jacobi32_maybe_var).
+
+Steps on the RTX 3060 (170 W) and RX 9070 XT:
+
+| Step | RTX 3060 | RX 9070 XT |
+|---|---|---|
+| first working kernel (8 x 32-bit limbs, 8-bit comb, Fermat inverse and Legendre) | 5.5 MH/s | wrong (compiler) |
+| 16-bit comb, scalar shifting instead of indexed arrays | 7.2 | |
+| 9 x 29-bit limbs | 10.6 | |
+| 2 blocks per SM (register budget) | 15.0 | |
+| binary Jacobi instead of the Legendre exponentiation | 17.1 | 17.6 |
+| block inversion overlapped with the other warps | 17.5 | |
+| 20-bit comb (22-bit: +2% for a 1.6 GB table) | 19.9 | |
+| divsteps Legendre | 21.5 | |
+| divsteps inverse (removes the block stall) | 25.1 | 26.5 |
+| AMD: asm fence instead of an out-of-line reduction | | 49.1 |
+
+AMD gfx1201: when the field reduction is inlined at the squaring sites, the compiler gives wrong results at -O1 and
+above. Each lane's result then depends on the other lanes' data. An empty `asm volatile` on the 64-bit product
+columns before the reduction fixes it at no cost; making the reduction a separate function also works but halves the
+speed.
+
+Cost split on the RTX 3060 at 25 MH/s, measured by removing parts (timing only):
+- the two scalar multiplications: 55%;
+- the HMAC chain: 14%;
+- the other SHA-256: ~6%;
+- the rest: ~25%.
+
+Nsight Compute: ~144k instructions per nonce, ALU 68% and FMA-heavy 59% busy. The kernel is near its instruction
+throughput.
+
+Tried without gain:
+- an affine + affine first addition;
+- keeping P in shared memory during the second multiplication;
+- other block sizes and register budgets;
+- PTX carry-chain multiplies (ptxas emits 64 IMAD + 64 IMAD.HI + 115 IADD3.X).
+
+lolMiner runs at ~50 / ~95 MH/s on these cards. The next lever on NVIDIA would be multiplies written as SASS
+IMAD.WIDE carry chains (carry predicates in and out), as for Quantus.
+
+Live on Kryptex: RX 9070 XT, 9 accepted / 0 rejected in 25 minutes.

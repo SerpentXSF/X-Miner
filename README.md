@@ -14,6 +14,7 @@ per 100 minutes of mining, shown in the console and API); none on BLAKE2b.
 | Bitcoin Knots RDTS | `blake2b` | Xelis (XEL) | `xelishashv3` |
 | Qubitcoin (QTC) | `qhash` | Neurai (XNA) | `neurai` |
 | EthereumPoW (ETHW) | `ethash` | Quai (QUAI) | `quai` |
+| Nexa (NEXA) | `nexapow` | | |
 
 Every algorithm is checked against its coin's published test vectors where they exist (ProgPowZ and Octopus have
 none: GPU against the CPU reference), by a GPU-against-CPU `--selftest`, and with shares accepted on a live pool from
@@ -33,6 +34,7 @@ both an RX 9070 XT and an RTX 3060.
    - `start-ethw-kryptex.bat` / `.sh`: EthereumPoW on Kryptex (your Kryptex `krx...` username)
    - `start-quai-kryptex.bat` / `.sh`: Quai on Kryptex (your Quai `0x...` address; Kryptex has no username login for Quai)
    - `start-ergo-kryptex.bat` / `.sh`: Ergo on Kryptex (your Kryptex `krx...` username)
+   - `start-nexa-kryptex.bat` / `.sh`: Nexa on Kryptex (your Kryptex `krx...` username)
    - `start-octopus-kryptex.bat` / `.sh`: Conflux on Kryptex (your Kryptex `krx...` username)
    - `start-fishhash-kryptex.bat` / `.sh`: Iron Fish on Kryptex (your Kryptex `krx...` username)
    - `start-karlsen-woolypooly.bat` / `.sh`: Karlsen on WoolyPooly (your `karlsen:...` address)
@@ -164,6 +166,7 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 | FishHash (Iron Fish) / KarlsenHashV2 | 23.5 MH/s (25.2 with `--gpu-mclock 2700`) | 27.5 MH/s @ 140 W | |
 | XelisHashV3 (Xelis) | 5.0 kH/s @ ~170 W | 4.49 kH/s @ 112 W | published: RTX 3060 5.5 kH/s, RTX 4090 15 kH/s |
 | QHash (Qubitcoin) | 2.51 GH/s | 0.96 GH/s @ 147 W | published: RTX 3060 0.70 GH/s, RTX 3070 1.14 GH/s |
+| NexaPow (Nexa) | 49.1 MH/s @ 340 W | 25.1 MH/s @ 169 W | lolMiner: ~95 / ~50; a 436 MB table is built at start (~5-8 s) |
 | BLAKE2b | 4.63 GH/s | 1.97 GH/s | |
 
 The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share
@@ -210,6 +213,8 @@ Pool certificates are not verified, as with other miners (pools use self-signed 
 - QHash (Qubitcoin): Bitcoin stratum (coinbase + merkle branches), e.g. LuckyPool (`qtc-us-east.lproute.com:8610`,
   `qtc-eu.`, `qtc-hk.`, ...; starting difficulty 48 = 206 G hashes per share). Any Qubitcoin address type works;
   a native SegWit `bc1q...` address is the cheapest to spend from later.
+- NexaPow (Nexa): the Miningcore Nexa stratum (4-byte extranonce, 8-byte miner nonce), e.g. Kryptex
+  (`nexa-us.kryptex.network:7026`, `nexa.kryptex.network:7026`; share difficulty 1 = 4.3 G hashes per share).
 - BLAKE2b (Bitcoin Knots RDTS chain): the DATUM gateway's Sia-style stratum, solo through your own DATUM gateway
   or on AlphaPool (`us1.alphapool.tech:5555`). Pool difficulties are sized for Sia-class ASICs, so GPU mining here
   is a lottery.
