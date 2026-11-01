@@ -6,8 +6,10 @@
 #           <algo>_sm_120.cubin           (RTX 50; needs CUDA 12.8+, built separately so the PTX stays loadable by
 #                                          older drivers: -Nvcc <cuda-12.8>\bin\nvcc.exe -NvArchs sm_120 -AmdArchs @() -NoPtx)
 #           <algo>_compute_80.ptx         (portable PTX, JIT-compiled by the driver on newer GPUs)
+#   Except quantus_sm_86.cubin: generated SASS from tools/qgen (Python + CuAssembler, see tools/qgen/README.md).
+#   Without -CuAssembler (or XM_CUASSEMBLER) the committed file is kept.
 param([string]$HipClang = "", [string[]]$AmdArchs = @("gfx1201", "gfx1200"), [string[]]$NvArchs = @("sm_86", "sm_89"),
-      [string]$NvPtx = "compute_80", [string]$Nvcc = "", [switch]$NoPtx)
+      [string]$NvPtx = "compute_80", [string]$Nvcc = "", [switch]$NoPtx, [string]$CuAssembler = $env:XM_CUASSEMBLER)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $out = Join-Path $root "kernels\prebuilt"
@@ -38,6 +40,15 @@ foreach ($dir in Get-ChildItem (Join-Path $root "kernels") -Directory | Where-Ob
   } elseif ($amdSrc) { Write-Warning "HIP clang not found; skipping AMD build of $algo" }
   if ($nvcc -and (Test-Path $cu)) {
     foreach ($a in $NvArchs) {
+      if ($algo -eq "quantus" -and $a -eq "sm_86") {
+        if (-not $CuAssembler) { Write-Warning "no CuAssembler: keeping the committed quantus_sm_86.cubin"; continue }
+        $py = Join-Path $CuAssembler ".venv\Scripts\python.exe"
+        if (-not (Test-Path $py)) { $py = "python" }
+        & $py (Join-Path $PSScriptRoot "qgen\qgen.py") --cuassembler $CuAssembler --nvcc $nvcc --ccbin $ccbin --python $py `
+          --out (Join-Path $out "quantus_sm_86.cubin")
+        if ($LASTEXITCODE) { throw "qgen failed: quantus sm_86" }
+        continue
+      }
       & $nvcc -ccbin $ccbin -cubin "-arch=$a" -O3 -std=c++17 -I (Join-Path $root "kernels") `
         -o (Join-Path $out "${algo}_$a.cubin") $cu
       if ($LASTEXITCODE) { throw "nvcc failed: $algo $a" }

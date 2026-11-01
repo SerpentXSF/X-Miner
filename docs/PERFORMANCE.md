@@ -166,7 +166,7 @@ multiply than 9 class-split integer products; that is the open item. With NOID a
 | Card | X-Miner | Reference |
 |---|---|---|
 | RX 9070 XT | 195.8 MH/s @ ~330 W (stock power), 179.6 MH/s at -30% | SRBMiner 3.7.9: 221.5 MH/s @ ~316 W |
-| RTX 3060 | 149.7 MH/s @ 170 W | SRBMiner 3.7.9: 230 MH/s @ 170 W |
+| RTX 3060 | 169.6 MH/s @ 169 W (generated SASS; ptxas build 151.6) | SRBMiner 3.7.9: 228 MH/s @ 170 W |
 
 The hash is a Poseidon2 sponge (Goldilocks, width 12, rate 8, 8 full + 22 partial rounds, x^7) with five
 permutations. The host absorbs everything that does not depend on the low 64 nonce bits once per job (the official
@@ -190,6 +190,33 @@ permutation tail 14612 -> 13918 instructions (-4.7%; partial round 282 -> 267), 
 integer-pipe adds; the kernel is held by the multiply pipe, and the multiply count (about 736 64-bit products per
 permutation, random diagonal and round constants) is fixed by the algorithm. Reduction mix re-checked after the
 change: XM_QTC_MIX 2 still best (0: 144.8, 3: 146.0, 6: 146.9 MH/s).
+
+Generated SASS on RTX 30 (2026-10-31, tools/qgen): the sm_86 kernel's permutations are written as scheduled SASS
+and assembled with CuAssembler. Nonce setup and the target check stay ptxas. The steps below were measured as SM
+clocks per warp-permutation (checked on the GPU against the CPU permutation, 0 of 262144 states wrong):
+
+| Step | Clocks | vs ptxas |
+|---|---|---|
+| ptxas | 24.14k | 1.00x |
+| straight-line generator | 26.6k | 0.91x |
+| multiplies split into head (4 `IMAD.WIDE`) and tail (reduction), one tail interleaved with the next head on alternating registers and carry predicates | 23.6k | 1.02x |
+| top words of the 96-bit sums on the multiply pipe | 22.54k | 1.07x |
+| rounds as loops with `LDC` round constants (the straight-line code stalled on instruction fetch: Nsight no_instruction 3.3 -> 0.03) | 21.40k | 1.13x |
+| three-input adds in the linear layers | 20.99k | 1.15x |
+
+Moving any further work between the ALU and the multiply pipe, in either direction, measured slower.
+
+The latency model is GA106 measured with a hand-SASS harness:
+- 4 cycles within a pipe, 5 across the ALU and multiply pipes;
+- 6 cycles from WIDE to WIDE, and for a WIDE carry read on the multiply pipe;
+- 13 cycles for `IMAD.HI`, and from `ISETP` to a branch.
+
+In the miner (RTX 3060, native Windows, 170 W cap):
+- `--benchmark`: 151.6 -> 169.6 MH/s (+11.9%) at the same 169 W, every share CPU-verified;
+- self-test passes;
+- Kryptex: 11.5 minutes, 7 accepted / 0 rejected at 167.6 MH/s.
+
+The rest of the gap to SRBMiner (228 MH/s) is kernel time, not the platform: see the WSL2 clock note above.
 
 ## KawPow (Ravencoin)
 
