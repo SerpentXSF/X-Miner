@@ -166,7 +166,7 @@ multiply than 9 class-split integer products; that is the open item. With NOID a
 | Card | X-Miner | Reference |
 |---|---|---|
 | RX 9070 XT | 195.8 MH/s @ ~330 W (stock power), 179.6 MH/s at -30% | SRBMiner 3.7.9: 221.5 MH/s @ ~316 W |
-| RTX 3060 | 171.8 MH/s @ 169 W (generated SASS; ptxas build 151.6), 125.8 MH/s @ 69 W locked at 1400 MHz | SRBMiner 3.7.9: 228 MH/s @ 170 W |
+| RTX 3060 | 173.9 MH/s @ 169 W (generated SASS; ptxas build 151.6), 127.5 MH/s locked at 1400 MHz | SRBMiner 3.7.9: 228 MH/s @ 170 W |
 
 The hash is a Poseidon2 sponge (Goldilocks, width 12, rate 8, 8 full + 22 partial rounds, x^7) with five
 permutations. The host absorbs everything that does not depend on the low 64 nonce bits once per job (the official
@@ -225,6 +225,7 @@ reproducible to 0.01 MH/s; at the 170 W cap the clock drifts and runs vary by ab
 | permutation 4's last round computes only s0 (the shared terminal loop runs 3 rounds there, then the S-boxes and s0's row of the external layer) | 124.34 (+0.8%) |
 | low and high registers of 6 state elements swapped, so three-input adds rarely read three registers of one bank (868 -> 128 such instructions per nonce) | 125.20 (+0.7%) |
 | diag2's two one-carry adds on the multiply pipe | 125.79 (+0.5%) |
+| full-round constants folded into the external layer: w = x + z + M4^-1 rc as one three-input add per element, instead of a separate add after the fold (22,860 -> 22,140 instructions per nonce) | 127.54 (+1.4%) |
 
 Not kept:
 - operand reuse flags: +0.05%;
@@ -238,9 +239,43 @@ Nsight Compute on one launch:
 
 Taking work off the FMA pipe still measures slower, so the counters do not name the limit on their own.
 
+Instruction costs on the RTX 3060 (GA106): instruction mixes timed in a loop inside the Quantus kernel, at 1400 MHz.
+Costs are SMSP cycles per warp instruction.
+
+| Instruction | Cycles |
+|---|---|
+| `IMAD.WIDE.U32` | 4 |
+| `IMAD.HI.U32` | 4 |
+| `IMAD`, `IMAD.X` | 2 |
+| `IADD3` / `IADD3.X` (also with three sources and two carries) | 2, ALU |
+
+- Multiply-pipe and ALU instructions overlap fully in independent mixes.
+- **Register-bank penalty (+1 cycle):** the penalty also delays ALU issue in mixed code. It applies to:
+  - an `IMAD.WIDE` whose two register sources are different registers of one bank (`a * a` is free);
+  - an `IMAD.WIDE` with a 64-bit addend whose first source is an even register;
+  - an `IADD3` with three different registers of one bank.
+
+  The kernel has about 1,800 such `IMAD.WIDE` per nonce. Removing them from an S-box round takes it from 987 to 980
+  cycles, so they are a small part of the gap.
+- **The kernel's instruction mix accounts for about 91% of its time.** Per nonce it runs:
+  - 5,890 `IMAD.WIDE`;
+  - 4,828 `IMAD.X`;
+  - 11,861 ALU instructions.
+- **Phases measured as separate loops:**
+  - an S-box round and a partial round are bound by the multiply pipe (987 and 356 cycles);
+  - the external layer is bound by the ALU (290 cycles).
+
+  Moving mul3's carry adds to the ALU makes the S-box round slower (1050 cycles), which the cycle counts above do not
+  predict.
+- **Warp lockstep ruled out:** starting half the warps up to ~11 us late changes nothing. So the gap to SRBMiner needs
+  fewer instructions, not other scheduling.
+
 At the 170 W cap the kernel goes from 169.0 to 171.8 MH/s (+1.6%, 3 paired runs); Kryptex 11.5 minutes, 10 accepted /
 0 rejected at 170.9 MH/s. Locked at 1400 MHz the card
 does 125.8 MH/s at 69 W: 1.82 MH/s per W, against 1.01 at the cap.
+
+Folding the round constants: 172.1 -> 173.9 MH/s at the cap (+1.1%, 3 paired 30 s runs); Kryptex 11.5 minutes,
+5 accepted / 0 rejected at 172.8 MH/s.
 
 The rest of the gap to SRBMiner (228 MH/s) is kernel time, not the platform: see the WSL2 clock note above.
 

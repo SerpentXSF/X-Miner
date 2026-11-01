@@ -2,7 +2,7 @@
 
 `kernels/prebuilt/quantus_sm_86.cubin` is not compiled from `kernels/quantus/quantus.cu`. It is the same search
 kernel with the two Poseidon2 permutations written as scheduled sm_86 SASS by `qgen.py`, assembled with
-CuAssembler. On an RTX 3060 at 170 W this gives 171.8 MH/s, where the ptxas build gives 151.6 MH/s. The other NVIDIA
+CuAssembler. On an RTX 3060 at 170 W this gives 173.9 MH/s, where the ptxas build gives 151.6 MH/s. The other NVIDIA
 targets (sm_89, sm_120, PTX) and AMD still use the compiled CUDA/HIP kernel.
 
 This is build-time tooling only. Releases ship just the miner packages; the cubin is embedded in `x-miner`.
@@ -29,7 +29,9 @@ The generated code:
 - **Multiplies:** each multiply is split into a head (four `IMAD.WIDE`) and a tail (the reduction, 8 integer ops).
   One multiply's tail is interleaved with the next one's head, using alternating register and predicate sets.
 - **Linear layers:** 96-bit sums with three-input adds (`IADD3` with two carry-outs). Six state elements keep their
-  low word in the odd register of their pair (`SWAP`), so few adds read three registers of one bank.
+  low word in the odd register of their pair (`SWAP`), so few adds read three registers of one bank. The full rounds'
+  constants are folded in (`FOLD_RC`): out + rc = M4 (w + M4^-1 rc), so w = x + z + C takes the table's
+  precomputed C = M4^-1 rc as a third input, and there is no separate add after the fold.
 - **Pipe placement:** carry-only adds go to the multiply pipe (`IMAD.X`) or the ALU (`IADD3.X`) as measured best;
   the comments in `qgen.py` list what was tried.
 - **Loops:** the full and partial rounds are loops, with round constants loaded by `LDC` (the straight-line version

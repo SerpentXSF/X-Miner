@@ -30,7 +30,7 @@ def ref_external(s):
     sums = [(s[k] + s[k + 4] + s[k + 8]) % P for k in range(4)]
     return [(s[i] + sums[i % 4]) % P for i in range(12)]
 
-# ---- constant table (kQgen in qshell.cu): INIT (48), INTERNAL (22), DIAG (12), DIAG1 (12), TERM (48) ----
+# ---- constant table (kQgen in qshell.cu): INIT (48), INTERNAL (22), DIAG (12), DIAG1 (12), TERM (48); loop rows below ----
 K_BASE = 0  # offset of kQgen in constant bank 3 (from the shell's symbol table)
 TABLE = [x for row in INIT for x in row] + INTERNAL + DIAG + DIAG1 + [x for row in TERM for x in row]
 def kofs(kind, r=0, i=0):
@@ -180,9 +180,11 @@ def acc2(dst, x, y):
            f"IMAD.X R{dt}, RZ, RZ, {tops[0]}, P1" if len(tops) == 1 else f"IMAD.X R{dt}, RZ, RZ, RZ, P1")
     return [f"IADD3 R{dl}, P0, R{xl}, R{yl}, RZ", f"IADD3.X R{dh}, P1, R{xh}, R{yh}, RZ, P0, !PT", top]
 
-def external3(rc=None):
+def external3(rc=None, crow=None):
     """out_g = M4 (x_g + z), z_k = x_k + x_{k+4} + x_{k+8} (+ rc[i] before the fold), z by 3-input adds. M4 as
-    t01, s = t01+w2+w3, y0 = s+t01+w1, u = s+w2, v = s+w3, y1 = u+w1+w2, y2 = u+w3+w3, y3 = v+w0+w0 (8 adds, not 12)."""
+    t01, s = t01+w2+w3, y0 = s+t01+w1, u = s+w2, v = s+w3, y1 = u+w1+w2, y2 = u+w3+w3, y3 = v+w0+w0 (8 adds, not 12).
+    crow: w = x + z + C with C = M4^-1 rc loaded by LDC from c[CB][IDX + crow + 8 i] (folded round constants); C_g
+    goes to the pairs of t01, u, sacc and v, which are free until w_g is done."""
     out = []
     Z = [(T[k], T[k] + 1, T[4] + k if k < 2 else T[5] + k - 2) for k in range(4)]
     for k in range(4):
@@ -191,8 +193,15 @@ def external3(rc=None):
     u, v = (T[10], T[10] + 1, T[9] + 1), (T[13], T[13] + 1, T[12] + 1)
     for g in range(3):
         W = [(S[4 * g + k], S[4 * g + k] + 1, T[6] + k if k < 2 else T[7] + k - 2) for k in range(4)]
-        for k in range(4):
-            out += acc2(W[k], S[4 * g + k], Z[k])
+        if crow is not None:
+            C = [T[8], T[10], T[11], T[13]]
+            for k in range(4):
+                out.append(f"LDC.64 R{C[k]}, c[{CB}][R{IDX}+0x{crow + 8 * (4 * g + k):x}]")
+            for k in range(4):
+                out += acc3(W[k], S[4 * g + k], Z[k], C[k])
+        else:
+            for k in range(4):
+                out += acc2(W[k], S[4 * g + k], Z[k])
         w0, w1, w2, w3 = W
         out += acc2(t01, w0, w1) + acc3(sacc, t01, w2, w3) + acc3(t01, sacc, t01, w1)   # y0 in t01
         out += acc2(u, sacc, w2) + acc2(v, sacc, w3)
@@ -230,6 +239,27 @@ def sigma3():
 # Extra table rows (appended, so earlier offsets stay valid): INITX = INIT[1..3] + zero row, TERMX = TERM[1..3] + zero.
 ZROW = [0] * 12
 TABLE += [x for row in INIT[1:] + [ZROW] for x in row] + [x for row in TERM[1:] + [ZROW] for x in row]
+
+# Round constants folded into the external layer: out_g + rc_g = M4 (w_g + M4^-1 rc_g), so each group's w = x + z
+# takes C_g = M4^-1 rc_g as its third input instead of a separate 64-bit add per element after the fold.
+# INITC / TERMC rows (same order as INITX / TERMX) are appended after them.
+FOLD_RC = True
+M4 = [[2, 3, 1, 1], [1, 2, 3, 1], [1, 1, 2, 3], [3, 1, 1, 2]]
+def _m4inv():
+    a = [[x % P for x in row] + [int(i == j) for j in range(4)] for i, row in enumerate(M4)]
+    for c in range(4):
+        r = next(r for r in range(c, 4) if a[r][c])
+        a[c], a[r] = a[r], a[c]
+        inv = pow(a[c][c], P - 2, P)
+        a[c] = [x * inv % P for x in a[c]]
+        for r in range(4):
+            if r != c and a[r][c]:
+                f = a[r][c]; a[r] = [(x - f * y) % P for x, y in zip(a[r], a[c])]
+    return [row[4:] for row in a]
+M4INV = _m4inv()
+def fold_row(rc):
+    return [sum(M4INV[k][j] * rc[4 * g + j] for j in range(4)) % P for g in range(3) for k in range(4)]
+TABLE += [x for row in INIT[1:] + [ZROW] for x in fold_row(row)] + [x for row in TERM[1:] + [ZROW] for x in fold_row(row)]
 IDX = 8          # loop index register (outside the 26 pairs)
 LOOPS = [0]      # label counter
 
@@ -245,7 +275,8 @@ def external_rc_ldc(row_base):
     for i in range(12): out += gadd_r(S[i], T[i])
     return out
 
-def full_round_body(row_base):
+def full_round_body(row_base, crow_base):
+    if FOLD_RC: return pipeline(_sbox_round_items()) + external3(crow=crow_base)
     return pipeline(_sbox_round_items()) + external_rc_ldc(row_base)
 
 def _sbox_round_items():
@@ -295,12 +326,12 @@ def partial_loop_segments():
 
 def permutation_loops():
     """Segments: ('code', instrs) / ('loop', label, body, control)."""
-    initx, termx = K_BASE + 8 * 142, K_BASE + 8 * 190
+    initx, termx, initc, termc = (K_BASE + 8 * r for r in (142, 190, 238, 286))
     segs = [("code", external3([kofs("init", 0, i) for i in range(12)]))]
-    segs += loop(full_round_body(initx), 4, 96)
+    segs += loop(full_round_body(initx, initc), 4, 96)
     segs += [("code", add_rc0(kofs("internal", 0)))]
     segs += partial_loop_segments()
-    segs += loop(full_round_body(termx), 4, 96)
+    segs += loop(full_round_body(termx, termc), 4, 96)
     return segs
 
 
