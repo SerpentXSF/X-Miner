@@ -31,7 +31,7 @@ struct NeuraiTag {  // KawPow unchanged; its own name so the dev fee mines on a 
 struct QuaiTag {  // KawPow over Ravencoin-format donor headers (go-quai consensus/kawpow); pools send RVN-style jobs
   static constexpr const char* kName = "quai";
   static const kawpow::Variant& variant() { return kawpow::kKawpow; }
-  using Pool = KawpowPool;
+  using Pool = QuaiPool;
   static constexpr double kShareRateLimit = 0;
 };
 struct EpicTag {

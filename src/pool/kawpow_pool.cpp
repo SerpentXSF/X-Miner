@@ -6,6 +6,7 @@
 #include <exception>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "core/console.hpp"
 #include "core/version.hpp"
@@ -39,7 +40,9 @@ double kawpow_difficulty(const kawpow::Hash256& target) {
 
 KawpowPool::KawpowPool(std::vector<PoolEndpoint> pools, std::string login, std::string password, ResultFn on_result)
     : pools_(std::move(pools)), login_(std::move(login)), password_(std::move(password)),
-      on_result_(std::move(on_result)) {}
+      on_result_(std::move(on_result)) {
+  if (const char* e = std::getenv("XM_JOB_GRACE_MS")) grace_ms_ = std::max(0, std::atoi(e));
+}
 
 KawpowPool::~KawpowPool() { stop(); }
 
@@ -66,9 +69,16 @@ bool KawpowPool::job(kawpow::Job& out, uint64_t& version) const {
 
 void KawpowPool::submit(const kawpow::Share& s, int tag) {
   std::lock_guard<std::mutex> lk(mu_);
+  bool grace = false;
   if (std::find(live_jobs_.begin(), live_jobs_.end(), s.job_id) == live_jobs_.end() || !authorized_) {
-    on_result_(false, "job expired before submit", s.job_id, tag, s.work);
-    return;
+    const auto now = std::chrono::steady_clock::now();
+    for (const auto& [id, when] : retired_)
+      grace = grace || (id == s.job_id && now - when < std::chrono::milliseconds(grace_ms_));
+    if (!grace || !authorized_) {
+      on_result_(false, "job expired before submit", s.job_id, tag, s.work);
+      return;
+    }
+    ++grace_sent_;
   }
   char nonce[24];
   std::snprintf(nonce, sizeof nonce, "0x%016llx", static_cast<unsigned long long>(s.nonce));
@@ -77,7 +87,7 @@ void KawpowPool::submit(const kawpow::Share& s, int tag) {
             {"method", "mining.submit"},
             {"params", {login_, s.job_id, nonce, "0x" + kawpow::hash_to_hex(s.header),
                         "0x" + kawpow::hash_to_hex(s.mix)}}};
-  pending_[id] = {s.job_id, tag, s.work};
+  pending_[id] = {s.job_id, tag, s.work, grace};
   outbox_.push_back(m.dump());
 }
 
@@ -124,7 +134,15 @@ void KawpowPool::handle(const std::string& line) {
     j.nonce_prefix = prefix_;
     j.prefix_bits = prefix_bits_;
     const bool clean = p.size() > 4 && p[4].is_boolean() ? p[4].get<bool>() : true;
-    if (clean) live_jobs_.clear();
+    if (clean) {
+      if (grace_ms_ > 0) {
+        const auto now = std::chrono::steady_clock::now();
+        for (const auto& id : live_jobs_) retired_.emplace_back(id, now);
+        while (!retired_.empty() && now - retired_.front().second > std::chrono::milliseconds(grace_ms_)) retired_.pop_front();
+        while (retired_.size() > 64) retired_.pop_front();
+      }
+      live_jobs_.clear();
+    }
     if (std::find(live_jobs_.begin(), live_jobs_.end(), j.id) == live_jobs_.end()) live_jobs_.push_back(j.id);
     while (live_jobs_.size() > 16) live_jobs_.pop_front();
     job_ = j;
@@ -179,6 +197,11 @@ void KawpowPool::handle(const std::string& line) {
     if (it == pending_.end()) return;
     pd = it->second;
     pending_.erase(it);
+    if (pd.grace) {
+      grace_ok_ += ok;
+      info("POOL", std::string("share on a retired job ") + (ok ? "accepted" : "rejected") + " (" +
+                       std::to_string(grace_ok_) + " of " + std::to_string(grace_sent_) + " accepted)");
+    }
   }
   on_result_(ok, ok ? std::string() : (err.empty() ? line : err), pd.job_id, pd.tag, pd.work);
 }

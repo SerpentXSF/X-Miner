@@ -8,6 +8,8 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -37,6 +39,7 @@ class KawpowPool {
   bool connected() const { return connected_.load(); }
   std::string endpoint() const;
 
+  void set_job_grace_ms(int ms) { grace_ms_ = ms; }
   void submit(const kawpow::Share& s, int tag);
   void report_rate(double) {}
 
@@ -59,12 +62,17 @@ class KawpowPool {
   int prefix_bits_ = 0;
   double last_difficulty_ = 0;
   std::deque<std::string> live_jobs_;  // in arrival order
+  // Jobs retired by a clean notify, still submitted for grace_ms_ (QuaiPool; developer override XM_JOB_GRACE_MS).
+  std::deque<std::pair<std::string, std::chrono::steady_clock::time_point>> retired_;
+  int grace_ms_ = 0;
+  uint64_t grace_sent_ = 0, grace_ok_ = 0;
   size_t pool_index_ = 0;
   int next_id_ = 10;
   struct Pending {
     std::string job_id;
     int tag;
     double work;
+    bool grace = false;
   };
   std::map<int, Pending> pending_;
   std::vector<std::string> outbox_;
@@ -72,5 +80,15 @@ class KawpowPool {
 
 // Hashes per share for a 256-bit big-endian target: 2^256 / (target + 1).
 double kawpow_difficulty(const kawpow::Hash256& target);
+
+// Quai on Kryptex sends a clean job every few seconds; a share found on the job before is still accepted
+// (2026-11-01: 1 of 1 such shares accepted, 22 / 0 in 20 minutes), so it is sent within 3 s instead of dropped.
+class QuaiPool : public KawpowPool {
+ public:
+  QuaiPool(std::vector<PoolEndpoint> pools, std::string login, std::string password, ResultFn on_result)
+      : KawpowPool(std::move(pools), std::move(login), std::move(password), std::move(on_result)) {
+    if (!std::getenv("XM_JOB_GRACE_MS")) set_job_grace_ms(3000);
+  }
+};
 
 }  // namespace xm
