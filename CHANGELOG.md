@@ -13,6 +13,12 @@
   with CuAssembler; nonce setup and target check stay compiled CUDA). RTX 3060 151.6 -> 173.9 MH/s (+15%) at the
   same 169 W; self-test passes, live on Kryptex with 0 rejects. Other NVIDIA generations and AMD are unchanged.
 - GPU backends: an optional second stream (`set_stream`), created at the highest priority.
+- Nexa (NEXA, `nexapow`), new: SHA256d of the header commitment and nonce, then a BCH Schnorr signature with that hash
+  as the private key (RFC6979 nonce, secp256k1), then SHA256 of the signature. The CPU reference reproduces the Echelon
+  spec vectors and real main-chain blocks. The GPU kernel (run-time compiled) uses a signed 16-bit fixed-base comb
+  table, 29-bit limbs, one batched inversion per block and a binary Legendre symbol; the selftest compares 512
+  signatures with the CPU. Kryptex (Miningcore Nexa stratum): 4 accepted / 0 rejected in 15 minutes from the RX 9070 XT.
+  RTX 3060 16.8 MH/s, RX 9070 XT 18.2 MH/s, well below lolMiner (~50 / ~95); the speed work continues.
 
 ## 0.1.0c (unreleased)
 

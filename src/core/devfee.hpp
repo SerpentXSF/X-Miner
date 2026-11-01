@@ -31,6 +31,7 @@ inline constexpr FeeTarget kFeeTargets[] = {
     {"noid", "na.rplant.xyz:17185", "o1zzxrf4hkz33hq0lzpzxcmvmhv2990m5a8gg43ldxdlvzj2xqeqksk9j9y0", "xminer-fee", kFeePercent},
     {"blake2b", "", "", "", 0.0},
     {"quantus", "qtc-us.kryptex.network:7049", "krxY9VNKGD", "xminer-fee", kFeePercent},
+    {"nexapow", "nexa-us.kryptex.network:7026", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"kawpow", "rvn-us.kryptex.network:7031", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"neurai", "xna-us.kryptex.network:7024", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"quai", "quai-kawpow.kryptex.network:7043", "0x00498b94BA83D99043E592162F68e1B681835E77", "xminer-fee", kFeePercent},

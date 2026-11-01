@@ -92,7 +92,8 @@ TEST(algorithm_aliases) {
   CHECK(find_algorithm("RVN") && std::string(find_algorithm("RVN")->name) == "kawpow");
   CHECK(find_algorithm("ETHW") && std::string(find_algorithm("ETHW")->name) == "ethash");
   CHECK(find_algorithm("xna") && std::string(find_algorithm("xna")->name) == "neurai");
-  CHECK(find_algorithm("nexapow") == nullptr);
+  CHECK(find_algorithm("NEXA") && std::string(find_algorithm("NEXA")->name) == "nexapow");
+  CHECK(find_algorithm("nosuchalgo") == nullptr);
 }
 
 TEST(hashrate_formatting) {

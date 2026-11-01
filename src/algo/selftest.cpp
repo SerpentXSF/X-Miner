@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "algo/quantus/quantus_gpu.hpp"
 #include "algo/xelis/xelis_gpu.hpp"
 #include "algo/qhash/qhash_gpu.hpp"
+#include "algo/nexa/nexa_gpu.hpp"
 #include "algo/noid/noid_gpu.hpp"
 #include "algo/octopus/octopus_gpu.hpp"
 #include "algo/pearl/pearl_gpu.hpp"
@@ -409,6 +411,58 @@ bool qhash_check(gpu::Device& dev, std::string& detail) {
   return ok;
 }
 
+// NexaPow: mainnet block 300000 (12-byte nonce = extranonce1 | 8 miner bytes) as the first of 512 nonces, every
+// powHash and signature compared with the CPU reference (debug dump), then a search launch at an easy difficulty
+// whose hits must all pass the CPU check.
+bool nexa_check(gpu::Device& dev, std::string& detail) {
+  nexa::Engine eng(dev, 0x6e65786100000001ull, 1u << 16);
+  nexa::Job job;
+  job.id = "selftest";
+  const char* hc = "a196578a9aa2f79ef4881a141ca31c18a6e76a6c58c2da4210f8a2b052d98c5d";
+  for (int i = 0; i < 32; ++i) job.commitment[i] = uint8_t(std::stoi(std::string(hc + 2 * i, 2), nullptr, 16));
+  job.extranonce1 = {0x1c, 0xa2, 0x86, 0xd4};
+  job.nbits = 0x1a2ea9a0;
+  job.difficulty = 1.0 / 65536;  // ~2^16 hashes per hit
+  auto t0 = std::chrono::steady_clock::now();
+  if (!eng.init(detail) || !eng.set_job(job, detail)) return false;
+  const double setup = ms_since(t0);
+  const uint64_t base = 0x63379acefed278aeull;  // block 300000's miner bytes ae78d2fece9a3763, little-endian
+  std::vector<uint32_t> out;
+  t0 = std::chrono::steady_clock::now();
+  if (!eng.dump(base, 512, out, detail)) return false;
+  const double dump_ms = ms_since(t0);
+  size_t bad = 0, n = out.size() / 24;
+  for (size_t k = 0; k < n; ++k) {
+    const auto nb = nexa::nonce_bytes(job, base + k);
+    nexa::Hash h{};
+    const bool ok = nexa::pow_hash(job.commitment, nb.data(), nb.size(), h);
+    for (int i = 0; ok && i < 8; ++i) {
+      const uint32_t w = uint32_t(h[4 * i]) << 24 | uint32_t(h[4 * i + 1]) << 16 | uint32_t(h[4 * i + 2]) << 8 | h[4 * i + 3];
+      if (w != out[24 * k + i]) {
+        ++bad;
+        if (bad == 1) {
+          char b[160];
+          std::snprintf(b, sizeof b, "nonce %zu: GPU powHash word %d %08x, CPU %08x (R.x %08x.., s %08x..); ", k, i,
+                        out[24 * k + i], w, out[24 * k + 8], out[24 * k + 16]);
+          detail += b;
+        }
+        break;
+      }
+    }
+  }
+  const bool block_ok = out.size() >= 24 && out[0] == 0xe7d6c80cu;  // powHash of block 300000 starts e7d6c80c
+  std::vector<nexa::Share> shares;
+  t0 = std::chrono::steady_clock::now();
+  if (eng.iterate(shares, detail) == 0) return false;
+  const double gpu_ms = ms_since(t0);
+  char buf[240];
+  std::snprintf(buf, sizeof buf, "%zu of %zu signatures match the CPU, block 300000 %s; %zu hits in %u nonces, %llu wrong "
+                "(W %d, setup %.0f ms, %.0f ms + %.0f ms)", n - bad, n, block_ok ? "ok" : "WRONG", shares.size(),
+                eng.batch(), static_cast<unsigned long long>(eng.cpu_rejects()), eng.window(), setup, dump_ms, gpu_ms);
+  detail += buf;
+  return bad == 0 && block_ok && !shares.empty() && eng.cpu_rejects() == 0;
+}
+
 void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int state, const std::string& detail) {
   static const char* kState[] = {"FAIL  ", "PASS  ", "SKIP  "};
   Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(i) + " ] "},
@@ -426,14 +480,16 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}, {"nexapow", nexa_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;
     bool ok = smoke(*dev, detail);
     failures += !ok;
     report(i, devices[i], "pipeline", ok, detail);
+    const char* only = std::getenv("XM_SELFTEST_ALGO");  // developer: one algorithm
     for (const auto& c : checks) {
+      if (only && std::string(only) != c.algo) continue;
       const AlgorithmInfo* a = find_algorithm(c.algo);
       if (!a || !supports(*a, devices[i])) {
         report(i, devices[i], c.algo, 2, "no kernel for this GPU");

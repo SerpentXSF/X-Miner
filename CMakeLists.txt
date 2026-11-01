@@ -30,11 +30,13 @@ function(xm_embed in name)
 endfunction()
 xm_embed(web/dashboard.html dashboard_html)
 xm_embed(assets/serpentx-logo.png logo_png)
+xm_embed(kernels/nexa/nexa.cu nexa_cu)
 include(cmake/kernels.cmake)
 
 add_library(xm_core STATIC
   ${XM_GEN}/dashboard_html.hpp
   ${XM_GEN}/logo_png.hpp
+  ${XM_GEN}/nexa_cu.hpp
   ${XM_KERNEL_HEADERS}
   ${XM_GEN}/kernel_table.cpp
   src/gpu/kernels.cpp
@@ -78,6 +80,12 @@ add_library(xm_core STATIC
   src/algo/qhash/qhash.cpp
   src/algo/qhash/qhash_gpu.cpp
   src/algo/qhash/bench.cpp
+  src/crypto/secp256k1.cpp
+  src/algo/nexa/nexa.cpp
+  src/algo/nexa/nexa_gpu.cpp
+  src/algo/nexa/bench.cpp
+  src/pool/nexa_pool.cpp
+  src/mining/nexa_run.cpp
   src/algo/fishhash/fishhash.cpp
   src/algo/fishhash/fishhash_gpu.cpp
   src/algo/fishhash/bench.cpp
@@ -129,7 +137,7 @@ add_executable(x-miner src/main.cpp)
 target_link_libraries(x-miner PRIVATE xm_core)
 
 enable_testing()
-add_executable(xm_tests tests/test_main.cpp tests/test_core.cpp tests/test_blake3.cpp tests/test_pearl.cpp tests/test_noid.cpp tests/test_blake2b.cpp tests/test_quantus.cpp tests/test_kawpow.cpp tests/test_etchash.cpp tests/test_autolykos.cpp tests/test_octopus.cpp tests/test_fishhash.cpp tests/test_pools.cpp tests/test_xelis.cpp tests/test_qhash.cpp)
+add_executable(xm_tests tests/test_main.cpp tests/test_core.cpp tests/test_blake3.cpp tests/test_pearl.cpp tests/test_noid.cpp tests/test_blake2b.cpp tests/test_quantus.cpp tests/test_kawpow.cpp tests/test_etchash.cpp tests/test_autolykos.cpp tests/test_octopus.cpp tests/test_fishhash.cpp tests/test_pools.cpp tests/test_xelis.cpp tests/test_qhash.cpp tests/test_nexa.cpp)
 target_compile_definitions(xm_tests PRIVATE XM_TEST_VECTORS="${CMAKE_SOURCE_DIR}/tests/vectors")
 target_link_libraries(xm_tests PRIVATE xm_core)
 add_test(NAME unit COMMAND xm_tests)
