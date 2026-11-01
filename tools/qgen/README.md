@@ -2,7 +2,7 @@
 
 `kernels/prebuilt/quantus_sm_86.cubin` is not compiled from `kernels/quantus/quantus.cu`. It is the same search
 kernel with the two Poseidon2 permutations written as scheduled sm_86 SASS by `qgen.py`, assembled with
-CuAssembler. On an RTX 3060 at 170 W this gives 169.6 MH/s, where the ptxas build gives 151.6 MH/s. The other NVIDIA
+CuAssembler. On an RTX 3060 at 170 W this gives 171.8 MH/s, where the ptxas build gives 151.6 MH/s. The other NVIDIA
 targets (sm_89, sm_120, PTX) and AMD still use the compiled CUDA/HIP kernel.
 
 This is build-time tooling only. Releases ship just the miner packages; the cubin is embedded in `x-miner`.
@@ -15,6 +15,7 @@ This is build-time tooling only. Releases ship just the miner packages; the cubi
 3. CuAssembler turns the cubin into text. `qgen.py` replaces the markers with the generated block:
    - it builds the state from the nonce words and `job.pre`;
    - it runs permutation 3's tail, the absorb, and permutation 4, sharing one copy of the tail code between the two;
+   - permutation 4's last round computes only s0;
    - it leaves s0 where the CUDA check expects it.
 
    Registers come from those the shell does not keep live across the block, and the register count is set to 64.
@@ -27,7 +28,10 @@ This is build-time tooling only. Releases ship just the miner packages; the cubi
 The generated code:
 - **Multiplies:** each multiply is split into a head (four `IMAD.WIDE`) and a tail (the reduction, 8 integer ops).
   One multiply's tail is interleaved with the next one's head, using alternating register and predicate sets.
-- **Linear layers:** 96-bit sums with three-input adds (`IADD3` with two carry-outs).
+- **Linear layers:** 96-bit sums with three-input adds (`IADD3` with two carry-outs). Six state elements keep their
+  low word in the odd register of their pair (`SWAP`), so few adds read three registers of one bank.
+- **Pipe placement:** carry-only adds go to the multiply pipe (`IMAD.X`) or the ALU (`IADD3.X`) as measured best;
+  the comments in `qgen.py` list what was tried.
 - **Loops:** the full and partial rounds are loops, with round constants loaded by `LDC` (the straight-line version
   stalled on instruction fetch).
 - **Scheduling:** `sass.py` list-schedules each block. It then sets stall counts from measured GA106 latencies:
@@ -66,6 +70,10 @@ python tools/qgen/qgen.py --cuassembler <CuAssembler> --python <CuAssembler>/.ve
 ```
 
 `--keep <dir>` keeps the intermediate files: the table, the shell cubin and its text, and the generated text.
+`--set NAME=VALUE` overrides a generator option for experiments (`--set SWAP=0`, `--set DIAG2_FMA=0`). Compare
+variants with the miner's `--benchmark` at a locked core clock (`--gpu-cclock 1400`), where runs repeat to
+0.01 MH/s, and point `XM_KERNEL_FILE` at a variant (the file must be named `quantus_sm_86.cubin`) to run it without
+rebuilding the miner.
 
 The output is deterministic: the committed cubin is what this produces with CUDA 12.5. After a rebuild, run
 `x-miner --selftest` on an RTX 30 card before committing. That checks GPU candidates against the CPU

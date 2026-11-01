@@ -10,7 +10,7 @@
   (`XM_OCTOPUS_TC=0` selects it everywhere). Octopus is now memory-bound: `--gpu-mclock 2700` on the RX 9070 XT gives
   63.0 MH/s (+7.3%; launchers and docs/PERFORMANCE.md list the measured sweep).
 - Quantus (QTC) on RTX 30: the sm_86 kernel's permutations are now generated, scheduled SASS (tools/qgen, assembled
-  with CuAssembler; nonce setup and target check stay compiled CUDA). RTX 3060 151.6 -> 169.6 MH/s (+11.9%) at the
+  with CuAssembler; nonce setup and target check stay compiled CUDA). RTX 3060 151.6 -> 171.8 MH/s (+13%) at the
   same 169 W; self-test passes, live on Kryptex with 0 rejects. Other NVIDIA generations and AMD are unchanged.
 - GPU backends: an optional second stream (`set_stream`), created at the highest priority.
 

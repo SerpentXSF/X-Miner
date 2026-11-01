@@ -88,6 +88,10 @@ def mul3(s, o, a, b):
             f"IADD3.X R{o+1}, R{A}, -0x2, RZ, P1, !P3"]             # hi = A - 1 - j + no-borrow
     return head, tail
 
+# Pipe placement (measured on the RTX 3060 at a locked 1400 MHz): diag2's two one-carry adds on the multiply pipe
+# +0.5%. Slower: any further move of carry adds to the multiply pipe (mul3 A += k: -3.4%) or from it to the ALU
+# (mul3 B += k: -0.9%, with diag2's K and the 96-bit tops too: down to -7.9%); squares with 3 WIDE (x^2, x^4) +0.07%.
+DIAG2_FMA = True
 def diag2(s, o, a, k, sig, sig2):
     """o = a * DIAG[k] + (sig pair + sig2 * 2^64). Head: WIDEs + carry folding into K on the FMA pipe (P6);
     tail on P0..P2 + Pf. value = e0 + (e1 + f0 + f1 + K) 2^32 - (f1 + K + Pf), K = Pe1 + Pe2 + sig2."""
@@ -99,10 +103,12 @@ def diag2(s, o, a, k, sig, sig2):
             f"IMAD.WIDE.U32 R{E}, P6, R{a+1}, {kc(d1, 0)}, R{E}", k2,
             f"IMAD.WIDE.U32 R{F}, {Pf}, R{a+1}, {kc(d1, 1)}, R{F}"]
     tail = [f"IADD3 R{A}, P0, P1, R{E+1}, R{F}, R{F+1}",            # A = e1 + f0 + f1
+            f"IMAD.X R{B}, R{F+1}, 0x1, R{K}, {Pf}" if DIAG2_FMA else
             f"IADD3.X R{B}, R{F+1}, R{K}, RZ, {Pf}, !PT",           # B = f1 + K + Pf
             f"IADD3.X R{B}, R{B}, RZ, RZ, P0, P1",                  # B += k
             f"IADD3.X R{A}, R{A}, -0x1, R{K}, P0, P1",              # H = A - 1 + K + k
             f"IADD3 R{o}, P2, R{E}, -R{B}, RZ",                     # lo = e0 - B
+            f"IMAD.X R{o+1}, RZ, RZ, R{A}, P2" if DIAG2_FMA else
             f"IADD3.X R{o+1}, R{A}, RZ, RZ, P2, !PT"]               # hi = H + no-borrow
     return head, tail
 
@@ -175,8 +181,8 @@ def acc2(dst, x, y):
     return [f"IADD3 R{dl}, P0, R{xl}, R{yl}, RZ", f"IADD3.X R{dh}, P1, R{xh}, R{yh}, RZ, P0, !PT", top]
 
 def external3(rc=None):
-    """out_g = M4 (x_g + z), z_k = x_k + x_{k+4} + x_{k+8} (+ rc[i] before the fold): z by 3-input adds; M4 as t01, s = t01+w2+w3, y0 = s+t01+w1, u = s+w2,
-    v = s+w3, y1 = u+w1+w2, y2 = u+w3+w3, y3 = v+w0+w0 (8 adds instead of 12)."""
+    """out_g = M4 (x_g + z), z_k = x_k + x_{k+4} + x_{k+8} (+ rc[i] before the fold), z by 3-input adds. M4 as
+    t01, s = t01+w2+w3, y0 = s+t01+w1, u = s+w2, v = s+w3, y1 = u+w1+w2, y2 = u+w3+w3, y3 = v+w0+w0 (8 adds, not 12)."""
     out = []
     Z = [(T[k], T[k] + 1, T[4] + k if k < 2 else T[5] + k - 2) for k in range(4)]
     for k in range(4):
@@ -199,6 +205,20 @@ def external3(rc=None):
             if rc is not None: out += acc_addc(acc, rc[4 * g + k])
             out += fold96(S[4 * g + k], acc, w3[2] if k != 3 else u[0])
     return out
+
+def external_s0():
+    """Only s0 of external(None): the four column sums z, w = x + z for group 0, y0 = 2 w0 + 3 w1 + w2 + w3."""
+    out = []
+    Z = [(T[k], T[k] + 1, T[4] + k if k < 2 else T[5] + k - 2) for k in range(4)]
+    for k in range(4):
+        out += acc3(Z[k], S[k], S[k + 4], S[k + 8])
+    W = [(S[k], S[k] + 1, T[6] + k if k < 2 else T[7] + k - 2) for k in range(4)]
+    for k in range(4):
+        out += acc2(W[k], S[k], Z[k])
+    w0, w1, w2, w3 = W
+    t01, sacc = (T[8], T[8] + 1, T[9]), (T[11], T[11] + 1, T[12])
+    out += acc2(t01, w0, w1) + acc3(sacc, t01, w2, w3) + acc3(t01, sacc, t01, w1)
+    return out + fold96(S[0], t01, w3[2])
 
 def sigma3():
     sig = (T[2], T[2] + 1, T[3])
@@ -336,18 +356,27 @@ def tail_segments():
 
 
 PASS = None  # pass counter register for the shared tail (set by splice)
+END = None   # end value of the terminal full-round loop: 4 rounds in permutation 3, 3 in permutation 4
 def miner_segments_shared(a, b):
-    """state; .pass: tail; if second pass -> done; absorb + external(INIT[0]); pass = 1; BRA .pass; .done"""
+    """state; .pass: tail; if second pass -> .last; absorb + external(INIT[0]); pass = 1; BRA .pass;
+    .last: permutation 4's last full round, of which only s0 is needed (S-boxes, then s0's row of the external layer).
+    One tail serves both permutations; its terminal loop runs to END."""
     ini = [kofs("init", 0, i) for i in range(12)]
     absorb = [f"IADD3 R{S[0]}, P0, R{S[0]}, 0x1, RZ", f"IADD3.X R{S[0]+1}, P1, R{S[0]+1}, RZ, RZ, P0, !PT",
               f"IMAD.X R{S[0]+1}, RZ, RZ, R{S[0]+1}, P1", f"IADD3.X R{S[0]}, R{S[0]}, -0x1, RZ, !P1, !PT",
               f"IADD3 R{S[1]}, P0, R{S[1]}, 0x1, RZ", f"IADD3.X R{S[1]+1}, P1, R{S[1]+1}, RZ, RZ, P0, !PT",
               f"IMAD.X R{S[1]+1}, RZ, RZ, R{S[1]+1}, P1", f"IADD3.X R{S[1]}, R{S[1]}, -0x1, RZ, !P1, !PT"]
     LOOPS[0] += 1; lp, ld = f".L_q_{LOOPS[0]}p", f".L_q_{LOOPS[0]}d"
-    return ([("code", state_init(a, b) + [f"MOV R{PASS}, RZ"]), ("raw", [f"  {lp}:"])] + tail_segments() +
+    tail = tail_segments()
+    kind, lab, body, ctl = tail[-1]
+    step = int(re.search(r"0x([0-9a-f]+), RZ", ctl[0]).group(1), 16)
+    tail[-1] = (kind, lab, body, [ctl[0], f"ISETP.NE.AND P6, PT, R{IDX}, R{END}, PT", ctl[2]])
+    return ([("code", state_init(a, b) + [f"MOV R{PASS}, RZ", f"MOV R{END}, 0x{4 * step:x}"]), ("raw", [f"  {lp}:"])] +
+            tail +
             [("raw", [f"ISETP.NE.AND P6, PT, R{PASS}, RZ, PT", f"@P6 BRA `({ld})"]),
-             ("code", absorb + external3(ini) + [f"MOV R{PASS}, 0x1"]),
-             ("raw", [f"BRA `({lp})", f"  {ld}:"])])
+             ("code", absorb + external3(ini) + [f"MOV R{PASS}, 0x1", f"MOV R{END}, 0x{3 * step:x}"]),
+             ("raw", [f"BRA `({lp})", f"  {ld}:"]),
+             ("code", pipeline(_sbox_round_items()) + external_s0())])
 
 def ref_tail(s):
     s = list(s)
@@ -382,10 +411,32 @@ def table_header():
     return ("// Generated by tools/qgen/qgen.py: INIT, INTERNAL, DIAG, DIAG*2^32 mod p, TERM, INIT[1..3]+0, TERM[1..3]+0\n"
             "__constant__ unsigned long long kQgen[%d] = {%s};\n" % (len(TABLE), vals))
 
+# Register banks (GA106): two, by register parity; an instruction reading three registers of one bank takes an extra
+# issue cycle. The 96-bit adds read the low words (even) of three elements and the high words (odd), so SWAP lists
+# state elements whose low and high words trade registers (bit k = element k), chosen by counting the executed
+# same-bank triples over all 4096 masks: 868 -> 128 per nonce (+0.7% at a locked clock). Valid because state
+# elements are never 64-bit register pairs (WIDE destinations and addends, LDC.64 are temporaries);
+# rename_segments() checks that.
+SWAP = 0b010010110110
+
+def rename_segments(segs, mapping):
+    def ren(t):
+        opc, dr, sr, _, _ = sass.parse(re.sub(r"^@!?P\d\s+", "", t))
+        if "WIDE" in opc or ".64" in opc:
+            args = [x.strip() for x in t.split(None, 1)[1].split(",") if not re.match(r"!?P[\dT]$", x.strip())]
+            pair = {int(m.group(1)) for x in (args[0], args[-1]) for m in [re.match(r"R(\d+)$", x)] if m}
+            assert not (pair & set(mapping)), "renamed register used as a pair: " + t
+        return re.sub(r"\bR(\d+)\b", lambda m: "R%d" % mapping.get(int(m.group(1)), int(m.group(1))), t)
+    out = []
+    for sg in segs:
+        if sg[0] == "loop": out.append((sg[0], sg[1], [ren(t) for t in sg[2]], [ren(t) for t in sg[3]]))
+        else: out.append((sg[0], [t if t.rstrip().endswith(":") else ren(t) for t in sg[1]]))
+    return out
+
 INS = re.compile(r"\s*\[([^\]]*)\]\s+/\*[0-9a-f]+\*/\s+(.*?);")
 def splice(src, regcount=64):
     """src: CuAssembler text of the shell (lines). Returns (new text, generated lines, (a, b, out0, out1))."""
-    global S, T, IDX, PASS, K_BASE
+    global S, T, IDX, PASS, END, K_BASE
     mk, idx = {}, []
     for i, l in enumerate(src):
         m = re.search(r"LOP3\.LUT (R\d+), (R\d+), 0xf1f4f0([01]),", l)
@@ -407,13 +458,16 @@ def splice(src, regcount=64):
     assert len(pairs) >= 26, (len(pairs), sorted(reserved))
     used = {q for p in pairs[:26] for q in (p, p + 1)}
     singles = [r for r in free if r not in used]
-    S, T, IDX, PASS = pairs[:12], pairs[12:26], singles[0], singles[1]
+    S, T, IDX, PASS, END = pairs[:12], pairs[12:26], singles[0], singles[1], singles[2]
     sym = re.search(r"Symbol\[\d+\] \"kQgen\": Container\(.*?'st_value': (\d+)", "\n".join(src))
     assert sym, "kQgen not found in the shell"
     K_BASE = int(sym.group(1))
     a, b = mk[0][1], mk[1][1]
     segs = miner_segments_shared(a, b) + [("code", [f"MOV R{mk[0][0]}, R{S[0]}", f"MOV R{mk[1][0]}, R{S[0]+1}"])]
-    lines = emit_segments(segs)
+    swap = {}
+    for k in range(12):
+        if SWAP >> k & 1: swap[S[k]], swap[S[k] + 1] = S[k] + 1, S[k]
+    lines = emit_segments(rename_segments(segs, swap))
     src = list(src)
     for k in range(idx[0] - 1, -1, -1):  # latency into the block: the instruction before the markers stalls >= 6
         if INS.match(src[k]):
@@ -462,7 +516,12 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "kernels", "prebuilt", "quantus_sm_86.cubin"))
     ap.add_argument("--check", type=int, default=64, help="emulated (pre, nonce) checks before assembling")
     ap.add_argument("--keep", help="directory to keep the intermediate files in")
+    ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", help="override a generator option")
     args = ap.parse_args()
+    for kv in args.set:
+        k, v = kv.split("=", 1)
+        assert k.isupper() and k in globals(), "unknown option " + k
+        globals()[k] = int(v, 0)
     repos = os.path.join(args.cuassembler, "CuAsm", "InsAsmRepos", "DefaultInsAsmRepos.sm_86.txt")
     if hashlib.sha256(open(repos, "rb").read()).hexdigest() != REPOS_SHA256:
         sys.exit(f"{repos} is not the patched version: run 'git apply {os.path.join(HERE, 'cuassembler_sm86.patch')}' "

@@ -437,8 +437,8 @@ __device__ __forceinline__ u32 bswap32(u32 v) {
 // Grid of 1-D blocks, XM_QTC_NPT nonces per thread: low 64 nonce bits = nonce_base + global thread index * NPT + k
 // (the host keeps a batch from carrying into bit 64). found[0] counts candidates; found[1 + 2k], found[2 + 2k] hold
 // candidate k's low 64 nonce bits, low word first.
-// The sm_86 binary is not built from this function: tools/qgen generates it (generated, scheduled SASS for the
-// permutations inside a CUDA shell that defines XM_QTC_NO_SEARCH and includes this file).
+// The sm_86 binary is not built from this function: tools/qgen writes its permutations as scheduled SASS inside
+// a CUDA shell that defines XM_QTC_NO_SEARCH and includes this file.
 #ifndef XM_QTC_NO_SEARCH
 extern "C" __global__ void xm_quantus_search(QtcJob job, u64 nonce_base, u32* __restrict__ found, u32 max_found) {
   constexpr int N = XM_QTC_NPT;

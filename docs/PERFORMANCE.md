@@ -166,7 +166,7 @@ multiply than 9 class-split integer products; that is the open item. With NOID a
 | Card | X-Miner | Reference |
 |---|---|---|
 | RX 9070 XT | 195.8 MH/s @ ~330 W (stock power), 179.6 MH/s at -30% | SRBMiner 3.7.9: 221.5 MH/s @ ~316 W |
-| RTX 3060 | 169.6 MH/s @ 169 W (generated SASS; ptxas build 151.6) | SRBMiner 3.7.9: 228 MH/s @ 170 W |
+| RTX 3060 | 171.8 MH/s @ 169 W (generated SASS; ptxas build 151.6), 125.8 MH/s @ 69 W locked at 1400 MHz | SRBMiner 3.7.9: 228 MH/s @ 170 W |
 
 The hash is a Poseidon2 sponge (Goldilocks, width 12, rate 8, 8 full + 22 partial rounds, x^7) with five
 permutations. The host absorbs everything that does not depend on the low 64 nonce bits once per job (the official
@@ -215,6 +215,32 @@ In the miner (RTX 3060, native Windows, 170 W cap):
 - `--benchmark`: 151.6 -> 169.6 MH/s (+11.9%) at the same 169 W, every share CPU-verified;
 - self-test passes;
 - Kryptex: 11.5 minutes, 7 accepted / 0 rejected at 167.6 MH/s.
+
+Further steps (2026-11-01), measured in the miner at a locked 1400 MHz core clock (`--gpu-cclock 1400`). That is
+reproducible to 0.01 MH/s; at the 170 W cap the clock drifts and runs vary by about 1%.
+
+| Step | MH/s at 1400 MHz |
+|---|---|
+| first generated kernel | 123.35 |
+| permutation 4's last round computes only s0 (the shared terminal loop runs 3 rounds there, then the S-boxes and s0's row of the external layer) | 124.34 (+0.8%) |
+| low and high registers of 6 state elements swapped, so three-input adds rarely read three registers of one bank (868 -> 128 such instructions per nonce) | 125.20 (+0.7%) |
+| diag2's two one-carry adds on the multiply pipe | 125.79 (+0.5%) |
+
+Not kept:
+- operand reuse flags: +0.05%;
+- squares with 3 `IMAD.WIDE` (x^2 and x^4 in the S-box): +0.07%;
+- further carry adds onto the multiply pipe: -3.4%;
+- carry adds and 96-bit top words from the multiply pipe to the ALU: -0.9% to -7.9%.
+
+Nsight Compute on one launch:
+- FMA-heavy pipe 84% active, ALU 60%, issue 58%, 7.9 warps per scheduler;
+- top stall is math-pipe throttle (5.7 per issue), then not-selected 3.4 and dispatch 2.3.
+
+Taking work off the FMA pipe still measures slower, so the counters do not name the limit on their own.
+
+At the 170 W cap the kernel goes from 169.0 to 171.8 MH/s (+1.6%, 3 paired runs); Kryptex 11.5 minutes, 10 accepted /
+0 rejected at 170.9 MH/s. Locked at 1400 MHz the card
+does 125.8 MH/s at 69 W: 1.82 MH/s per W, against 1.01 at the cap.
 
 The rest of the gap to SRBMiner (228 MH/s) is kernel time, not the platform: see the WSL2 clock note above.
 
