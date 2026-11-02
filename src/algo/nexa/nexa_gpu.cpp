@@ -223,6 +223,17 @@ bool Engine::dump(uint64_t base, uint32_t n, std::vector<uint32_t>& out, std::st
     }
   }
   if (!launch(base, n, 1, err)) return false;
+  if (const char* f = std::getenv("XM_NEXA_DUMP_PR"); f && split_) {  // developer: stage-1 words and P / R rows
+    std::vector<uint32_t> st(size_t(n) * 27), pr(size_t(n) * 68);
+    if (dev_.download(st.data(), d_st_, st.size() * 4) && dev_.download(pr.data(), d_pr_, pr.size() * 4)) {
+      if (FILE* fp = std::fopen(f, "wb")) {
+        std::fwrite(&n, 4, 1, fp);
+        std::fwrite(st.data(), 4, st.size(), fp);
+        std::fwrite(pr.data(), 4, pr.size(), fp);
+        std::fclose(fp);
+      }
+    }
+  }
   out.resize(size_t(n) * 24);
   if (!dev_.download(out.data(), d_dbg_, bytes)) {
     err = dev_.last_error();

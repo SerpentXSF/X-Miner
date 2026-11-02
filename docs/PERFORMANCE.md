@@ -542,7 +542,23 @@ marker instructions, and keeps ~40 registers live across the block. So on sm_86 
 | RTX 3060 | MH/s | W |
 |---|---|---|
 | compiled, single kernel | 25.3 | 169 |
-| generated combs, three kernels | 27.5 | 162 |
+| generated combs, three kernels | 27.7 | 162 |
+
+The generated kernel was tuned with a microbenchmark of instruction mixes on the RTX 3060. Alone, IMAD.WIDE costs
+4 cycles per warp instruction and IADD3 / IADD3.X / MOV 2. Mixed, the cost tracks register reads: about 1.16 reads
+per cycle.
+- IMAD.WIDE with a 64-bit register addend reads 4 registers. With an IADD3 that reads 2, the pair takes 5.2 cycles.
+- With a MOV (1 read) or a WIDE without an addend, the pair takes 4.2 cycles (full overlap).
+
+The comb's window loop does about 4400 register reads (2440 of them in WIDEs) and runs at ~87% of that bound, so
+register-bank placement (+1%) and overlapping the multiply columns (+1%) gain little. `.reuse` operand flags
+change nothing. Nsight Compute on the three kernels per 1M nonces (locked base clock):
+
+| Kernel | Time | Note |
+|---|---|---|
+| a: hashes | 11.2 ms | ALU 97% (SHA rotations) |
+| b: combs, generated | 27.2 ms | |
+| c: inversion, signature, check | 15.7 ms | |
 
 Live on Kryptex with the generated kernel: RTX 3060, 2 accepted / 0 rejected in 11 minutes.
 

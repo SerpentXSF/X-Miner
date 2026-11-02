@@ -45,7 +45,10 @@
     nothing else live;
   - the block is checked against Python elliptic-curve arithmetic before it is assembled.
 
-  RTX 3060 25.3 -> 27.5 MH/s, 169 -> 162 W; selftest 512/512; Kryptex 2 accepted / 0 rejected in 11 minutes.
+  RTX 3060 25.3 -> 27.7 MH/s, 169 -> 162 W; selftest 512/512; Kryptex 2 accepted / 0 rejected in 11 minutes.
+  The first build got ~1% of nonces wrong under full load: a wait on a load / store scoreboard issued one cycle
+  after the operation passed before it was counted. The scheduler now keeps such waits 4 cycles back. A
+  262144-signature check (`XM_NEXA_SELFTEST_N`) leaves only the accepted zero-digit slips (10, ~2^-19 per window).
   `XM_NEXA_GEN=0` keeps the compiled kernel.
 
 ## 0.1.0c (unreleased)

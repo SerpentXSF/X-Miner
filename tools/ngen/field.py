@@ -39,38 +39,43 @@ def _count(out, preds, carries, ov, first):
     return not first
 
 
+def _odd_first(a, b):
+    """Operand order for IMAD.WIDE (GA106 register banks = register parity): an odd register in the first slot (an
+    even one there costs an issue cycle when the addend is a 64-bit pair)."""
+    return (b, a) if a % 2 == 0 and b % 2 == 1 else (a, b)
+
+
 def _columns(out, preds, sc, prods_by_col, ncols, mov=True):
-    """Product scanning: column k = sum of its products + the previous column's (hi, ov). Writes word k to sc.t[k]
-    (by MOV, or leaves it in the accumulator: then sc.t[k] is rebound). Returns the register of the last hi word."""
+    """Product scanning: column k = sum of its products + the previous column's (hi, ov). The previous column's part is
+    added last, so that a column's products do not wait for the column before (two columns' multiply chains overlap;
+    their accumulators alternate). Writes word k to sc.t[k] (by MOV, or leaves it in the accumulator: then sc.t[k] is
+    rebound). Returns the registers of the last hi word and its overflow count (None: zero)."""
     prev_hi, prev_ov = None, None
     for k in range(ncols):
         prods = prods_by_col[k]
         E = sc.pairs[k % len(sc.pairs)]
         O = sc.ov[k % 2]
         carries = []
-        if prods:
-            (a0, b0), rest = prods[0], prods[1:]
-            out.append("IMAD.WIDE.U32 R%d, R%d, R%d, RZ" % (E, a0, b0))
-            if prev_hi is not None:
-                pa = preds.get()
-                out.append("IADD3 R%d, %s, R%d, R%d, RZ" % (E, pa, E, prev_hi))
-                if prev_ov is not None:
-                    pb = preds.get()
-                    out.append("IADD3.X R%d, %s, R%d, R%d, RZ, %s, !PT" % (E + 1, pb, E + 1, prev_ov, pa))
-                    carries.append(pb)
-                else:  # a*b + h < 2^64: no carry out
-                    out.append("IADD3.X R%d, R%d, RZ, RZ, %s, !PT" % (E + 1, E + 1, pa))
-        else:  # no products: word = (hi, ov) of the previous column
-            out.append("MOV R%d, R%d" % (E, prev_hi))
-            out.append("MOV R%d, %s" % (E + 1, "R%d" % prev_ov if prev_ov is not None else "RZ"))
-            rest = []
         has_ov = False
-        for (a, b) in rest:
-            p = preds.get()
-            out.append("IMAD.WIDE.U32 R%d, %s, R%d, R%d, R%d" % (E, p, a, b, E))
-            carries.append(p)
-            if len(carries) == 2:
-                has_ov = _count(out, preds, carries, O, not has_ov)
+        if prods:
+            (a0, b0), rest = _odd_first(*prods[0]), prods[1:]
+            out.append("IMAD.WIDE.U32 R%d, R%d, R%d, RZ" % (E, a0, b0))
+            for (a, b) in rest:
+                a, b = _odd_first(a, b)
+                p = preds.get()
+                out.append("IMAD.WIDE.U32 R%d, %s, R%d, R%d, R%d" % (E, p, a, b, E))
+                carries.append(p)
+                if len(carries) == 2:
+                    has_ov = _count(out, preds, carries, O, not has_ov)
+        else:  # no products: the word is the previous column's (hi, ov)
+            out.append("MOV R%d, RZ" % E)
+            out.append("MOV R%d, RZ" % (E + 1))
+        if prev_hi is not None:
+            pa, pb = preds.get(), preds.get()
+            out.append("IADD3 R%d, %s, R%d, R%d, RZ" % (E, pa, E, prev_hi))
+            out.append("IADD3.X R%d, %s, R%d, %s, RZ, %s, !PT" % (E + 1, pb, E + 1,
+                                                                  "R%d" % prev_ov if prev_ov is not None else "RZ", pa))
+            carries.append(pb)
         has_ov = _count(out, preds, carries, O, not has_ov)
         if mov:
             out.append("MOV R%d, R%d" % (sc.t[k], E))

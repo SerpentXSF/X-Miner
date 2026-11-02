@@ -22,6 +22,8 @@
 #include "algo/pearl/pearl_gpu.hpp"
 #include "algo/registry.hpp"
 #include "core/console.hpp"
+#include "crypto/secp256k1.hpp"
+#include "crypto/sha256.hpp"
 #include "gpu/kernels.hpp"
 
 namespace xm {
@@ -430,9 +432,11 @@ bool nexa_check(gpu::Device& dev, std::string& detail) {
   const uint64_t base = 0x63379acefed278aeull;  // block 300000's miner bytes ae78d2fece9a3763, little-endian
   std::vector<uint32_t> out;
   t0 = std::chrono::steady_clock::now();
-  if (!eng.dump(base, 512, out, detail)) return false;
+  uint32_t ncheck = 512;  // developer: XM_NEXA_SELFTEST_N checks more signatures (one launch of that many nonces)
+  if (const char* e = std::getenv("XM_NEXA_SELFTEST_N")) ncheck = std::max(256u, uint32_t(std::strtoul(e, nullptr, 10)));
+  if (!eng.dump(base, ncheck, out, detail)) return false;
   const double dump_ms = ms_since(t0);
-  size_t bad = 0, n = out.size() / 24;
+  size_t bad = 0, bad_rx = 0, bad_s = 0, n = out.size() / 24;
   for (size_t k = 0; k < n; ++k) {
     const auto nb = nexa::nonce_bytes(job, base + k);
     nexa::Hash h{};
@@ -447,10 +451,24 @@ bool nexa_check(gpu::Device& dev, std::string& detail) {
                         out[24 * k + i], w, out[24 * k + 8], out[24 * k + 16]);
           detail += b;
         }
+        // which half is wrong: R.x (R = k G) or s (P = x G enters through e)
+        const nexa::Hash mh = nexa::mining_hash(job.commitment, nb.data(), nb.size());
+        const nexa::Hash h1 = crypto::sha256(mh.data(), 32);
+        uint8_t sig[64];
+        crypto::secp256k1::schnorr_sign_bch(h1.data(), mh.data(), sig);
+        for (int half = 0; half < 2; ++half)
+          for (int j = 0; j < 8; ++j) {
+            const uint8_t* q = sig + 32 * half + 4 * j;
+            if ((uint32_t(q[0]) << 24 | uint32_t(q[1]) << 16 | uint32_t(q[2]) << 8 | q[3]) != out[24 * k + 8 + 8 * half + j]) {
+              ++(half ? bad_s : bad_rx);
+              break;
+            }
+          }
         break;
       }
     }
   }
+  if (bad) detail += "(R.x wrong in " + std::to_string(bad_rx) + ", s in " + std::to_string(bad_s) + ") ";
   const bool block_ok = out.size() >= 24 && out[0] == 0xe7d6c80cu;  // powHash of block 300000 starts e7d6c80c
   std::vector<nexa::Share> shares;
   t0 = std::chrono::steady_clock::now();

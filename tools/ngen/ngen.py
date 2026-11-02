@@ -85,8 +85,13 @@ class Regs:
                 return r
         raise AssertionError("out of registers (%d x %d aligned %d; %d left)" % (1, n, align, len(self.free)))
 
-    def fe(self):
-        return [self.take() for _ in range(8)]
+    def fe(self, parity=None):
+        """8 registers; parity 0 / 1: all even / all odd (falls back to any when short)."""
+        if parity is None: return [self.take() for _ in range(8)]
+        regs = [r for r in self.free if r % 2 == parity][:8]
+        assert len(regs) == 8, "not enough %s registers" % ("even", "odd")[parity]
+        for r in regs: self.free.remove(r)
+        return regs
 
 
 # ---- the block ----
@@ -94,23 +99,26 @@ def comb_block(vals, free):
     """Instruction segments: ('code', [...]) / ('label', name) / ('loop', label, body, ctl)."""
     xv, kv, rowv = vals[0:8], vals[8:16], vals[16:18]
     g = Regs(free)
-    # aligned groups first
-    s1 = [g.take(4, 4)]; s1.append(g.take(4, 4)); S1 = [s1[0] + q for q in range(4)] + [s1[1] + q for q in range(4)]
-    s2 = [g.take(4, 4)]; s2.append(g.take(4, 4)); S2 = [s2[0] + q for q in range(4)] + [s2[1] + q for q in range(4)]
-    tp = [g.take(2, 2) for _ in range(8)]
-    T = [r + q for r in tp for q in (0, 1)]
+    # aligned groups first: T = the multiply scratch and the table loads' destinations (four quads)
+    tq = [g.take(4, 4) for _ in range(4)]
+    T = [r + q for r in tq for q in range(4)]
     acc = [g.take(2, 2) for _ in range(2)]
     TB, A, ROW = g.take(2, 2), g.take(2, 2), g.take(2, 2)
+    # Register banks (GA106: register parity): a multiply's operands in different banks, odd first, is free; the
+    # same bank costs an issue cycle per IMAD.WIDE. Each field element sits in one bank, chosen so that every multiply
+    # of the addition pairs an even element with an odd one: X, Y, S1, S2 even; Z, S0, S3 odd.
+    X, Y, S1, S2 = g.fe(0), g.fe(0), g.fe(0), g.fe(0)
+    Z, S0, S3 = g.fe(1), g.fe(1), g.fe(1)
     ov = [g.take(), g.take()]
-    X, Y, Z, S0, S3, KS = g.fe(), g.fe(), g.fe(), g.fe(), g.fe(), g.fe()
+    KS = g.fe()
     CARRY, WB = g.take(), g.take()
     sc = field.Scratch(list(T), list(acc), list(ov))
     KP0, KP1, KM = acc[0], acc[0] + 1, acc[1]  # p's words for the negation (the accumulators are free then)
     D, ND, MAG, OFF = T[0], T[1], T[2], T[3]
     pr = field.Preds(("P0", "P1", "P2", "P3", "P4"))
 
-    def mul(o, a, b):
-        sc.t = list(T); field.mul(body, pr, o, a, b, sc)
+    def mul(o, a, b):  # (product words 8..15 in odd registers: they are the reduction's first multiply operand)
+        sc.t = T[0::2] + T[1::2]; field.mul(body, pr, o, a, b, sc)
 
     def sqr(o, a):
         sc.t = list(T); field.sqr(body, pr, o, a, sc)
@@ -136,18 +144,19 @@ def comb_block(vals, free):
                 "IADD3 R%d, P0, R%d, R%d, RZ" % (A, TB, OFF),
                 "IADD3.X R%d, R%d, RZ, RZ, P0, !PT" % (A + 1, TB + 1),
                 "IADD3 R%d, R%d, 0x2000000, RZ" % (WB, WB)]
-        for q, (dst, o) in enumerate([(s1[0], 0), (s1[1], 0x10), (s2[0], 0x20), (s2[1], 0x30)]):
+        for q, (dst, o) in enumerate([(tq[0], 0), (tq[1], 0x10), (tq[2], 0x20), (tq[3], 0x30)]):
             out.append("LDG.E.128.CONSTANT R%d, desc[UR4][R%d.64%s]" % (dst, A, "+0x%x" % o if o else ""))
         out += ["IMAD.MOV.U32 R%d, RZ, RZ, -0x3d1" % KP0, "IMAD.MOV.U32 R%d, RZ, RZ, -0x2" % KP1,
                 "IMAD.MOV.U32 R%d, RZ, RZ, -0x1" % KM]
-        Q = T[0:8]
-        out.append("IADD3 R%d, P0, -R%d, R%d, RZ" % (Q[0], S2[0], KP0))
+        Q, YL = S3, T[8:16]
+        out.append("IADD3 R%d, P0, -R%d, R%d, RZ" % (Q[0], YL[0], KP0))
         prev = "P0"
         for j in range(1, 8):
             pj = "P%d" % (j % 4)
-            out.append("IADD3.X R%d, %s, ~R%d, R%d, RZ, %s, !PT" % (Q[j], pj, S2[j], KP1 if j == 1 else KM, prev))
+            out.append("IADD3.X R%d, %s, ~R%d, R%d, RZ, %s, !PT" % (Q[j], pj, YL[j], KP1 if j == 1 else KM, prev))
             prev = pj
-        out += ["SEL R%d, R%d, R%d, P5" % (S2[j], Q[j], S2[j]) for j in range(8)]
+        out += ["SEL R%d, R%d, R%d, P5" % (S2[j], Q[j], YL[j]) for j in range(8)]
+        out += ["MOV R%d, R%d" % (S1[j], T[j]) for j in range(8)]
 
     def madd():
         """(X, Y, Z) += (S1, S2) affine (madd-2007-bl as the CUDA kernel's madd), temporaries S0..S3."""
@@ -170,8 +179,8 @@ def comb_block(vals, free):
         sub(S1, S1, S3)
         sub(S1, S1, S0)
         sub(X, S1, S0)       # X3
-        sub(S1, S0, X)
-        mul(S1, S2, S1)
+        sub(S0, S0, X)       # V - X3 (in S0: odd, against S2 even)
+        mul(S1, S2, S0)
         mul(S3, Y, S3)
         add(S3, S3, S3)
         sub(Y, S1, S3)       # Y3

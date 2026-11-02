@@ -2,7 +2,7 @@
 
 `kernels/prebuilt/nexa_sm_86.cubin` holds one kernel, `xm_nexa_b`: the two comb scalar multiplications of NexaPow
 (P = x G and R = k G), written as scheduled sm_86 SASS by `ngen.py` and assembled with CuAssembler. On an RTX 3060 at
-170 W the miner then runs at 27.5 MH/s, against 25.3 MH/s with the compiled kernel. Other GPUs, and RTX 30 with
+170 W the miner then runs at 27.7 MH/s, against 25.3 MH/s with the compiled kernel. Other GPUs, and RTX 30 with
 non-default Nexa settings, use the run-time compiled kernel only.
 
 This is build-time tooling. Releases ship just the miner packages; the cubin is embedded in `x-miner`.
@@ -50,7 +50,9 @@ registers live across the block.
    the cubin is not written. `test_field.py` checks the field ops alone, against Python integers.
 5. CuAssembler assembles the result, and `tools/qgen/cuasm_fix.py` restores the shell's memory instruction encodings.
 
-`nsass.py` is `tools/qgen/sass.py` with loads and stores. Global, shared and local loads wait on scoreboard 5, and
+`nsass.py` is `tools/qgen/sass.py` with loads and stores. A scoreboard is not set in the cycle its load or store
+issues, so a wait on it is kept at least 4 cycles after it. Waiting one cycle later gave ~1% wrong nonces under full
+load, while the emulator and a small selftest passed. Global, shared and local loads wait on scoreboard 5, and
 their address registers on 4; stores' source registers wait on 3. A 64-bit address `[Rn.64]` reads Rn and Rn + 1.
 
 ## Accepted slips

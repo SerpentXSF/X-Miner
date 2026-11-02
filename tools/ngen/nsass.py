@@ -39,6 +39,10 @@ def schedule(body, ready=None, wrap=True):
     pending = set()  # registers written by loads (scoreboard 5) not yet waited for
     reading = set()  # load address registers (scoreboard 4): a later writer must wait
     sreading = set()  # store source registers (scoreboard 3): a later writer must wait
+    # A scoreboard is not set in the cycle its load / store issues: a wait on it within the next cycle or so passes
+    # before the operation is counted (measured: a 1-cycle gap gave ~1% wrong nonces under load; 3 and 6 are clean).
+    sbset = {}  # scoreboard -> cycle of the last instruction that set it
+    SBLAT = 4
     for text in body:
         if text.rstrip().endswith(":"):  # label
             out.append([0, text, "", ""]); continue
@@ -54,6 +58,7 @@ def schedule(body, ready=None, wrap=True):
         if any(d[0] == "R" and d[1] in sreading for d in dsts):
             wait += "3"; sreading = set()
         need = max([ready[x][0] + lat2(ready[x][1], cons, x[0] == "P") if x in ready else 0 for x in srcs] + [cyc])
+        need = max([need] + [sbset[int(k)] + SBLAT for k in wait if int(k) in sbset])
         prev = next((o for o in reversed(out) if o[1] and not o[1].rstrip().endswith(":")), None)
         if prev is None and need > cyc:  # loop-carried wait at the top of the body
             out.append([min(15, need - cyc), "NOP ;", "", ""]); cyc += out[-1][0]; prev = out[-1]
@@ -65,6 +70,8 @@ def schedule(body, ready=None, wrap=True):
                 out.append([min(15, need - cyc), "NOP ;", "", ""]); cyc += out[-1][0]
         load = opc.startswith(("LDC", "LDG", "LDS", "LDL"))
         store = opc.startswith(("STG", "STS", "STL"))
+        if load: sbset[5] = sbset[4] = cyc
+        if store: sbset[3] = cyc
         out.append([1, text if text.endswith(";") else text + " ;", "".join(sorted(set(wait))),
                     "5" if load else "", "4" if load else ("3" if store else "")])
         if load:
