@@ -514,8 +514,37 @@ Tried without gain:
 - other block sizes and register budgets;
 - PTX carry-chain multiplies (ptxas emits 64 IMAD + 64 IMAD.HI + 115 IADD3.X).
 
-lolMiner runs at ~50 / ~95 MH/s on these cards. The next lever on NVIDIA would be multiplies written as SASS
-IMAD.WIDE carry chains (carry predicates in and out), as for Quantus.
+lolMiner runs at ~50 / ~95 MH/s on these cards.
+
+### RTX 30: generated comb multiplications (tools/ngen)
+
+The comb multiplications on sm_86 are generated SASS; tools/ngen/README.md describes the build. The field arithmetic
+uses 8 x 32-bit words. ptxas compiles both that and the 29-bit form to about 420 cycles of multiply-unit work per
+multiply. In the 32-bit form it puts the hi-word carry adds on the multiply unit (IMAD.X).
+
+The generated multiply sums each column of products in a 64-bit accumulator: IMAD.WIDE.U32 with a carry-out
+predicate, and one IADD3.X counting two carries at a time. That makes 73 WIDE and about 110 ALU instructions,
+reduction included.
+
+Measured in a loop on the RTX 3060 (output checked against Python on every thread):
+
+| Kernel | Throughput |
+|---|---|
+| compiled fe_mul (29-bit) | 10.2 G multiplies/s |
+| generated multiply | 17.1 G/s |
+| generated square | 19.2 G/s |
+
+A large generated block cannot sit inside the single Nexa kernel: ptxas sinks, rematerializes and duplicates the
+marker instructions, and keeps ~40 registers live across the block. So on sm_86 the kernel runs as three launches
+(hashes / combs / inversion and check), with buffers between them. The split alone costs 5% on the RTX 3060; it is
++3% on the RX 9070 XT, which keeps the single kernel.
+
+| RTX 3060 | MH/s | W |
+|---|---|---|
+| compiled, single kernel | 25.3 | 169 |
+| generated combs, three kernels | 27.5 | 162 |
+
+Live on Kryptex with the generated kernel: RTX 3060, 2 accepted / 0 rejected in 11 minutes.
 
 Live on Kryptex: RX 9070 XT, 9 accepted / 0 rejected in 25 minutes.
 

@@ -9,6 +9,7 @@
 
 #include "crypto/secp256k1.hpp"
 #include "crypto/sha256.hpp"
+#include "gpu/kernels.hpp"
 #include "nexa_cu.hpp"
 
 namespace xm::nexa {
@@ -71,6 +72,8 @@ Engine::~Engine() {
   dev_.free(d_found_);
   dev_.free(d_table_);
   dev_.free(d_dbg_);
+  dev_.free(d_st_);
+  dev_.free(d_pr_);
 }
 
 bool Engine::init(std::string& err) {
@@ -92,33 +95,46 @@ bool Engine::init(std::string& err) {
     err = dev_.last_error();
     return false;
   }
-  std::string kernel(reinterpret_cast<const char*>(nexa_cu_bytes), nexa_cu_size);
-  if (const char* f = std::getenv("XM_NEXA_KERNEL")) {  // developer: kernel source from a file
-    std::ifstream in(f, std::ios::binary);
-    std::stringstream ss;
-    ss << in.rdbuf();
-    if (!in) {
-      err = std::string("XM_NEXA_KERNEL ") + f + " not readable";
-      return false;
-    }
-    kernel = ss.str();
-  }
   // Blocks per SM the register budget is fitted to: 2 on NVIDIA (RTX 3060: 15.0 vs 10.6 MH/s with 1; 3 spills).
   // HIP reads the second launch bound differently; AMD keeps 1. Developer: XM_NEXA_MINB.
   int minb = dev_.info().vendor == gpu::Vendor::Nvidia ? 2 : 1;
   if (const char* e = std::getenv("XM_NEXA_MINB")) minb = std::clamp(std::atoi(e), 1, 8);
-  std::string src = "#define TPB " + std::to_string(tpb_) + "\n#define W " + std::to_string(w_) + "\n#define NW " +
-                    std::to_string(nw) + "\n#define MINB " + std::to_string(minb) + "\n" + kernel;
-  std::vector<std::string> opts;
-  if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
-  if (!gpu::rtc_compile(dev_.info(), src, "nexa.cu", opts, module_)) {
-    err = "NexaPow kernel did not compile: " + module_.log.substr(0, 3000);
-    return false;
+  // RTX 30 with the defaults the prebuilt cubin is made for (W 20, 256 threads, 2 blocks): the three-kernel form,
+  // with the prebuilt (generated) xm_nexa_b added next to the run-time compiled kernels
+  const char* gen_env = std::getenv("XM_NEXA_GEN");
+  const auto archs = gpu::kernel_archs("nexa");
+  const bool want_gen = dev_.info().vendor == gpu::Vendor::Nvidia && w_ == 20 && tpb_ == 256 && minb == 2 &&
+                        std::find(archs.begin(), archs.end(), dev_.info().arch) != archs.end() &&
+                        !(gen_env && std::string(gen_env) == "0");
+  {
+    std::string kernel(reinterpret_cast<const char*>(nexa_cu_bytes), nexa_cu_size);
+    if (const char* f = std::getenv("XM_NEXA_KERNEL")) {  // developer: kernel source from a file
+      std::ifstream in(f, std::ios::binary);
+      std::stringstream ss;
+      ss << in.rdbuf();
+      if (!in) {
+        err = std::string("XM_NEXA_KERNEL ") + f + " not readable";
+        return false;
+      }
+      kernel = ss.str();
+    }
+    split_ = want_gen || std::getenv("XM_NEXA_SPLIT") != nullptr;  // developer: the three-kernel form, compiled
+    std::string src = "#define TPB " + std::to_string(tpb_) + "\n#define W " + std::to_string(w_) + "\n#define NW " +
+                      std::to_string(nw) + "\n#define MINB " + std::to_string(minb) + "\n" +
+                      (split_ ? "#define XM_NEXA_SPLIT\n" : "") + kernel;
+    std::vector<std::string> opts;
+    if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
+    if (!gpu::rtc_compile(dev_.info(), src, "nexa.cu", opts, module_)) {
+      err = "NexaPow kernel did not compile: " + module_.log.substr(0, 3000);
+      return false;
+    }
+    if (!dev_.load_module(gpu::rtc_blob(module_, dev_.info().vendor, "nexa"))) {
+      err = dev_.last_error();
+      return false;
+    }
   }
-  if (!dev_.load_module(gpu::rtc_blob(module_, dev_.info().vendor, "nexa"))) {
-    err = dev_.last_error();
-    return false;
-  }
+  std::string why;
+  gen_ = want_gen && gpu::add_kernels(dev_, "nexa", why);
   return true;
 }
 
@@ -156,8 +172,34 @@ bool Engine::launch(uint64_t base, uint32_t n, uint32_t dump, std::string& err) 
   p.base = base;
   p.dump = dump;
   uint32_t maxf = kMaxFound;
-  void* args[] = {&p, &d_table_, &d_found_, &maxf, &d_dbg_};
-  if (!dev_.memset(d_found_, 0, 4) || !dev_.launch("xm_nexa", n / tpb_, 1, 1, tpb_, 1, 1, 0, args) || !dev_.wait()) {
+  if (!dev_.memset(d_found_, 0, 4)) {
+    err = dev_.last_error();
+    return false;
+  }
+  bool ok;
+  if (split_) {
+    if (split_n_ < n) {  // per nonce: 27 words of stage-1 results, 68 for P and R (kernels/nexa/nexa.cu PR_ROW)
+      dev_.free(d_st_);
+      dev_.free(d_pr_);
+      d_st_ = dev_.alloc(size_t(n) * 27 * 4);
+      d_pr_ = dev_.alloc(size_t(n) * 68 * 4);
+      split_n_ = d_st_ && d_pr_ ? n : 0;
+      if (!split_n_) {
+        err = dev_.last_error();
+        return false;
+      }
+    }
+    void* aa[] = {&p, &d_st_, &n};
+    void* ba[] = {&d_table_, &d_st_, &d_pr_, &n};
+    void* ca[] = {&p, &d_st_, &d_pr_, &n, &d_found_, &maxf, &d_dbg_};
+    ok = dev_.launch("xm_nexa_a", n / tpb_, 1, 1, tpb_, 1, 1, 0, aa) &&
+         dev_.launch("xm_nexa_b", n / tpb_, 1, 1, tpb_, 1, 1, 0, ba) &&
+         dev_.launch("xm_nexa_c", n / tpb_, 1, 1, tpb_, 1, 1, 0, ca);
+  } else {
+    void* args[] = {&p, &d_table_, &d_found_, &maxf, &d_dbg_};
+    ok = dev_.launch("xm_nexa", n / tpb_, 1, 1, tpb_, 1, 1, 0, args);
+  }
+  if (!ok || !dev_.wait()) {
     err = dev_.last_error();
     return false;
   }

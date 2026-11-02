@@ -46,6 +46,9 @@ class Device {
   virtual bool memset(DevPtr dst, int value, size_t bytes) = 0;
   // Loads a module from a blob; returns false if the blob does not fit this device.
   virtual bool load_module(const KernelBlob& blob) = 0;
+  // Loads one more module next to the loaded one: launches look a kernel up in the added modules first (so they can
+  // replace some of its kernels). load_module() drops added modules. Backends without it return false.
+  virtual bool add_module(const KernelBlob&) { return false; }
   // Launch a kernel from the loaded module. args are pointers to each argument value, like cuLaunchKernel.
   virtual bool launch(const char* kernel, unsigned gx, unsigned gy, unsigned gz, unsigned bx, unsigned by,
                       unsigned bz, unsigned shared_bytes, void** args) = 0;

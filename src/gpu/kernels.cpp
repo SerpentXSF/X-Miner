@@ -40,6 +40,26 @@ bool load_kernels(Device& dev, const std::string& algorithm, std::string& why) {
   return false;
 }
 
+bool add_kernels(Device& dev, const std::string& algorithm, std::string& why) {
+  const auto& info = dev.info();
+  if (const char* path = std::getenv("XM_KERNEL_FILE")) {  // developer A/B switch, as in load_kernels()
+    const std::string p = path, name = p.substr(p.find_last_of("/\\") + 1);
+    if (name.rfind(algorithm + "_" + info.arch + ".", 0) == 0) {
+      std::ifstream f(p, std::ios::binary);
+      static std::vector<unsigned char> data;
+      data.assign(std::istreambuf_iterator<char>(f), {});
+      const KernelBlob b{algorithm.c_str(), info.vendor, info.arch.c_str(), data.data(), data.size()};
+      if (!data.empty() && dev.add_module(b)) return true;
+      why = "XM_KERNEL_FILE " + p + " did not load";
+      return false;
+    }
+  }
+  for (const auto& b : kernel_blobs())
+    if (algorithm == b.algorithm && b.vendor == info.vendor && info.arch == b.arch && dev.add_module(b)) return true;
+  why = "no " + algorithm + " kernel for " + info.arch;
+  return false;
+}
+
 std::vector<std::string> kernel_archs(const std::string& algorithm) {
   std::vector<std::string> out;
   for (const auto& b : kernel_blobs())

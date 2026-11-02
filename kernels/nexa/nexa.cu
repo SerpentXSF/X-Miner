@@ -723,17 +723,11 @@ struct Params {
 #ifndef MINB
 #define MINB 1
 #endif
-extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const uint4* __restrict__ tab,
-                                                                u32* __restrict__ found, u32 maxf,
-                                                                u32* __restrict__ dbg) {
-  __shared__ u32 sh_pre[TPB][9];
-  __shared__ u32 sh_suf[TPB][9];
-  __shared__ u32 sh_inv[9];
-  const u32 tid = threadIdx.x;
-  const u64 nonce = p.base + (u64)blockIdx.x * TPB + tid;
-
+// Stage 1 of a nonce: miningHash, h1 = SHA256(miningHash), the RFC6979 nonce k and the private key x (big-endian
+// words -> little-endian limbs); valid = both scalars in [1, n).
+__device__ __forceinline__ void nexa_stage1(const Params& p, u64 nonce, u32 x[8], u32 kk[8], u32 h1[8], bool& valid) {
   // ---- miningHash = SHA256d(commitment | 0x0c | en1 | nonce): first block from the round-8 state ----
-  u32 mh[8], h1[8];
+  u32 mh[8];
   {
     u32 w[16];
 #pragma unroll
@@ -772,7 +766,6 @@ extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const 
 
   // ---- k = RFC6979(miningHash, h1): K1 = HMAC(0, V0|00|seed), V1 = HMAC(K1, V0), K2 = HMAC(K1, V1|01|seed),
   //      V2 = HMAC(K2, V1), k = V3 = HMAC(K2, V2) ----
-  u32 kk[8];
   {
     u32 sh[21];
     // seed = mh | h1 | "Schnorr+SHA256  " as one byte-shifted stream (then the 0x80 pad byte)
@@ -797,21 +790,22 @@ extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const 
     be_to_limbs(kk, v);
   }
 
-  u32 x[8];
   be_to_limbs(x, mh);
-  bool valid = !sc_ge_n(x) && !sc_ge_n(kk);
+  valid = !sc_ge_n(x) && !sc_ge_n(kk);
   {
     u32 z = 0;
 #pragma unroll
     for (int i = 0; i < 8; ++i) z |= x[i];
     valid = valid && z != 0u;
   }
+}
 
-  // ---- P = x G, R = k G ----
-  u32 PX[9], PY[9], PZ[9], RX[9], RY[9], RZ[9];
-  comb_mul(PX, PY, PZ, x, tab);
-  comb_mul(RX, RY, RZ, kk, tab);
-
+// Stage 2: from P = x G and R = k G (Jacobian): the block's batched inversion (every thread of the block takes
+// part), the signature, powHash and the target check.
+__device__ __forceinline__ void nexa_stage2(const Params& p, u32 tid, u32 x[8], u32 kk[8], const u32 h1[8], bool valid,
+                                            u32 PX[9], u32 PY[9], u32 PZ[9], u32 RX[9], u32 RY[9], u32 RZ[9],
+                                            u32 (*sh_pre)[9], u32 (*sh_suf)[9], u32* sh_inv, u32* __restrict__ found,
+                                            u32 maxf, u32* __restrict__ dbg) {
   // ---- 1 / (PZ RZ) for the block: Montgomery's trick with block-wide prefix / suffix products ----
   u32 q[9];
   fe_mul(q, PZ, RZ);
@@ -957,3 +951,123 @@ extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const 
     if (slot < maxf) found[1 + slot] = blockIdx.x * TPB + tid;
   }
 }
+
+#ifndef XM_NEXA_GEN_SHELL  // (the generated build's cubin holds xm_nexa_b only)
+extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const uint4* __restrict__ tab,
+                                                                u32* __restrict__ found, u32 maxf,
+                                                                u32* __restrict__ dbg) {
+  __shared__ u32 sh_pre[TPB][9];
+  __shared__ u32 sh_suf[TPB][9];
+  __shared__ u32 sh_inv[9];
+  const u32 tid = threadIdx.x;
+  const u64 nonce = p.base + (u64)blockIdx.x * TPB + tid;
+  u32 x[8], kk[8], h1[8];
+  bool valid;
+  nexa_stage1(p, nonce, x, kk, h1, valid);
+  // ---- P = x G, R = k G ----
+  u32 PX[9], PY[9], PZ[9], RX[9], RY[9], RZ[9];
+  comb_mul(PX, PY, PZ, x, tab);
+  comb_mul(RX, RY, RZ, kk, tab);
+  nexa_stage2(p, tid, x, kk, h1, valid, PX, PY, PZ, RX, RY, RZ, sh_pre, sh_suf, sh_inv, found, maxf, dbg);
+}
+#endif
+
+#ifdef XM_NEXA_SPLIT
+#define PR_ROW 68
+// The same work as three kernels over buffers (n nonces per launch, thread t = blockIdx.x TPB + threadIdx.x):
+//   a: stage 1 -> st (27 words per nonce, word-major: st[w n + t]; 0..7 x, 8..15 k, 16..23 h1, 24 valid)
+//   b: P = x G, R = k G -> pr (PR_ROW words per nonce, thread-major: pr[PR_ROW t + w]; w 0..47: X, Y, Z of P then of
+//      R, each 8 x 32-bit little-endian words < 2^256; 48..65: the generated build's marker pins)
+//   c: stage 2.
+// The generated sm_86 build (tools/ngen) replaces b's comb multiplications with generated code: a large block of
+// it needs a kernel around it that keeps almost nothing live (ptxas moves code freely across a block it cannot see).
+// That cubin holds b only; the miner adds it next to the run-time compiled kernels.
+#ifndef XM_NEXA_GEN_SHELL
+extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa_a(Params p, u32* __restrict__ st, u32 n) {
+  const u32 t = blockIdx.x * TPB + threadIdx.x;
+  u32 x[8], kk[8], h1[8];
+  bool valid;
+  nexa_stage1(p, p.base + t, x, kk, h1, valid);
+#pragma unroll
+  for (int i = 0; i < 8; ++i) { st[i * n + t] = x[i]; st[(8 + i) * n + t] = kk[i]; st[(16 + i) * n + t] = h1[i]; }
+  st[24 * n + t] = valid;
+}
+#endif
+
+extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa_b(const uint4* __restrict__ tab,
+                                                                  const u32* __restrict__ st, u32* __restrict__ pr,
+                                                                  u32 n) {
+  const u32 t = blockIdx.x * TPB + threadIdx.x;
+#ifdef XM_NEXA_GEN_SHELL
+  // markers 0..7: x, 8..15: k, 16, 17: the address of this nonce's pr row. The generated block reads the table
+  // pointer from the kernel parameters, leaves the marker registers unchanged and stores P, R to the pr row. Every
+  // marker result is stored to the row's pin words (stores are kept and stay in place; unused or pure uses would let
+  // ptxas drop or move the markers).
+  u32 v[18];
+#pragma unroll
+  for (int i = 0; i < 16; ++i) v[i] = st[i * n + t];
+  u32* row_p = pr + PR_ROW * (size_t)t;
+  const u64 row = (u64)(size_t)row_p;
+  v[16] = (u32)row;
+  v[17] = (u32)(row >> 32);
+#define XM_MK(i, n) "xor.b32 %" #i ", %" #i ", 0x0f1f4f" #n ";"
+#define XM_MK8(a, b, c, d, e, f, g, h) XM_MK(0, a) XM_MK(1, b) XM_MK(2, c) XM_MK(3, d) XM_MK(4, e) XM_MK(5, f) \
+  XM_MK(6, g) XM_MK(7, h)
+#define XM_R8(o) "+r"(v[o]), "+r"(v[o + 1]), "+r"(v[o + 2]), "+r"(v[o + 3]), "+r"(v[o + 4]), "+r"(v[o + 5]), \
+  "+r"(v[o + 6]), "+r"(v[o + 7])
+  asm volatile(XM_MK8(00, 01, 02, 03, 04, 05, 06, 07) : XM_R8(0));
+  asm volatile(XM_MK8(08, 09, 0a, 0b, 0c, 0d, 0e, 0f) : XM_R8(8));
+  asm volatile(XM_MK(0, 10) XM_MK(1, 11) : "+r"(v[16]), "+r"(v[17]));
+#undef XM_R8
+#undef XM_MK8
+#undef XM_MK
+#pragma unroll
+  for (int i = 0; i < 18; ++i) row_p[48 + i] = v[i];
+#else
+  u32 x[8], kk[8], P[3][9], R[3][9], w[8];
+#pragma unroll
+  for (int i = 0; i < 8; ++i) { x[i] = st[i * n + t]; kk[i] = st[(8 + i) * n + t]; }
+  comb_mul(P[0], P[1], P[2], x, tab);
+  comb_mul(R[0], R[1], R[2], kk, tab);
+#pragma unroll
+  for (int c = 0; c < 6; ++c) {
+    u32* a = c < 3 ? P[c] : R[c - 3];
+    fe_canon(a);
+    fe_to32(w, a);
+#pragma unroll
+    for (int i = 0; i < 8; ++i) pr[PR_ROW * (size_t)t + 8 * c + i] = w[i];
+  }
+#endif
+}
+
+#ifndef XM_NEXA_GEN_SHELL
+extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa_c(Params p, const u32* __restrict__ st,
+                                                                  const u32* __restrict__ pr, u32 n,
+                                                                  u32* __restrict__ found, u32 maxf,
+                                                                  u32* __restrict__ dbg) {
+  __shared__ u32 sh_pre[TPB][9];
+  __shared__ u32 sh_suf[TPB][9];
+  __shared__ u32 sh_inv[9];
+  const u32 tid = threadIdx.x;
+  const u32 t = blockIdx.x * TPB + tid;
+  u32 x[8], kk[8], h1[8], c32[48];
+#pragma unroll
+  for (int i = 0; i < 8; ++i) { x[i] = st[i * n + t]; kk[i] = st[(8 + i) * n + t]; h1[i] = st[(16 + i) * n + t]; }
+  const bool valid = st[24 * n + t] != 0u;
+  const uint4* q = reinterpret_cast<const uint4*>(pr + PR_ROW * (size_t)t);
+#pragma unroll
+  for (int i = 0; i < 12; ++i) {
+    const uint4 v = q[i];
+    c32[4 * i] = v.x; c32[4 * i + 1] = v.y; c32[4 * i + 2] = v.z; c32[4 * i + 3] = v.w;
+  }
+  u32 PX[9], PY[9], PZ[9], RX[9], RY[9], RZ[9];
+  fe_from32(PX, c32);
+  fe_from32(PY, c32 + 8);
+  fe_from32(PZ, c32 + 16);
+  fe_from32(RX, c32 + 24);
+  fe_from32(RY, c32 + 32);
+  fe_from32(RZ, c32 + 40);
+  nexa_stage2(p, tid, x, kk, h1, valid, PX, PY, PZ, RX, RY, RZ, sh_pre, sh_suf, sh_inv, found, maxf, dbg);
+}
+#endif
+#endif

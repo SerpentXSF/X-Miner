@@ -37,6 +37,17 @@
   25 minutes from the RX 9070 XT. RX 9070 XT 49.1 MH/s, RTX 3060 25.1 MH/s (lolMiner ~95 / ~50). The AMD compiler
   (gfx1201) miscompiles the inlined field reduction unless an empty asm fence separates it from the products.
 
+  RTX 30 (sm_86): the two comb multiplications are generated, scheduled SASS (tools/ngen, assembled with
+  CuAssembler; a prebuilt cubin):
+  - 8 x 32-bit field words; a multiply sums each column in a 64-bit accumulator with IMAD.WIDE carry-outs (1.68 times
+    the compiled multiply's throughput);
+  - the kernel runs as three launches there (hashes / combs / inversion and check), so that the generated one keeps
+    nothing else live;
+  - the block is checked against Python elliptic-curve arithmetic before it is assembled.
+
+  RTX 3060 25.3 -> 27.5 MH/s, 169 -> 162 W; selftest 512/512; Kryptex 2 accepted / 0 rejected in 11 minutes.
+  `XM_NEXA_GEN=0` keeps the compiled kernel.
+
 ## 0.1.0c (unreleased)
 
 - Neurai (XNA, `neurai`): KawPow unchanged on its own chain (checked line by line against NeuraiProject/Neurai), with

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <map>
+#include <vector>
 
 #include "gpu/dynlib.hpp"
 #include "gpu/gpu.hpp"
@@ -133,9 +134,21 @@ class CudaDevice : public Device {
     if (a.rfind("compute_", 0) == 0 && std::stoi(a.substr(8)) > std::stoi(info_.arch.substr(3))) return false;
     funcs_.clear();
     big_shared_.clear();
-    if (module_ && cuda().cuModuleUnload) cuda().cuModuleUnload(module_);  // run-time compiled modules are replaced
+    if (cuda().cuModuleUnload) {  // run-time compiled modules are replaced
+      if (module_) cuda().cuModuleUnload(module_);
+      for (CUmodule m : added_) cuda().cuModuleUnload(m);
+    }
     module_ = nullptr;
+    added_.clear();
     return check(cuda().cuModuleLoadData(&module_, blob.data));
+  }
+  bool add_module(const KernelBlob& blob) override {
+    if (blob.vendor != Vendor::Nvidia || std::string(blob.arch) != info_.arch || !module_) return false;
+    CUmodule m = nullptr;
+    if (!check(cuda().cuModuleLoadData(&m, blob.data))) return false;
+    added_.push_back(m);
+    funcs_.clear();
+    return true;
   }
   bool launch(const char* kernel, unsigned gx, unsigned gy, unsigned gz, unsigned bx, unsigned by, unsigned bz,
               unsigned shared, void** args) override {
@@ -144,7 +157,9 @@ class CudaDevice : public Device {
     if (it != funcs_.end()) {
       f = it->second;
     } else {
-      if (!check(cuda().cuModuleGetFunction(&f, module_, kernel))) return false;
+      for (CUmodule m : added_)
+        if (cuda().cuModuleGetFunction(&f, m, kernel) == 0) break;
+      if (!f && !check(cuda().cuModuleGetFunction(&f, module_, kernel))) return false;
       funcs_[kernel] = f;
     }
     if (shared > 48 * 1024) {  // opt in to more than the default 48 KB of dynamic shared memory (once per size)
@@ -209,6 +224,7 @@ class CudaDevice : public Device {
   CUevent event2_ = nullptr;
   bool cur_ = false;            // launches go to stream2_
   CUmodule module_ = nullptr;
+  std::vector<CUmodule> added_;  // add_module()
   std::map<std::string, CUfunction> funcs_;
   std::map<CUfunction, unsigned> big_shared_;  // dynamic shared memory opted in per function
   std::string err_;

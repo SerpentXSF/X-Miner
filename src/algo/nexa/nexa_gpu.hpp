@@ -1,6 +1,8 @@
 // NexaPow mining engine for one GPU: one thread per nonce (kernels/nexa/nexa.cu, compiled at run time), a signed
 // fixed-base comb table of G multiples in device memory, top-64-bit target compare; every candidate is re-checked
 // with the CPU reference. Nonces are commitment | 0x0c | extranonce1 (4) | 8 miner bytes (Miningcore pools).
+// On RTX 30 (sm_86) with the default settings the kernel is the prebuilt cubin from tools/ngen instead: three
+// kernels per batch, the comb multiplications as generated SASS (XM_NEXA_GEN=0: the compiled kernel).
 #pragma once
 
 #include <array>
@@ -48,14 +50,18 @@ class Engine {
   uint64_t cpu_rejects() const { return cpu_rejects_; }
   uint32_t batch() const { return batch_; }
   int window() const { return w_; }
+  bool generated() const { return gen_; }
 
  private:
   bool launch(uint64_t base, uint32_t n, uint32_t dump, std::string& err);
 
   gpu::Device& dev_;
   uint64_t rng_;
-  gpu::DevPtr d_found_ = 0, d_table_ = 0, d_dbg_ = 0;
+  gpu::DevPtr d_found_ = 0, d_table_ = 0, d_dbg_ = 0, d_st_ = 0, d_pr_ = 0;
   size_t dbg_bytes_ = 0;
+  uint32_t split_n_ = 0;  // nonces d_st_ / d_pr_ hold
+  bool split_ = false;    // three kernels (xm_nexa_a / _b / _c) instead of xm_nexa
+  bool gen_ = false;      // the prebuilt sm_86 cubin with generated comb code
   gpu::RtcOutput module_;
   Job job_;
   Target target_{}, block_target_{};
