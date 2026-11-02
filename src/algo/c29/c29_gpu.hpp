@@ -5,7 +5,9 @@
 
 #include <array>
 #include <cstdint>
+#include <future>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "algo/c29/c29.hpp"
@@ -43,25 +45,53 @@ class Engine {
   Engine(gpu::Device& dev, uint64_t seed);
   ~Engine();
   bool init(std::string& err);
+  using Edges = std::vector<std::pair<uint32_t, uint32_t>>;
+  using Cycles = std::vector<std::array<uint32_t, kProofSize>>;
   // Solves the graph of keys k: the proofs it holds (verified on the CPU).
   bool solve(const Keys& k, std::vector<Proof>& proofs, SolveStats& st, std::string& err);
+  // The same, pipelined: trims graph k on the GPU while the CPU searches the previous graph (passed earlier), then
+  // returns that graph's proofs and tag (have_prev = false on the first call or after a skipped graph). st holds this
+  // graph's trimming and the previous graph's search.
+  bool solve_pipelined(const Keys& k, uint64_t tag, std::vector<Proof>& proofs, uint64_t& prev_tag, bool& have_prev,
+                       SolveStats& st, std::string& err);
   bool set_job(const Job& job, std::string& err);
-  // One graph of the current job. Returns 1 (graphs done) or 0 on error.
+  // One graph of the current job (its shares come with the next call). Returns 1 (graphs done) or 0 on error.
   double iterate(std::vector<Share>& shares, std::string& err);
   int rounds() const { return rounds_; }
   uint64_t cpu_rejects() const { return cpu_rejects_; }
 
  private:
+  // GPU trimming: the surviving edges (empty when the graph is skipped: st.overflow).
+  bool trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err);
+  // Edge index recovery (GPU) and verification (CPU) of the cycles found.
+  bool finish(const Keys& k, const Edges& edges, const Cycles& cycles, std::vector<Proof>& proofs, std::string& err);
+
+  struct Pending {  // the graph whose cycle search is running
+    bool active = false;
+    Keys keys{};
+    uint64_t tag = 0;
+    Edges edges;
+    std::future<std::pair<Cycles, double>> search;
+  };
   gpu::Device& dev_;
   uint64_t rng_;
   gpu::RtcOutput module_;
-  gpu::DevPtr d_a_ = 0, d_b_ = 0, d_cnt_a_ = 0, d_cnt_b_ = 0, d_bm1_ = 0, d_bm2_ = 0, d_want_ = 0, d_found_ = 0;
-  uint32_t capb_ = 0, chunks_ = 0;
+  gpu::DevPtr d_a_ = 0, d_b_ = 0, d_cnt_a_ = 0, d_cnt_b_ = 0, d_off_ = 0, d_n_ = 0, d_bm1_ = 0, d_bm2_ = 0,
+              d_want_ = 0, d_found_ = 0;
+  uint32_t capb_ = 0;
   int rounds_ = 200;  // trimming rounds (developer: XM_C29_ROUNDS); 160-300 measure the same
-  Job job_;
+  Job job_, pend_job_;
   bool have_job_ = false;
   uint64_t counter_ = 0, cpu_rejects_ = 0;
-  static constexpr int kNbBits = 6, kTpb = 256, kChunk = 4096;
+  Pending pend_;  // its future waits for a running search on destruction (host memory only)
+  // 4096 fine buckets (2^17 nodes each: two 16 KB shared bitmaps) reached through 64 coarse ones (split in slices of
+  // ~16K edges); 1024 threads, 8 sipblocks per generating thread; bucket rounds while at least 256K edges are left,
+  // then one flat list.
+  static constexpr int kNbBits = 12, kTpb = 1024, kGenSb = 8, kNc = 64;
+  static constexpr uint64_t kSplitSlice = 16384;
+  static constexpr uint32_t kMaxParts = 256, kMaxSegs = 256;  // kMaxSegs = MAX_SEGS in the kernel
+  uint64_t flat_edges_ = 1ull << 18;  // developer: XM_C29_FLAT
+  uint64_t seg_edges_ = 1ull << 26;   // segmented rounds from this many edges up (developer: XM_C29_SEGS)
 };
 
 }  // namespace xm::c29

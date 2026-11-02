@@ -518,3 +518,49 @@ lolMiner runs at ~50 / ~95 MH/s on these cards. The next lever on NVIDIA would b
 IMAD.WIDE carry chains (carry predicates in and out), as for Quantus.
 
 Live on Kryptex: RX 9070 XT, 9 accepted / 0 rejected in 25 minutes.
+
+## Cuckaroo29 (Tari, cuckaroo29)
+
+One graph per nonce: 2^29 edges from siphash-2-4 (blocks of 64), trimmed until ~50K edges are left, then a CPU cycle
+search for 42-cycles (one per ~42 graphs). The work is memory traffic: each edge is 8 bytes, and the first rounds move
+gigabytes.
+
+The trimmer:
+- **Buckets:** 4096 per side by the node's top 12 bits, so one block can count a bucket's degrees in shared memory (two
+  16 KB bitmaps: seen once, seen twice).
+- **Two-step scatter:** a round writes its survivors into 64 coarse buckets of the other side, and a split kernel
+  spreads each coarse bucket over its 64 fine ones. Scattering straight into 4096 buckets does not coalesce.
+- **Fixed segments:** while edges are many (generation and rounds 0-3), every producing block owns a fixed segment of
+  each coarse bucket. That removes generation's counting pass (siphash computed once) and the rounds' reservation
+  pass. The rare edge past a segment's end is dropped, which costs a graph nothing measurable.
+- **Flat list:** below 256K edges the remaining rounds use one list and global bitmaps.
+- **Host:** counts come back every 4th round. The CPU cycle search of one graph runs during the next graph's trimming.
+
+Steps on the RX 9070 XT (200 rounds):
+
+| Step | g/s |
+|---|---|
+| 64 buckets, global bitmaps (first version) | 4.4 |
+| 4096 buckets, direct scatter | 3.1 |
+| 64 coarse + split | 4.2 |
+| flat list from 256K edges (was 4M) | 5.1 |
+| split slices of ~16K edges | 5.4 |
+| fixed segments while edges are many | 5.9 |
+| counts every 4th round | 6.2 |
+| CPU search overlapped | 6.67 |
+
+RTX 3060: 1.38 -> 2.47 g/s. lolMiner runs at ~14 / ~4-5 g/s on these cards.
+
+Per graph on the RX 9070 XT before the overlap (~150 ms of GPU time):
+
+| Part | Time |
+|---|---|
+| generation + split | 34 ms |
+| round 0 | 30 ms |
+| rounds 1-3 | 27 ms |
+| rounds 4-91 (bucketed, down to 256K edges) | ~43 ms |
+| flat rounds 92-199 | ~15 ms |
+
+The first rounds are bandwidth-bound, so the next lever is fewer bytes per edge.
+
+Live on Kryptex: RX 9070 XT, 5 accepted / 0 rejected in 15 minutes at difficulty 20 (6.62 g/s shown).

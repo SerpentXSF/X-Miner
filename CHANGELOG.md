@@ -15,11 +15,16 @@
 - GPU backends: an optional second stream (`set_stream`), created at the highest priority.
 - Tari Cuckaroo29 (XTM c29, `cuckaroo29`), new and in progress:
   - CPU reference from the Tari node source; Tari's own test vectors pass, including a whole 42-cycle proof.
-  - GPU solver: edge generation and bucketed trimming rounds on the GPU, cycle search on the CPU, edge index recovery
-    on the GPU, every proof verified on the CPU. The selftest finds the known 42-cycle of Tari's test graph.
+  - GPU solver: edge generation and trimming rounds on the GPU, cycle search on the CPU (overlapped with the next
+    graph's trimming), edge index recovery on the GPU, every proof verified on the CPU. Trimming keeps the edges in
+    4096 buckets whose degree counts fit in shared memory, reached through 64 coarse buckets (writing straight into
+    4096 buckets does not coalesce: 80 ms of generation went to scattered writes), with fixed per-block segments while
+    edges are many; below 256K edges one flat list. The selftest finds the known 42-cycle of Tari's test graph.
   - Kryptex (`xtm-c29-us.kryptex.network:7040`, XMRig-style stratum; the 8-byte target is little-endian, so
-    `cccccccccccccc0c` means difficulty 20): 4 accepted / 0 rejected in 10 minutes from the RX 9070 XT.
-  - RX 9070 XT ~4.4 g/s, RTX 3060 1.4 g/s; lolMiner ~14 / ~4-5. Needs ~9 GB of GPU memory.
+    `cccccccccccccc0c` means difficulty 20): 4 accepted / 0 rejected in 10 minutes from the RX 9070 XT (first
+    version), 5 accepted / 0 rejected in 15 minutes with the current trimmer.
+  - RX 9070 XT 6.67 g/s, RTX 3060 2.47 g/s (first version 4.4 / 1.4; lolMiner ~14 / ~4-5). Needs ~9 GB of GPU
+    memory.
 - Nexa (NEXA, `nexapow`), new: SHA256d of the header commitment and nonce, then a BCH Schnorr signature with that hash
   as the private key (RFC6979 nonce, secp256k1), then SHA256 of the signature. The CPU reference reproduces the Echelon
   spec vectors and real main-chain blocks. The GPU kernel (compiled at run time) uses:

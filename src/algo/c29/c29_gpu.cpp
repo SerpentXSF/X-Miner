@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <future>
 #include <sstream>
 
 #include "c29_cu.hpp"
@@ -27,25 +28,28 @@ struct KeysArg {
 Engine::Engine(gpu::Device& dev, uint64_t seed) : dev_(dev), rng_(seed) {}
 
 Engine::~Engine() {
-  for (gpu::DevPtr p : {d_a_, d_b_, d_cnt_a_, d_cnt_b_, d_bm1_, d_bm2_, d_want_, d_found_}) dev_.free(p);
+  for (gpu::DevPtr p : {d_a_, d_b_, d_cnt_a_, d_cnt_b_, d_off_, d_n_, d_bm1_, d_bm2_, d_want_, d_found_}) dev_.free(p);
 }
 
 bool Engine::init(std::string& err) {
   dev_.make_current();
   if (const char* e = std::getenv("XM_C29_ROUNDS")) rounds_ = std::clamp(std::atoi(e), 2, 1000);  // developer
+  if (const char* e = std::getenv("XM_C29_FLAT")) flat_edges_ = std::strtoull(e, nullptr, 0);  // developer
+  if (const char* e = std::getenv("XM_C29_SEGS")) seg_edges_ = std::strtoull(e, nullptr, 0);   // developer
   const uint64_t per_bucket = kEdges >> kNbBits;
-  capb_ = uint32_t(per_bucket + per_bucket / 50 + 4096);  // +2% (the spread is ~0.04%)
-  chunks_ = (capb_ + kChunk - 1) / kChunk;
+  capb_ = uint32_t(per_bucket + per_bucket / 25 + 512);  // +4% (the spread is ~0.3% = 1 sd)
   const size_t edge_bytes = size_t(capb_) << kNbBits << 3;
   d_a_ = dev_.alloc(edge_bytes);
   d_b_ = dev_.alloc(edge_bytes);
   d_cnt_a_ = dev_.alloc(4 << kNbBits);
-  d_cnt_b_ = dev_.alloc(4 << kNbBits);
+  d_cnt_b_ = dev_.alloc(size_t(4) * kNc << kNbBits);  // coarse segment counts
+  d_off_ = dev_.alloc(4 << kNbBits);
+  d_n_ = dev_.alloc(8);
   d_bm1_ = dev_.alloc(kEdges / 8);
   d_bm2_ = dev_.alloc(kEdges / 8);
   d_want_ = dev_.alloc(kProofSize * 8);
   d_found_ = dev_.alloc(kProofSize * 4);
-  if (!d_a_ || !d_b_ || !d_cnt_a_ || !d_cnt_b_ || !d_bm1_ || !d_bm2_ || !d_want_ || !d_found_) {
+  if (!d_a_ || !d_b_ || !d_cnt_a_ || !d_cnt_b_ || !d_off_ || !d_n_ || !d_bm1_ || !d_bm2_ || !d_want_ || !d_found_) {
     err = "not enough GPU memory for Cuckaroo29 (needs ~" + std::to_string((2 * edge_bytes + kEdges / 4) >> 20) +
           " MB): " + dev_.last_error();
     return false;
@@ -62,8 +66,8 @@ bool Engine::init(std::string& err) {
     kernel = ss.str();
   }
   const std::string src = "#define NB_BITS " + std::to_string(kNbBits) + "\n#define CAPB " + std::to_string(capb_) +
-                          "u\n#define TPB " + std::to_string(kTpb) + "\n#define CHUNK " + std::to_string(kChunk) +
-                          "u\n#define CHUNKS " + std::to_string(chunks_) + "u\n" + kernel;
+                          "u\n#define TPB " + std::to_string(kTpb) + "\n#define GEN_SB " + std::to_string(kGenSb) +
+                          "\n" + kernel;
   std::vector<std::string> opts;
   if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
   if (!gpu::rtc_compile(dev_.info(), src, "c29.cu", opts, module_)) {
@@ -77,109 +81,172 @@ bool Engine::init(std::string& err) {
   return true;
 }
 
-bool Engine::solve(const Keys& k, std::vector<Proof>& proofs, SolveStats& st, std::string& err) {
+bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err) {
   st = SolveStats{};
+  edges.clear();
   const auto t_start = std::chrono::steady_clock::now();
   KeysArg ka{k[0], k[1], k[2], k[3]};
-  const unsigned gen_blocks = unsigned((kEdges / 64) / kTpb);
+  constexpr uint32_t nb = 1u << kNbBits;
   auto fail = [&] {
     err = dev_.last_error();
     return false;
   };
-  if (!dev_.memset(d_cnt_a_, 0, 4 << kNbBits) || !dev_.memset(d_bm1_, 0, kEdges / 8) ||
-      !dev_.memset(d_bm2_, 0, kEdges / 8))
-    return fail();
-  {
-    void* args[] = {&ka, &d_a_, &d_cnt_a_};
-    if (!dev_.launch("c29_gen", gen_blocks, 1, 1, kTpb, 1, 1, 0, args)) return fail();
-  }
   static const bool prof = std::getenv("XM_C29_PROF") != nullptr;  // developer: per-round GPU times
   auto mark = [&](const char* what, int r) {
     if (!prof) return;
     dev_.wait();
     std::fprintf(stderr, "c29 %s %d: %.2f ms\n", what, r, ms_since(t_start));
   };
+  // generation into the coarse U buckets (d_b_, segment counts in d_cnt_b_), then split into the fine ones (d_a_)
+  gpu::DevPtr in = d_a_, out = d_b_;
+  gpu::DevPtr cin = d_cnt_a_;
+  const uint32_t gen_blocks = uint32_t((kEdges / 64) / (uint64_t(kTpb) * kGenSb));
+  const uint32_t ccap = capb_ * (nb / kNc);
+  // split blocks: slices of ~kSplitSlice edges (the second read of a slice then hits the cache), <= kMaxSegs segments
+  auto split = [&](uint32_t side, uint64_t edges, uint32_t nseg) {
+    uint32_t seg_cap = ccap / nseg;
+    uint32_t parts = 1;  // a power of two, as nseg is (more parts than segments: slices of one segment)
+    while (parts < kMaxParts && (parts * 2 * kNc * kSplitSlice <= edges || nseg / parts > kMaxSegs))
+      parts *= 2;
+    void* args[] = {&side, &d_b_, &d_cnt_b_, &nseg, &seg_cap, &d_a_, &d_cnt_a_, &parts};
+    return dev_.memset(d_cnt_a_, 0, 4 * nb) && dev_.launch("c29_split", kNc * parts, 1, 1, kTpb, 1, 1, 0, args);
+  };
+  {
+    void* args[] = {&ka, &d_b_, &d_cnt_b_};
+    if (!dev_.launch("c29_gen", gen_blocks, 1, 1, kTpb, 1, 1, 0, args) || !split(0, kEdges, gen_blocks)) return fail();
+  }
   mark("gen", 0);
-  gpu::DevPtr in = d_a_, out = d_b_, cin = d_cnt_a_, cout = d_cnt_b_;
-  // A round counts the degrees of side r & 1 (bucket by bucket, so the bitmap range in use stays in the cache), then
-  // keeps the edges whose node was seen twice. The bitmaps are cleared whole while edges are many, word by word
-  // through the edges once few are left. The grid follows the largest bucket: counts are read back every 4th round
-  // while edges are many, then not at all (counts only shrink, so an older grid still covers every bucket).
-  uint32_t counts[1 << kNbBits];
-  uint32_t chunks = chunks_, total = uint32_t(kEdges);
-  for (int r = 0; r < rounds_; ++r) {
+  // bucket rounds (shared-memory degree counts) while edges are many
+  std::vector<uint32_t> counts(nb);
+  uint64_t total = kEdges;
+  int r = 0;
+  for (; r < rounds_ && total >= flat_edges_; ++r) {
     uint32_t side = uint32_t(r & 1);
-    const bool small = total < (1u << 22);
-    if (!dev_.memset(cout, 0, 4 << kNbBits)) return fail();
-    const unsigned blocks = chunks << kNbBits;
-    void* ca[] = {&side, &in, &cin, &d_bm1_, &d_bm2_, &chunks};
-    void* fa[] = {&side, &in, &cin, &d_bm2_, &out, &cout, &chunks};
-    if (!dev_.launch("c29_count", blocks, 1, 1, kTpb, 1, 1, 0, ca) ||
-        !dev_.launch("c29_filter", blocks, 1, 1, kTpb, 1, 1, 0, fa))
+    void* args[] = {&side, &d_a_, &d_cnt_a_, &d_b_, &d_cnt_b_};
+    const bool segs = total >= seg_edges_;  // per-block segments while edges are many, else whole coarse buckets
+    if ((!segs && !dev_.memset(d_cnt_b_, 0, 4 * kNc)) ||
+        !dev_.launch(segs ? "c29_round" : "c29_round_r", nb, 1, 1, kTpb, 1, 1, 0, args) ||
+        !split(side ^ 1, total, segs ? nb : 1))
       return fail();
-    if (small) {
-      if (!dev_.launch("c29_clear", blocks, 1, 1, kTpb, 1, 1, 0, ca)) return fail();
-    } else if (!dev_.memset(d_bm1_, 0, kEdges / 8) || !dev_.memset(d_bm2_, 0, kEdges / 8)) {
-      return fail();
-    }
-    std::swap(in, out);
-    std::swap(cin, cout);
-    if (r < 24 || r % 50 == 0) mark("round", r);
-    if (small || (r & 3) != 3) continue;
-    if (!dev_.download(counts, cin, sizeof counts)) return fail();
-    uint32_t mx = 0;
+    // counts come back every 4th round (a host round trip each); in between `total` is an upper bound
+    if ((r & 3) != 3 && r + 1 < rounds_) continue;
+    if (!dev_.download(counts.data(), cin, 4 * nb)) return fail();
     total = 0;
     for (uint32_t c : counts) {
-      mx = std::max(mx, c);
-      total += c;
+      if (c > capb_) st.overflow = true;
+      total += std::min(c, capb_);
     }
-    chunks = std::max(1u, std::min(chunks_, (mx + kChunk - 1) / kChunk));
+    mark("round", r);
+    if (prof) std::fprintf(stderr, "c29   edges after round %d: %llu\n", r, static_cast<unsigned long long>(total));
   }
-  st.gpu_ms = ms_since(t_start);
+  if (st.overflow) return true;
+  // one flat list for the late rounds (device-side count; the global bitmaps are cleared through the edges)
+  {
+    std::vector<uint32_t> off(nb);
+    uint32_t o = 0;
+    for (uint32_t b = 0; b < nb; ++b) {
+      off[b] = o;
+      o += counts[b];
+    }
+    const uint32_t n2[2] = {o, 0};
+    void* args[] = {&in, &cin, &d_off_, &out};
+    if (!dev_.upload(d_off_, off.data(), 4 * nb) || !dev_.upload(d_n_, n2, 8) ||
+        !dev_.launch("c29_flatten", nb, 1, 1, kTpb, 1, 1, 0, args) || !dev_.memset(d_bm1_, 0, kEdges / 8) ||
+        !dev_.memset(d_bm2_, 0, kEdges / 8))
+      return fail();
+    std::swap(in, out);
+  }
+  gpu::DevPtr nin = d_n_, nout = d_n_ + 4;
+  constexpr unsigned fgrid = 256;
+  for (; r < rounds_; ++r) {
+    uint32_t side = uint32_t(r & 1);
+    void* ca[] = {&side, &in, &nin, &d_bm1_, &d_bm2_};
+    void* fa[] = {&side, &in, &nin, &d_bm2_, &out, &nout};
+    if (!dev_.memset(nout, 0, 4) || !dev_.launch("c29_fcount", fgrid, 1, 1, kTpb, 1, 1, 0, ca) ||
+        !dev_.launch("c29_ffilter", fgrid, 1, 1, kTpb, 1, 1, 0, fa) ||
+        !dev_.launch("c29_fclear", fgrid, 1, 1, kTpb, 1, 1, 0, ca))
+      return fail();
+    std::swap(in, out);
+    std::swap(nin, nout);
+    if (r % 50 == 0) mark("flat round", r);
+  }
   // survivors to the host
-  if (!dev_.wait() || !dev_.download(counts, cin, sizeof counts)) return fail();
-  std::vector<std::pair<uint32_t, uint32_t>> edges;
-  for (int b = 0; b < (1 << kNbBits); ++b) {
-    if (counts[b] > capb_) {
-      st.overflow = true;
-      return true;
-    }
-    st.remaining += counts[b];
-  }
-  if (st.remaining > (1u << 22)) {  // trimming far from done: not worth a CPU search
+  uint32_t n = 0;
+  if (!dev_.wait() || !dev_.download(&n, nin, 4)) return fail();
+  st.gpu_ms = ms_since(t_start);
+  st.remaining = n;
+  if (n > (1u << 22)) {  // trimming far from done: not worth a CPU search
     st.overflow = true;
     return true;
   }
-  std::vector<uint32_t> buf;
-  for (int b = 0; b < (1 << kNbBits); ++b) {
-    if (!counts[b]) continue;
-    buf.resize(size_t(counts[b]) * 2);
-    if (!dev_.download(buf.data(), in + gpu::DevPtr(size_t(b) * capb_ * 8), buf.size() * 4)) return fail();
-    for (uint32_t i = 0; i < counts[b]; ++i) edges.push_back({buf[2 * i], buf[2 * i + 1]});
-  }
-  const auto t_cpu = std::chrono::steady_clock::now();
-  const auto cycles = find_cycles(edges);
-  st.cpu_ms = ms_since(t_cpu);
+  std::vector<uint32_t> buf(size_t(n) * 2);
+  if (n && !dev_.download(buf.data(), in, buf.size() * 4)) return fail();
+  edges.resize(n);
+  for (uint32_t i = 0; i < n; ++i) edges[i] = {buf[2 * i], buf[2 * i + 1]};
+  return true;
+}
+
+bool Engine::finish(const Keys& k, const Edges& edges, const Cycles& cycles, std::vector<Proof>& proofs,
+                    std::string& err) {
+  KeysArg ka{k[0], k[1], k[2], k[3]};
   for (const auto& c : cycles) {
-    ++st.cycles;
     uint32_t want[2 * kProofSize];
     for (int i = 0; i < kProofSize; ++i) {
       want[2 * i] = edges[c[i]].first;
       want[2 * i + 1] = edges[c[i]].second;
     }
     uint32_t nwant = kProofSize;
-    if (!dev_.upload(d_want_, want, sizeof want) || !dev_.memset(d_found_, 0xff, kProofSize * 4)) return fail();
     void* ra[] = {&ka, &d_want_, &nwant, &d_found_};
     uint32_t idx[kProofSize];
-    if (!dev_.launch("c29_recover", gen_blocks, 1, 1, kTpb, 1, 1, 0, ra) || !dev_.wait() ||
-        !dev_.download(idx, d_found_, sizeof idx))
-      return fail();
+    if (!dev_.upload(d_want_, want, sizeof want) || !dev_.memset(d_found_, 0xff, kProofSize * 4) ||
+        !dev_.launch("c29_recover", unsigned((kEdges / 64) / kTpb), 1, 1, kTpb, 1, 1, 0, ra) || !dev_.wait() ||
+        !dev_.download(idx, d_found_, sizeof idx)) {
+      err = dev_.last_error();
+      return false;
+    }
     Proof p{};
     std::copy(idx, idx + kProofSize, p.begin());
     std::sort(p.begin(), p.end());
     if (verify(k, p)) proofs.push_back(p);
     else ++cpu_rejects_;
   }
+  return true;
+}
+
+bool Engine::solve(const Keys& k, std::vector<Proof>& proofs, SolveStats& st, std::string& err) {
+  Edges edges;
+  if (!trim(k, edges, st, err)) return false;
+  const auto t_cpu = std::chrono::steady_clock::now();
+  const Cycles cycles = find_cycles(edges);
+  st.cpu_ms = ms_since(t_cpu);
+  st.cycles = uint32_t(cycles.size());
+  return finish(k, edges, cycles, proofs, err);
+}
+
+bool Engine::solve_pipelined(const Keys& k, uint64_t tag, std::vector<Proof>& proofs, uint64_t& prev_tag,
+                             bool& have_prev, SolveStats& st, std::string& err) {
+  have_prev = false;
+  Edges edges;
+  if (!trim(k, edges, st, err)) return false;  // the previous graph's cycle search runs meanwhile
+  if (pend_.active) {
+    pend_.active = false;
+    const auto [cycles, cpu_ms] = pend_.search.get();
+    st.cpu_ms = cpu_ms;
+    st.cycles = uint32_t(cycles.size());
+    if (!finish(pend_.keys, pend_.edges, cycles, proofs, err)) return false;
+    have_prev = true;
+    prev_tag = pend_.tag;
+  }
+  if (edges.empty()) return true;
+  pend_.keys = k;
+  pend_.tag = tag;
+  pend_.edges = std::move(edges);
+  pend_.active = true;
+  pend_.search = std::async(std::launch::async, [e = &pend_.edges] {
+    const auto t = std::chrono::steady_clock::now();
+    Cycles c = find_cycles(*e);
+    return std::pair<Cycles, double>(std::move(c), ms_since(t));
+  });
   return true;
 }
 
@@ -199,18 +266,24 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
     err = "no job";
     return 0;
   }
+  // graphs are pipelined: this call trims a new graph and returns the shares of the one before
   const uint64_t nonce = job_.nonce_prefix | (counter_++ & ~job_.prefix_mask);
+  const Job prev_job = pend_job_;
+  pend_job_ = job_;
   std::vector<Proof> proofs;
   SolveStats st;
-  if (!solve(sip_keys(job_.mining_hash, nonce), proofs, st, err)) return 0;
+  uint64_t prev_nonce = 0;
+  bool have_prev = false;
+  if (!solve_pipelined(sip_keys(job_.mining_hash, nonce), nonce, proofs, prev_nonce, have_prev, st, err)) return 0;
+  if (!have_prev || prev_job.mining_hash != job_.mining_hash) return 1;  // a graph of an older block: stale
   for (const auto& p : proofs) {
     Share s;
-    s.job_id = job_.id;
-    s.nonce = nonce;
+    s.job_id = prev_job.id;
+    s.nonce = prev_nonce;
     s.proof = p;
     s.result = result(p);
-    if (share_difficulty(s.result) < job_.difficulty) continue;
-    s.work = 42.0 * double(job_.difficulty);
+    if (share_difficulty(s.result) < prev_job.difficulty) continue;
+    s.work = 42.0 * double(prev_job.difficulty);
     shares.push_back(s);
   }
   return 1;

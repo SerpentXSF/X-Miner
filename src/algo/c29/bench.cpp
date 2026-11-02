@@ -41,7 +41,9 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       }
       std::vector<Proof> found;
       SolveStats st;
-      if (!eng.solve(k, found, st, err)) {
+      uint64_t prev = 0;
+      bool have_prev = false;
+      if (!eng.solve_pipelined(k, graphs, found, prev, have_prev, st, err)) {  // the CPU search overlaps the next graph
         error("GPU", err);
         ++failures;
         break;
