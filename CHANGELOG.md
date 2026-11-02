@@ -13,6 +13,13 @@
   with CuAssembler; nonce setup and target check stay compiled CUDA). RTX 3060 151.6 -> 173.9 MH/s (+15%) at the
   same 169 W; self-test passes, live on Kryptex with 0 rejects. Other NVIDIA generations and AMD are unchanged.
 - GPU backends: an optional second stream (`set_stream`), created at the highest priority.
+- Tari Cuckaroo29 (XTM c29, `cuckaroo29`), new and in progress:
+  - CPU reference from the Tari node source; Tari's own test vectors pass, including a whole 42-cycle proof.
+  - GPU solver: edge generation and bucketed trimming rounds on the GPU, cycle search on the CPU, edge index recovery
+    on the GPU, every proof verified on the CPU. The selftest finds the known 42-cycle of Tari's test graph.
+  - Kryptex (`xtm-c29-us.kryptex.network:7040`, XMRig-style stratum; the 8-byte target is little-endian, so
+    `cccccccccccccc0c` means difficulty 20): 4 accepted / 0 rejected in 10 minutes from the RX 9070 XT.
+  - RX 9070 XT ~4.4 g/s, RTX 3060 1.4 g/s; lolMiner ~14 / ~4-5. Needs ~9 GB of GPU memory.
 - Nexa (NEXA, `nexapow`), new: SHA256d of the header commitment and nonce, then a BCH Schnorr signature with that hash
   as the private key (RFC6979 nonce, secp256k1), then SHA256 of the signature. The CPU reference reproduces the Echelon
   spec vectors and real main-chain blocks. The GPU kernel (compiled at run time) uses:

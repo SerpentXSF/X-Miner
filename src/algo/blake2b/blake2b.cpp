@@ -1,5 +1,6 @@
 #include "algo/blake2b/blake2b.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -54,6 +55,38 @@ Digest blake2b256(const uint8_t* data, size_t len) {
   }
   Digest out;
   for (int i = 0; i < 32; ++i) out[i] = static_cast<uint8_t>((h[i >> 3] ^ v[i >> 3] ^ v[8 + (i >> 3)]) >> (8 * (i & 7)));
+  return out;
+}
+
+Digest blake2b256_any(const uint8_t* data, size_t len) {
+  uint64_t h[8];
+  std::memcpy(h, kIv, sizeof h);
+  h[0] ^= 0x01010000ull ^ 32;
+  size_t off = 0;
+  do {
+    const size_t n = std::min<size_t>(128, len - off);
+    const bool last = off + n == len;
+    uint64_t m[16] = {}, v[16];
+    for (size_t i = 0; i < n; ++i) m[i >> 3] |= uint64_t(data[off + i]) << (8 * (i & 7));
+    std::memcpy(v, h, sizeof h);
+    std::memcpy(v + 8, kIv, sizeof kIv);
+    v[12] ^= uint64_t(off + n);  // byte counter (messages here are far below 2^64)
+    if (last) v[14] = ~v[14];
+    for (const auto& sg : kSigma) {
+      g(v, 0, 4, 8, 12, m[sg[0]], m[sg[1]]);
+      g(v, 1, 5, 9, 13, m[sg[2]], m[sg[3]]);
+      g(v, 2, 6, 10, 14, m[sg[4]], m[sg[5]]);
+      g(v, 3, 7, 11, 15, m[sg[6]], m[sg[7]]);
+      g(v, 0, 5, 10, 15, m[sg[8]], m[sg[9]]);
+      g(v, 1, 6, 11, 12, m[sg[10]], m[sg[11]]);
+      g(v, 2, 7, 8, 13, m[sg[12]], m[sg[13]]);
+      g(v, 3, 4, 9, 14, m[sg[14]], m[sg[15]]);
+    }
+    for (int i = 0; i < 8; ++i) h[i] ^= v[i] ^ v[8 + i];
+    off += n;
+  } while (off < len);
+  Digest out;
+  for (int i = 0; i < 32; ++i) out[i] = static_cast<uint8_t>(h[i >> 3] >> (8 * (i & 7)));
   return out;
 }
 

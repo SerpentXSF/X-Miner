@@ -16,6 +16,7 @@
 #include "algo/xelis/xelis_gpu.hpp"
 #include "algo/qhash/qhash_gpu.hpp"
 #include "algo/nexa/nexa_gpu.hpp"
+#include "algo/c29/c29_gpu.hpp"
 #include "algo/noid/noid_gpu.hpp"
 #include "algo/octopus/octopus_gpu.hpp"
 #include "algo/pearl/pearl_gpu.hpp"
@@ -463,6 +464,32 @@ bool nexa_check(gpu::Device& dev, std::string& detail) {
   return bad == 0 && block_ok && !shares.empty() && eng.cpu_rejects() == 0;
 }
 
+// Cuckaroo29: the graph of a Tari test vector (mining hash 93e43a39.., nonce ab30dc99fd054f57) holds a known 42-cycle
+// (tari-project/tari cuckaroo_pow.rs, test_edge_generation_example4); the GPU solver has to find it.
+bool c29_check(gpu::Device& dev, std::string& detail) {
+  c29::Engine eng(dev, 1);
+  auto t0 = std::chrono::steady_clock::now();
+  if (!eng.init(detail)) return false;
+  const double setup = ms_since(t0);
+  c29::Hash mh{};
+  const char* hx = "93e43a39b44f0875af830b6fd4cc69a421b1f5f0c5efd1b6c2e16d439bfd238c";
+  for (int i = 0; i < 32; ++i) mh[i] = uint8_t(std::stoi(std::string(hx + 2 * i, 2), nullptr, 16));
+  const c29::Keys k = c29::sip_keys(mh, 0xab30dc99fd054f57ull);
+  std::vector<c29::Proof> proofs;
+  c29::SolveStats st;
+  t0 = std::chrono::steady_clock::now();
+  if (!eng.solve(k, proofs, st, detail)) return false;
+  const double solve_ms = ms_since(t0);
+  bool known = false;
+  for (const auto& pf : proofs) known = known || (pf[0] == 1252665u && pf[41] == 534561363u);
+  char buf[200];
+  std::snprintf(buf, sizeof buf, "%zu proofs (%s the known 42-cycle), %u edges left after %d rounds, %u cycles%s (setup %.0f ms, %.0f ms)",
+                proofs.size(), known ? "with" : "WITHOUT", st.remaining, eng.rounds(), st.cycles,
+                st.overflow ? ", OVERFLOW" : "", setup, solve_ms);
+  detail = buf;
+  return known && !st.overflow && eng.cpu_rejects() == 0;
+}
+
 void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int state, const std::string& detail) {
   static const char* kState[] = {"FAIL  ", "PASS  ", "SKIP  "};
   Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(i) + " ] "},
@@ -480,7 +507,7 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}, {"nexapow", nexa_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}, {"nexapow", nexa_check}, {"cuckaroo29", c29_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;

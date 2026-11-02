@@ -38,6 +38,7 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"xelishashv3", "xel,xelis,xelishash", "Xelis (XEL)", "@rtc", true},
       {"qhash", "qubitcoin", "Qubitcoin (QTC)", "@rtc", true},
       {"nexapow", "nexa", "Nexa (NEXA)", "@rtc", true},
+      {"cuckaroo29", "c29,tari,xtm,xtm-c29,cr29", "Tari (XTM, Cuckaroo29)", "@rtc", true},
       {"autolykos2", "ergo,erg,autolykos", "Ergo (ERG)", "@rtc", true},
   };
   return list;
