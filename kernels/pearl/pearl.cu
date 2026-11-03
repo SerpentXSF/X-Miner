@@ -68,6 +68,10 @@ constexpr int STAGES = XM_PEARL_STAGES;  // STAGES x STAGE_BYTES of dynamic shar
 //    of a scheduler) +0.1%; no wave sync -4.6%; per-k32-slice full/empty barriers: waits per slice or a release
 //    right after the slice's ldmatrix spill (17.6 / similar), a release after the slice's MMAs 39.6 (32-byte copy
 //    rows). All reverted.
+//  - 2026-11-03 (45.3 TH/s at the cap): Nsight at base clock: tensor pipe 90.8% busy, issue 17%, stalls wait 3.1,
+//    short scoreboard 1.3, branch resolving 1.0 per issue. Unrolling the stage loop by 2 / 4 (fewer loop branches)
+//    spills under the 168 cap: 35.4 / 32.4 TH/s. Prefetching the next k-step's fragments needs ~32 more registers,
+//    which only a design without the copy warp (8 warps, 255 cap) would have; that design measured slower above.
 
 // Byte offset of (row, 16-byte chunk) inside a 128-byte-row stage, with an XOR swizzle so the 8 row addresses of
 // an ldmatrix hit 32 distinct banks.

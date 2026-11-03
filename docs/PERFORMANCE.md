@@ -182,6 +182,15 @@ alone takes 248); in shared memory the state is 2 KB per thread, about 1.5 warps
 threads with exchanges through shared memory) lose most of the 2.2 times to packing and exchange: estimated
 1.2-1.4 times overall for a rewrite of the whole permutation. Not started.
 
+Sizing that rewrite (2026-11-03): the state has to live in shared memory (64 bytes per nonce), which allows about 8
+nonces per thread at 6 warps per SM. With 8 nonces, a register holds one bit plane of the four z-coefficients (one per
+byte), so one bit-sliced call computes four K-products: L0, L2, H0, H2 in one call, the Karatsuba sums (built with
+byte permutes) in a second, and M1 alone in a third. Three calls per 128-bit multiply at the measured 1.61 cycles per
+nonce-product give ~19 cycles per nonce and multiply, against ~24 now: about 1.15 times overall once the constant
+multiplies (dense XOR networks in bit-sliced form) are counted. A Toom-style split into 7 products (two calls) on
+unreduced GF(2)[y] coefficients, where multiplying or dividing by y or y + 1 is cheap in bit-sliced form, could
+reach ~1.5 times on the multiplies; that is a research project for a coin worth ~$0.54.
+
 Where the time went on the RTX 3060 with the flat basis (timing-only builds): without the S-boxes 18.0 MH/s; without
 the table constant multiplies 13.2 MH/s. RX 9070 XT, same builds: 17.5 MH/s full, 24.9 without the table multiplies,
 31.5 without the S-boxes. The closed NVIDIA miners are ~3x faster still, so they must have a much cheaper 128-bit
