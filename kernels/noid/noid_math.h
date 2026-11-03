@@ -239,10 +239,23 @@ NOID_HD uint64_t cl32(uint32_t a, uint32_t b)
     const uint32_t a0 = a & 0x11111111u, a1 = a & 0x22222222u, a2 = a & 0x44444444u, a3 = a & 0x88888888u;
     const uint32_t b0 = b & 0x11111111u, b1 = b & 0x22222222u, b2 = b & 0x44444444u, b3 = b & 0x88888888u;
 #define NOID_P(x, y) ((uint64_t)(x) * (y))
+#if defined(__CUDA_ARCH__) && !defined(__HIP__) && !defined(NOID_CL32_XOR)
+    // Two products of a class summed in the multiply's addend instead of XORed: a class product has at most 8
+    // terms per bit position, so a pair whose offsets (i + j) differ by 4 stays <= 15 and never carries into the
+    // next bit of the class. Pairs with equal offsets reach 16 only when all four class masks are full
+    // (a_i = b_j = a_i' = b_j' = all ones, probability 2^-32): that product is then wrong in one bit, which loses
+    // the nonce at most (the host re-checks candidates). GPU code only: the CPU reference stays exact. RTX 3060
+    // 9.88 -> 10.89 MH/s. NOID_CL32_XOR keeps the four-way XOR.
+    uint64_t k0 = (NOID_P(a0, b0) + NOID_P(a3, b1)) ^ (NOID_P(a1, b3) + NOID_P(a2, b2));
+    uint64_t k1 = (NOID_P(a0, b1) + NOID_P(a2, b3)) ^ (NOID_P(a1, b0) + NOID_P(a3, b2));
+    uint64_t k2 = (NOID_P(a0, b2) + NOID_P(a3, b3)) ^ (NOID_P(a1, b1) + NOID_P(a2, b0));
+    uint64_t k3 = (NOID_P(a0, b3) + NOID_P(a1, b2)) ^ (NOID_P(a2, b1) + NOID_P(a3, b0));
+#else
     uint64_t k0 = NOID_P(a0, b0) ^ NOID_P(a1, b3) ^ NOID_P(a2, b2) ^ NOID_P(a3, b1);
     uint64_t k1 = NOID_P(a0, b1) ^ NOID_P(a1, b0) ^ NOID_P(a2, b3) ^ NOID_P(a3, b2);
     uint64_t k2 = NOID_P(a0, b2) ^ NOID_P(a1, b1) ^ NOID_P(a2, b0) ^ NOID_P(a3, b3);
     uint64_t k3 = NOID_P(a0, b3) ^ NOID_P(a1, b2) ^ NOID_P(a2, b1) ^ NOID_P(a3, b0);
+#endif
 #undef NOID_P
     return (k0 & 0x1111111111111111ull) | (k1 & 0x2222222222222222ull) | (k2 & 0x4444444444444444ull) |
            (k3 & 0x8888888888888888ull);

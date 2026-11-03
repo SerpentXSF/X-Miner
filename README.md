@@ -152,7 +152,7 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 | Algorithm | RX 9070 XT | RTX 3060 | Notes |
 |---|---|---|---|
 | Pearl | 101.1 TH/s (115.0 at stock power) | 44.4 TH/s | |
-| Parano1d | 20.1 MH/s | 9.8 MH/s | |
+| Parano1d | 20.1 MH/s | 10.8 MH/s | |
 | Quantus | 179.6 MH/s (195.8 at stock power) | 149.7 MH/s | |
 | KawPow (Ravencoin) | 34.0 MH/s | 20.6 MH/s | WildRig 34.1 / T-Rex 20.85 on the same cards |
 | KawPow (Neurai) | 39.4 MH/s | 20.6 MH/s | smaller DAG (3.1 GB) than Ravencoin's |

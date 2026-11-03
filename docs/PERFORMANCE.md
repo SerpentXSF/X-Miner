@@ -129,7 +129,7 @@ NVIDIA findings (RTX 3060):
 | Card | X-Miner | Reference |
 |---|---|---|
 | RX 9070 XT | 20.1 MH/s @ ~236 W (-30% power) | SRBMiner: 0 H/s; closed AMD miner: 20.9 MH/s on RX 9070 |
-| RTX 3060 | 9.8 MH/s @ 148 W | closed miners: ~29.5 MH/s @ 90 W |
+| RTX 3060 | 10.8 MH/s @ 154 W | closed miners: ~29.5 MH/s @ 90 W; SRBMiner 31.7 MH/s |
 
 History: generic Karatsuba constant multiply 11.1 / 5.32 MH/s; shared-memory/LDS nibble tables (NoidMiner) 16.6 /
 8.72 MH/s; AMD block size 512 17.7 MH/s; IMAD.WIDE products on NVIDIA; composite basis (below) 20.1 / 9.8 MH/s
@@ -154,6 +154,18 @@ Dead ends on the RTX 3060 after the composite basis (2026-10-25): 6 bit classes 
 products (36 IMAD.WIDE per 32 x 32, no XOR tree) 9.81 -> 6.96 MH/s (logic ops barely drop, the multiplies double);
 right shifts as multiply-high on the idle multiply pipe 9.82 -> 9.72-9.75; threads per block 128-1024 flat. Moving
 work between pipes does not help: the profile's dispatch stalls point at issue limits, not at one busy pipe.
+
+Paired class products (2026-11-03): within one output bit class, two of the four products are summed in the
+multiply's 64-bit addend and the two sums XORed, so IMAD.WIDE does half of the XOR tree. A class product has at most
+8 terms per bit position; a pair whose offsets (i + j) differ by 4 stays <= 15 and cannot carry into the next bit of
+the class. Pairs with equal offsets reach 16 only when all four class masks are full (probability 2^-32 per pair for
+random field elements): that product is then wrong, which loses the nonce at most (the host re-checks every
+candidate). Logic ops in the kernel 1455 -> 1346; RTX 3060 9.88 -> 10.89 MH/s in an A/B (10.77 MH/s with the
+embedded kernel, 154 W). AMD keeps its 16-bit products.
+
+Instruction budget: a 32 x 32 product is 16 IMAD.WIDE (64 multiply-pipe cycles per warp) and ~24-32 logic ops (~64
+ALU cycles), and a nonce needs 540 general 128-bit multiplies (270 S-boxes, 2 each) of 9 products: ~20 MH/s on an
+RTX 3060 even with perfect overlap. SRBMiner's 31.7 MH/s is above that, so its multiply is different in kind.
 
 Where the time went on the RTX 3060 with the flat basis (timing-only builds): without the S-boxes 18.0 MH/s; without
 the table constant multiplies 13.2 MH/s. RX 9070 XT, same builds: 17.5 MH/s full, 24.9 without the table multiplies,

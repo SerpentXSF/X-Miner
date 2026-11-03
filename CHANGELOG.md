@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0b (unreleased)
+
+- Parano1d (NOID) on NVIDIA: in each 32 x 32 carry-less product, two of a bit class's four integer products are summed
+  in the multiply's addend instead of XORed (carry-free except when all four class masks are full, probability 2^-32
+  per pair; such a nonce is lost at most, candidates are re-checked on the CPU). RTX 3060 9.9 -> 10.8 MH/s.
+
 ## 0.2.0 (2026-11-02)
 
 - Octopus (Conflux): the polynomial values as int8 matrix products on the GPU's matrix units (NVIDIA sm_80+ tensor
