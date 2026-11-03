@@ -106,6 +106,9 @@ __device__ __forceinline__ void stage_flush(uint2 (*stage)[SLOTS], u32* fill, u3
 #ifndef ROUND_STAGE
 #define ROUND_STAGE 0
 #endif
+#ifndef SPLIT_ONEPASS
+#define SPLIT_ONEPASS 1
+#endif
 #ifndef RSLOTS
 #define RSLOTS 24  // staged edges per bucket in the rounds and the split (one TPB-edge pass between flushes;
                    // with the rounds' 32 KB of bitmaps it keeps a block under 48 KB of static shared memory)
@@ -217,6 +220,11 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_split(u32 side, const uint
     }                                                        \
     x = e[(size_t)lo * seg_cap + ((i) - pre[lo])];           \
   }
+#if SPLIT_ONEPASS
+  // One pass: each staged run reserves its slots in the fine bucket's global count when it is written out (one
+  // global atomic per run of ~RSLOTS edges), so the input is read once instead of twice (count, then write).
+  u32* gc = counts + c * (NB / NC);
+#else
   for (u32 i = beg + threadIdx.x; i < n; i += TPB) {
     uint2 x;
     SPLIT_EDGE(i, x);
@@ -228,15 +236,36 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_split(u32 side, const uint
     cnt[i] = m ? atomicAdd(&counts[c * (NB / NC) + i], m) : 0u;
   }
   __syncthreads();
+  u32* gc = cnt;
+#endif
   uint2* ob = out + (size_t)c * (NB / NC) * CAPB;  // this coarse bucket's fine buckets
-  for (u32 i0 = beg; i0 < n; i0 += TPB) {
-    const u32 i = i0 + threadIdx.x;
-    if (i < n) {
-      uint2 x;
-      SPLIT_EDGE(i, x);
-      stage_put<RSLOTS>(stage, fill, cnt, ob, CAPB, CAPB, ((side ? x.y : x.x) >> BSHIFT) & smask, x);
+  // Large segments (generation's ~8.5K edges): segment by segment, no per-edge search for the segment of a flat
+  // index; the block's flat range [beg, n) intersected with each segment's [pre[s], pre[s + 1]). Small segments (the
+  // rounds' ~100) would leave most of a pass idle: flat index and binary search.
+  if (n - beg >= 2u * TPB * per) {
+    for (u32 sg = 0; sg < per; ++sg) {
+      const u32 lo = max(beg, pre[sg]), hi = min(n, pre[sg + 1]);
+      if (lo >= hi) continue;  // (uniform: every thread sees the same bounds)
+      const uint2* es = e + (size_t)sg * seg_cap - pre[sg];
+      for (u32 i0 = lo; i0 < hi; i0 += TPB) {
+        const u32 i = i0 + threadIdx.x;
+        if (i < hi) {
+          const uint2 x = es[i];
+          stage_put<RSLOTS>(stage, fill, gc, ob, CAPB, CAPB, ((side ? x.y : x.x) >> BSHIFT) & smask, x);
+        }
+        stage_flush<RSLOTS, TPB>(stage, fill, gc, ob, CAPB, CAPB);
+      }
     }
-    stage_flush<RSLOTS, TPB>(stage, fill, cnt, ob, CAPB, CAPB);
+  } else {
+    for (u32 i0 = beg; i0 < n; i0 += TPB) {
+      const u32 i = i0 + threadIdx.x;
+      if (i < n) {
+        uint2 x;
+        SPLIT_EDGE(i, x);
+        stage_put<RSLOTS>(stage, fill, gc, ob, CAPB, CAPB, ((side ? x.y : x.x) >> BSHIFT) & smask, x);
+      }
+      stage_flush<RSLOTS, TPB>(stage, fill, gc, ob, CAPB, CAPB);
+    }
   }
 #undef SPLIT_EDGE
 }

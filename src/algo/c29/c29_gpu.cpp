@@ -115,8 +115,9 @@ bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err)
   };
   {
     void* args[] = {&ka, &d_b_, &d_cnt_b_};
-    if (!dev_.launch("c29_gen", gen_blocks, 1, 1, gen_tpb_, 1, 1, 0, args) || !split(0, kEdges, gen_blocks))
-      return fail();
+    if (!dev_.launch("c29_gen", gen_blocks, 1, 1, gen_tpb_, 1, 1, 0, args)) return fail();
+    mark("  gen kernel", 0);
+    if (!split(0, kEdges, gen_blocks)) return fail();
   }
   mark("gen", 0);
   // bucket rounds (shared-memory degree counts) while edges are many
@@ -128,9 +129,11 @@ bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err)
     void* args[] = {&side, &d_a_, &d_cnt_a_, &d_b_, &d_cnt_b_};
     const bool segs = total >= seg_edges_;  // per-block segments while edges are many, else whole coarse buckets
     if ((!segs && !dev_.memset(d_cnt_b_, 0, 4 * kNc)) ||
-        !dev_.launch(segs ? "c29_round" : "c29_round_r", nb, 1, 1, kTpb, 1, 1, 0, args) ||
-        !split(side ^ 1, total, segs ? nb : 1))
+        !dev_.launch(segs ? "c29_round" : "c29_round_r", nb, 1, 1, kTpb, 1, 1, 0, args))
       return fail();
+    if (r < 4) mark("  round kernel", r);  // (profile mode: the first rounds' kernel and split separately)
+    if (!split(side ^ 1, total, segs ? nb : 1)) return fail();
+    if (r < 4) mark("  split after round", r);
     // counts come back every 4th round (a host round trip each); in between `total` is an upper bound
     if ((r & 3) != 3 && r + 1 < rounds_) continue;
     if (!dev_.download(counts.data(), cin, 4 * nb)) return fail();

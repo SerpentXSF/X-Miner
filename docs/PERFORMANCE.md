@@ -707,5 +707,12 @@ RTX 3060, 2026-11-03 (profile mode, per graph ~402 ms): generation + split 150 m
 | before | 2.47 |
 | generation staged, two-pass hashing, 512 threads | 2.77 |
 | + split staged | 2.81 |
+| split in one pass (staged runs reserve their slots in the fine bucket's global count at flush) | 3.00 |
+
+Per graph after these (RTX 3060 at boost, profile mode): generation 49 ms, split 36 ms, round kernels 0-3 41 / 20 /
+10 / 6 ms, their splits 25 / 13 / 8 / 6 ms. Round 0 moves ~11 GB, ~75% of the card's DRAM bandwidth at boost (Nsight
+at base clock shows 54%), so the rounds need fewer bytes per edge to go faster: e.g. u and v in separate arrays, so
+the counting pass reads 4 bytes per edge instead of 8 (estimated ~5%). Walking the split's input segment by segment
+instead of a binary search per edge only helps generation's large segments, and is used there.
 
 Live on Kryptex: RX 9070 XT, 5 accepted / 0 rejected in 15 minutes at difficulty 20 (6.62 g/s shown).
