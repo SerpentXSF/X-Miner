@@ -306,6 +306,14 @@ Folding the round constants: 172.1 -> 173.9 MH/s at the cap (+1.1%, 3 paired 30 
 
 The rest of the gap to SRBMiner (228 MH/s) is kernel time, not the platform: see the WSL2 clock note above.
 
+Profile and experiments on the RTX 3060 (2026-11-03, Nsight Compute, tools/qgen switches): multiply pipe 82.9% busy,
+ALU 58.7%, issue active 57%, top stalls math-pipe throttle (5.7 per issue) and dispatch (2.5). Moving mul3's carry adds
+to the ALU (multiply pipe 72.7%, 4.3% fewer instructions) raises dispatch stalls to 3.4 and gives the same speed; so do
+acc2's tops on the ALU and both together (173.6-175.1 MH/s, baseline 175.1). A hash executes 22.1k instructions with
+42.7k register-operand reads; operand-reuse flags with a reuse-aware scheduler remove 2.9% of the reads for +0.1%.
+Neither pipe balance nor register reads predict this kernel; the 5,890 wide multiplies per hash are already the
+minimum for the round structure (4 per S-box multiply, 4 per diagonal constant multiply).
+
 ## KawPow (Ravencoin)
 
 | Card | X-Miner | Reference (same card, same pool, 2026-10-28) |

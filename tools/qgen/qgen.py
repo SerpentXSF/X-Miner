@@ -73,6 +73,8 @@ def tset(s):
     if s == 0: return dict(L=T[4], M=T[5], Q=T[6], x=T[7], y=T[7] + 1, z=T[8], pc="P4")
     return dict(L=T[9], M=T[10], Q=T[11], x=T[12], y=T[12] + 1, z=T[8] + 1, pc="P5")
 
+MUL3_BK_ALU = False  # experiment: mul3's B += k as one ALU add (-152 instructions per block, multiply pipe 83 -> 73%
+                     # busy, dispatch stalls up): 174.9 vs 175.1 MH/s, no gain
 def mul3(s, o, a, b):
     """o = a * b. value = l0 + (l1 + m0 + c) 2^32 - (c + q1 + Pm + Pc), c = m1 + q0 (carry Pc).
     Head: 4 WIDE (predicate Pm). Tail: 8 ops on P0..P3 + Pm. ALU 20 / FMA 20 clk (cost model)."""
@@ -82,7 +84,8 @@ def mul3(s, o, a, b):
     tail = [f"IADD3 R{c}, P0, R{M+1}, R{Q}, RZ",                    # c = m1 + q0
             f"IADD3 R{A}, P1, P2, R{L+1}, R{M}, R{c}",              # A = l1 + m0 + c, k = P1 + P2
             f"IADD3.X R{B}, P3, R{c}, R{Q+1}, RZ, {Pm}, P0",        # B = c + q1 + Pm + Pc, j = P3
-            f"IMAD.X R{B}, RZ, RZ, R{B}, P1", f"IMAD.X R{B}, RZ, RZ, R{B}, P2",   # B += k (multiply pipe)
+            *([f"IADD3.X R{B}, R{B}, RZ, RZ, P1, P2"] if MUL3_BK_ALU else
+              [f"IMAD.X R{B}, RZ, RZ, R{B}, P1", f"IMAD.X R{B}, RZ, RZ, R{B}, P2"]),   # B += k (multiply pipe)
             f"IADD3.X R{A}, R{A}, RZ, RZ, P1, P2",                  # A += k (ALU)
             f"IADD3 R{o}, P1, R{L}, -R{B}, RZ",                     # lo = l0 - B, P1 = no borrow
             f"IADD3.X R{o+1}, R{A}, -0x2, RZ, P1, !P3"]             # hi = A - 1 - j + no-borrow
@@ -170,14 +173,19 @@ def acc3(dst, x, y, z):
     return [f"IADD3 R{dl}, P0, P1, R{xl}, R{yl}, R{zl}",
             f"IADD3.X R{dh}, P2, P3, R{xh}, R{yh}, R{zh}, P0, P1",
             f"IADD3.X R{dt}, {tops[0]}, {tops[1]}, {tops[2]}, P2, P3"]
+ACC2_ALU = False  # experiment: acc2's top word on the ALU (174.2 vs 175.1 MH/s)
 def acc2(dst, x, y):
     """dst = x + y (pairs or accs)."""
     def parts(v): return (v, v + 1, None) if isinstance(v, int) else v
     (xl, xh, xt), (yl, yh, yt) = parts(x), parts(y)
     dl, dh, dt = dst
     tops = [f"R{q}" for q in (xt, yt) if q is not None]
-    top = (f"IMAD.X R{dt}, {tops[0]}, 0x1, {tops[1]}, P1" if len(tops) == 2 else
-           f"IMAD.X R{dt}, RZ, RZ, {tops[0]}, P1" if len(tops) == 1 else f"IMAD.X R{dt}, RZ, RZ, RZ, P1")
+    if ACC2_ALU:
+        t3 = tops + ["RZ"] * (2 - len(tops))
+        top = f"IADD3.X R{dt}, {t3[0]}, {t3[1]}, RZ, P1, !PT"
+    else:
+        top = (f"IMAD.X R{dt}, {tops[0]}, 0x1, {tops[1]}, P1" if len(tops) == 2 else
+               f"IMAD.X R{dt}, RZ, RZ, {tops[0]}, P1" if len(tops) == 1 else f"IMAD.X R{dt}, RZ, RZ, RZ, P1")
     return [f"IADD3 R{dl}, P0, R{xl}, R{yl}, RZ", f"IADD3.X R{dh}, P1, R{xh}, R{yh}, RZ, P0, !PT", top]
 
 def external3(rc=None, crow=None):
@@ -465,6 +473,54 @@ def rename_segments(segs, mapping):
     return out
 
 INS = re.compile(r"\s*\[([^\]]*)\]\s+/\*[0-9a-f]+\*/\s+(.*?);")
+# Operand reuse cache: an instruction whose next instruction reads the same register in the same source slot (A, B,
+# C) marks it .reuse, and the next one takes it from the cache instead of the register file. REUSE=2 also makes the
+# list scheduler prefer such pairs among instructions that can issue in the same cycle. Experiment (2026-11-03): a hash
+# executes 22.1k instructions with 42.7k register reads (~1.13 per cycle per scheduler); REUSE=2 saves 1.2k of them
+# (2.9%) and gives 174.97 vs 174.82 MH/s, so register reads are not the limit either.
+REUSE = 0
+_PRED = re.compile(r"^!?(P[0-6T]|UP[0-9])$")
+def _slots(t):
+    opc = t.split()[0]
+    toks = [x.strip() for x in t[len(opc):].split(",")]
+    dst = toks[0]
+    srcs = [x for x in toks[1:] if not _PRED.match(x)]
+    return opc, dst, srcs
+_REUSE_OPS = ("IADD3", "IMAD", "LOP3", "SHF", "ISETP", "IABS", "SEL")
+def add_reuse(lines):
+    out = list(lines)
+    ins = [(k, re.sub(r"^\s*\[[^\]]*\]\s*", "", l).strip()) for k, l in enumerate(lines)]
+    for n in range(len(ins) - 1):
+        (k, t), (k2, t2) = ins[n], ins[n + 1]
+        if not t or t.endswith(":") or t.startswith("@") or t2.endswith(":") or t2.startswith("@") or not t2:
+            continue
+        o1, d1, s1 = _slots(t); o2, d2, s2 = _slots(t2)
+        if not (o1.startswith(_REUSE_OPS) and o2.startswith(_REUSE_OPS)): continue
+        d1r = re.match(r"^R(\d+)", d1)
+        for i in range(min(3, len(s1), len(s2))):
+            a, b = s1[i].lstrip("-"), s2[i].lstrip("-")
+            m = re.match(r"^R(\d+)$", a)
+            if not m or a != b or a == "RZ": continue
+            if d1r and d1r.group(1) == m.group(1): continue  # overwritten by the first instruction
+            if o1.startswith("IMAD.WIDE") and i == 2: continue  # 64-bit addend
+            if o2.startswith("IMAD.WIDE") and i == 2: continue
+            # mark slot i of instruction n
+            parts = lines[k].split(";")[0]
+            head = re.match(r"^(\s*\[[^\]]*\]\s*)", parts)
+            pre = head.group(1) if head else ""
+            body = parts[len(pre):]
+            opc = body.split()[0]
+            toks = [x.strip() for x in body[len(opc):].split(",")]
+            si = 0
+            for j in range(1, len(toks)):
+                if _PRED.match(toks[j]): continue
+                if si == i:
+                    if not toks[j].endswith(".reuse"): toks[j] += ".reuse"
+                    break
+                si += 1
+            out[k] = lines[k] = pre + opc + " " + ", ".join(toks) + (";" + lines[k].split(";", 1)[1] if ";" in lines[k] else "")
+    return out
+
 def splice(src, regcount=64):
     """src: CuAssembler text of the shell (lines). Returns (new text, generated lines, (a, b, out0, out1))."""
     global S, T, IDX, PASS, END, K_BASE
@@ -498,7 +554,9 @@ def splice(src, regcount=64):
     swap = {}
     for k in range(12):
         if SWAP >> k & 1: swap[S[k]], swap[S[k] + 1] = S[k] + 1, S[k]
+    sass.REUSE_SCHED = REUSE >= 2
     lines = emit_segments(rename_segments(segs, swap))
+    if REUSE: lines = add_reuse(lines)
     src = list(src)
     for k in range(idx[0] - 1, -1, -1):  # latency into the block: the instruction before the markers stalls >= 6
         if INS.match(src[k]):

@@ -126,6 +126,21 @@ def parse(text):
         if m: sr.add(int(m.group(1)) + 1)
     return opc, dr, sr, dp, sp
 
+REUSE_SCHED = 0
+_SLOT_PRED = re.compile(r"^!?(P[0-6T]|UP[0-9])$")
+_SLOT_OPS = ("IADD3", "IMAD", "LOP3", "SHF", "ISETP", "SEL")
+def _src_slots(t):
+    opc = t.split()[0]
+    toks = [x.strip() for x in t[len(opc):].split(",")]
+    return opc, [x.lstrip("-") for x in toks[1:] if not _SLOT_PRED.match(x)][:3]
+def _share(a, b):
+    """source slots (A, B, C) holding the same register in a and then b (operand reuse cache candidates)"""
+    if a is None: return 0
+    oa, sa = _src_slots(a); ob, sb = _src_slots(b)
+    if not (oa.startswith(_SLOT_OPS) and ob.startswith(_SLOT_OPS)): return 0
+    return sum(1 for k in range(min(len(sa), len(sb), 2 if "WIDE" in oa + ob else 3))
+               if sa[k] == sb[k] and re.match(r"^R\d+$", sa[k]))
+
 def schedule_list(prog, window=None):
     """List scheduler for straight-line code: dependency DAG over registers and predicates (RAW / WAR / WAW;
     predicates keep the names the generator chose, so independent chains must use different predicates to overlap).
@@ -168,7 +183,10 @@ def schedule_list(prog, window=None):
             est = t
             for j, k in preds[i]:
                 est = max(est, done_t[j] + (0 if k == "war" else lat2(pipes[j], pipes[i], k == "praw")))
-            key = (est, -prio[i], i)
+            if REUSE_SCHED:  # among instructions that can issue now, prefer one that reuses an operand slot
+                key = (max(est, t), -_share(out[-1] if out else None, prog[i]), -prio[i], i)
+            else:
+                key = (est, -prio[i], i)
             if best is None or key < bk: best, bk = i, key
         i = best; ready.remove(i); sched[i] = True
         t = max(t, bk[0]); done_t[i] = t; t += 1
