@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-11-02)
 
 - Octopus (Conflux): the polynomial values as int8 matrix products on the GPU's matrix units (NVIDIA sm_80+ tensor
   cores, AMD RDNA4 WMMA): the job's Vandermonde matrix and each nonce group's coefficients as bytes, nine products
@@ -58,10 +58,11 @@
   - the quadratic-residue test runs a fixed number of branch-free divstep iterations per batch in every lane, so
     lanes no longer wait for the slowest one in the warp, and updates only the limbs still in use.
 
-  RTX 3060 27.7 -> 30.5 MH/s (168 W). The RX 9070 XT now runs the three-kernel form too: 49.1 -> 53.5 MH/s
+  RTX 3060 27.7 -> 30.5 MH/s (168 W; Kryptex 11 accepted / 0 rejected in 15 minutes). The RX 9070 XT now runs the
+  three-kernel form too: 49.1 -> 53.5 MH/s
   (`XM_NEXA_SPLIT=0` keeps the single kernel).
 
-## 0.1.0c (unreleased)
+## 0.1.0c (2026-10-30)
 
 - Neurai (XNA, `neurai`): KawPow unchanged on its own chain (checked line by line against NeuraiProject/Neurai), with
   its own algorithm name so the dev fee mines Neurai. CPU reference reproduces real main-chain blocks (mix and final
