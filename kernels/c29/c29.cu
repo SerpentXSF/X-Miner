@@ -106,6 +106,16 @@ __device__ __forceinline__ void stage_flush(uint2 (*stage)[SLOTS], u32* fill, u3
 #ifndef ROUND_STAGE
 #define ROUND_STAGE 0
 #endif
+#ifndef GEN_DIRECT
+#define GEN_DIRECT 0
+#endif
+#ifndef SPLIT_DIRECT
+#define SPLIT_DIRECT 0
+#endif
+#if SPLIT_DIRECT
+#undef SPLIT_ONEPASS
+#define SPLIT_ONEPASS 0  // direct stores need the count pass's reservation
+#endif
 #ifndef SPLIT_ONEPASS
 #define SPLIT_ONEPASS 1
 #endif
@@ -134,6 +144,31 @@ __device__ __forceinline__ u64 siphash_next(u64& v0, u64& v1, u64& v2, u64& v3, 
   SIPROUND; SIPROUND; SIPROUND; SIPROUND;
   return (v0 ^ v1) ^ (v2 ^ v3);
 }
+#if GEN_DIRECT
+// AMD: one pass, the 64 hashes in registers, one store per edge straight into the segment (the Infinity Cache merges
+// the scattered stores; staging was slower there: 9070 XT generation + split 34 -> 54 ms).
+extern "C" __global__ __launch_bounds__(GEN_TPB) void c29_gen(Keys k, uint2* __restrict__ out, u32* __restrict__ segs) {
+  __shared__ u32 cnt[NC];
+  for (u32 i = threadIdx.x; i < NC; i += GEN_TPB) cnt[i] = 0;
+  __syncthreads();
+  const u32 b0 = (blockIdx.x * GEN_TPB + threadIdx.x) * GEN_PER;
+  uint2* o = out + (size_t)blockIdx.x * GEN_SEG;
+  u64 h[64];
+#pragma unroll 1
+  for (int s = 0; s < GEN_PER; ++s) {
+    sipblock(k, b0 + s, h);
+#pragma unroll
+    for (int i = 0; i < 64; ++i) {
+      const u32 u = (u32)h[i] & NODE_MASK, v = (u32)(h[i] >> 32) & NODE_MASK;
+      const u32 c = u >> CSHIFT;
+      const u32 pos = atomicAdd(&cnt[c], 1u);
+      if (pos < GEN_SEG) o[c * CCAP + pos] = make_uint2(u, v);
+    }
+  }
+  __syncthreads();
+  for (u32 i = threadIdx.x; i < NC; i += GEN_TPB) segs[i * GEN_BLOCKS + blockIdx.x] = min(cnt[i], GEN_SEG);
+}
+#else
 extern "C" __global__ __launch_bounds__(GEN_TPB) void c29_gen(Keys k, uint2* __restrict__ out, u32* __restrict__ segs) {
   __shared__ u32 cnt[NC], fill[NC];
   __shared__ uint2 stage[NC][GEN_SLOTS];
@@ -185,6 +220,7 @@ extern "C" __global__ __launch_bounds__(GEN_TPB) void c29_gen(Keys k, uint2* __r
   }
   for (u32 i = threadIdx.x; i < NC; i += GEN_TPB) segs[i * GEN_BLOCKS + blockIdx.x] = min(cnt[i], GEN_SEG);
 }
+#endif
 
 // Coarse -> fine buckets of side `side`. A coarse bucket is `nseg` segments of `seg_cap` edges (segs[c * nseg + s]
 // used); `parts` blocks per coarse bucket (both powers of two), each max(1, nseg / parts) (<= MAX_SEGS) segments, or
@@ -239,6 +275,16 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_split(u32 side, const uint
   u32* gc = cnt;
 #endif
   uint2* ob = out + (size_t)c * (NB / NC) * CAPB;  // this coarse bucket's fine buckets
+#if SPLIT_DIRECT
+  // AMD: direct stores after the count pass (see GEN_DIRECT)
+  for (u32 i = beg + threadIdx.x; i < n; i += TPB) {
+    uint2 x;
+    SPLIT_EDGE(i, x);
+    const u32 f = ((side ? x.y : x.x) >> BSHIFT) & smask;
+    const u32 pos = atomicAdd(&gc[f], 1u);
+    if (pos < CAPB) ob[(size_t)f * CAPB + pos] = x;
+  }
+#else
   // Large segments (generation's ~8.5K edges): segment by segment, no per-edge search for the segment of a flat
   // index; the block's flat range [beg, n) intersected with each segment's [pre[s], pre[s + 1]). Small segments (the
   // rounds' ~100) would leave most of a pass idle: flat index and binary search.
@@ -267,6 +313,7 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_split(u32 side, const uint
       stage_flush<RSLOTS, TPB>(stage, fill, gc, ob, CAPB, CAPB);
     }
   }
+#endif
 #undef SPLIT_EDGE
 }
 

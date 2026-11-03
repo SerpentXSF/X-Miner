@@ -715,4 +715,8 @@ at base clock shows 54%), so the rounds need fewer bytes per edge to go faster: 
 the counting pass reads 4 bytes per edge instead of 8 (estimated ~5%). Walking the split's input segment by segment
 instead of a binary search per edge only helps generation's large segments, and is used there.
 
+AMD keeps direct stores (one pass, hashes in registers, 1024 threads): on the RX 9070 XT staging made generation +
+split 34 -> 54 ms (6.67 -> 6.30 g/s); the Infinity Cache already merges the scattered 8-byte stores, and the staging
+only adds barriers. `XM_C29_DIRECT=0/1` overrides.
+
 Live on Kryptex: RX 9070 XT, 5 accepted / 0 rejected in 15 minutes at difficulty 20 (6.62 g/s shown).

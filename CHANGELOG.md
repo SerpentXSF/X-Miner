@@ -9,7 +9,7 @@
 - Tari Cuckaroo29: edge generation stages edges per bucket in shared memory and writes them out in contiguous runs
   (it wrote one scattered 8-byte store per edge, and spilled its hashes with 1024-thread blocks); the coarse-to-fine
   split stages the same way and runs in one pass (its staged runs reserve their slots when written). RTX 3060
-  2.47 -> 3.00 g/s.
+  2.47 -> 3.00 g/s (live on Kryptex 2 accepted / 0 rejected). AMD keeps direct stores (faster there).
 
 ## 0.2.0 (2026-11-02)
 

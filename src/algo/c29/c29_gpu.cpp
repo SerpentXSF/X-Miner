@@ -36,6 +36,12 @@ bool Engine::init(std::string& err) {
   if (const char* e = std::getenv("XM_C29_ROUNDS")) rounds_ = std::clamp(std::atoi(e), 2, 1000);  // developer
   if (const char* e = std::getenv("XM_C29_FLAT")) flat_edges_ = std::strtoull(e, nullptr, 0);  // developer
   if (const char* e = std::getenv("XM_C29_SEGS")) seg_edges_ = std::strtoull(e, nullptr, 0);   // developer
+  // Edge writes: NVIDIA stages them in shared memory and writes contiguous runs (RTX 3060 2.47 -> 3.00 g/s); AMD
+  // writes them straight out, where the Infinity Cache merges scattered stores (RX 9070 XT: staged 6.30 vs direct
+  // 6.67 g/s). Developer: XM_C29_DIRECT=0/1, XM_C29_GEN_TPB.
+  direct_ = dev_.info().vendor == gpu::Vendor::Amd;
+  if (const char* e = std::getenv("XM_C29_DIRECT")) direct_ = std::atoi(e) != 0;
+  if (direct_) gen_tpb_ = kTpb;
   if (const char* e = std::getenv("XM_C29_GEN_TPB")) gen_tpb_ = uint32_t(std::atoi(e));        // developer
   const uint64_t per_bucket = kEdges >> kNbBits;
   capb_ = uint32_t(per_bucket + per_bucket / 25 + 512) & ~1u;  // +4% (the spread is ~0.3% = 1 sd); even: the
@@ -69,7 +75,8 @@ bool Engine::init(std::string& err) {
   }
   const std::string src = "#define NB_BITS " + std::to_string(kNbBits) + "\n#define CAPB " + std::to_string(capb_) +
                           "u\n#define TPB " + std::to_string(kTpb) + "\n#define GEN_SB " + std::to_string(kGenSb) +
-                          "\n#define GEN_TPB " + std::to_string(gen_tpb_) + "\n" + kernel;
+                          "\n#define GEN_TPB " + std::to_string(gen_tpb_) + "\n" +
+                          (direct_ ? "#define GEN_DIRECT 1\n#define SPLIT_DIRECT 1\n" : "") + kernel;
   std::vector<std::string> opts;
   if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
   if (!gpu::rtc_compile(dev_.info(), src, "c29.cu", opts, module_)) {
