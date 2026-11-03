@@ -82,8 +82,19 @@ NOID_HD W4 gsqrc(W4 a)
     return zfold(c);
 }
 
+// NOID_EXPERIMENT (timing builds, results WRONG): 1 = no constant multiplies, 2 = no S-box arithmetic, 3 = S-box
+// squarings only, 4 = one general multiply per S-box instead of two
 NOID_HD W4 pow7c(W4 x)
 {
+#if defined(NOID_EXPERIMENT) && NOID_EXPERIMENT == 2
+    return w4(x.w1 ^ 0x9e3779b9u, x.w2 ^ x.w0, x.w3 + 7u, x.w0 ^ x.w3);
+#endif
+#if defined(NOID_EXPERIMENT) && NOID_EXPERIMENT == 3  // squarings only
+    return gsqrc(gsqrc(x));
+#endif
+#if defined(NOID_EXPERIMENT) && NOID_EXPERIMENT == 4  // one general multiply instead of two
+    return gmulc(x, gsqrc(x));
+#endif
     W4 sq = x, x2 = x;
     NOID_MATH_UNROLL1
     for (int k = 0; k < 2; k++) {
@@ -121,6 +132,9 @@ struct CMulByte {
     }
     NOID_HDM W4 mul(int c, W4 a) const
     {
+#if defined(NOID_EXPERIMENT) && NOID_EXPERIMENT == 1
+        return w4(a.w1 ^ (uint32_t)c, a.w2, a.w3 ^ a.w0, a.w0 + 3u);
+#endif
         const uint32_t base = (uint32_t)c * 4096u;
         return w4(k1(base, a.w0), k1(base, a.w1), k1(base, a.w2), k1(base, a.w3));
     }

@@ -167,6 +167,21 @@ Instruction budget: a 32 x 32 product is 16 IMAD.WIDE (64 multiply-pipe cycles p
 ALU cycles), and a nonce needs 540 general 128-bit multiplies (270 S-boxes, 2 each) of 9 products: ~20 MH/s on an
 RTX 3060 even with perfect overlap. SRBMiner's 31.7 MH/s is above that, so its multiply is different in kind.
 
+Time split on the RTX 3060 after the paired products (timing builds, NOID_EXPERIMENT 1-4, 2026-11-03): 10.9 MH/s
+full; 42.2 without the S-box arithmetic; 37.8 with the S-box squarings only; 18.9 with one general multiply per S-box
+instead of two; 12.0 without the constant multiplies. Per nonce: the two general multiplies ~65 ns (~71%), the
+squarings ~3 ns, the constant multiplies ~9 ns, the rest ~15 ns. Unrolling the MDS layer's 4-step loop (365 -> 156
+register moves) is slower (10.57 vs 10.88, instruction cache); a 64-register cap is slower too (10.75).
+
+Bit slicing (32 nonces per register, one bit position per plane) measured in isolation on the RTX 3060: a
+GF(2^32) product with reduction (Karatsuba to 4 x 4 schoolbook leaves, 432 AND + 923 XOR per 32 nonces) runs at
+125 G products/s, against 57.5 G/s for the class-split IMAD.WIDE product: 2.2 times. It does not fit the kernel as it
+stands. A bit-sliced thread owns 32 nonces, so its Poseidon state is 512 registers (the limit is 255, and one product
+alone takes 248); in shared memory the state is 2 KB per thread, about 1.5 warps per SM. The layouts that fit
+(8 nonces per thread with four products packed in the bytes of a register, or one 32-nonce group spread over four
+threads with exchanges through shared memory) lose most of the 2.2 times to packing and exchange: estimated
+1.2-1.4 times overall for a rewrite of the whole permutation. Not started.
+
 Where the time went on the RTX 3060 with the flat basis (timing-only builds): without the S-boxes 18.0 MH/s; without
 the table constant multiplies 13.2 MH/s. RX 9070 XT, same builds: 17.5 MH/s full, 24.9 without the table multiplies,
 31.5 without the S-boxes. The closed NVIDIA miners are ~3x faster still, so they must have a much cheaper 128-bit
