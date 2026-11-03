@@ -51,14 +51,14 @@
   262144-signature check (`XM_NEXA_SELFTEST_N`) leaves only the accepted zero-digit slips (10, ~2^-19 per window).
   `XM_NEXA_GEN=0` keeps the compiled kernel.
 
-  The inversion / signature kernel (-31% on the RTX 3060):
+  The inversion / signature kernel (-36% on the RTX 3060):
   - the block's batched inversion is a product tree (~3 field multiplies per nonce instead of ~18);
   - P.X, P.Y, R.X and the scalars are loaded only after the inversion and the quadratic-residue test, so the kernel
     fits 64 registers and runs 4 blocks per SM;
-  - the quadratic-residue test runs a fixed number of divstep iterations per batch in every lane, so lanes no longer
-    wait for the slowest one in the warp.
+  - the quadratic-residue test runs a fixed number of branch-free divstep iterations per batch in every lane, so
+    lanes no longer wait for the slowest one in the warp, and updates only the limbs still in use.
 
-  RTX 3060 27.7 -> 30.1 MH/s (168 W). The RX 9070 XT now runs the three-kernel form too: 49.1 -> 53.4 MH/s
+  RTX 3060 27.7 -> 30.5 MH/s (168 W). The RX 9070 XT now runs the three-kernel form too: 49.1 -> 53.5 MH/s
   (`XM_NEXA_SPLIT=0` keeps the single kernel).
 
 ## 0.1.0c (unreleased)

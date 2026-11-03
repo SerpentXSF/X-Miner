@@ -559,7 +559,7 @@ change nothing. Nsight Compute on the three kernels per 1M nonces (locked base c
 |---|---|---|
 | a: hashes | 11.2 ms | ALU 97% (SHA rotations) |
 | b: combs, generated | 27.2 ms | |
-| c: inversion, signature, check | 15.7 ms | 10.7 ms after the changes below |
+| c: inversion, signature, check | 15.7 ms | 10.0 ms after the changes below |
 
 ### Kernel c (inversion, quadratic-residue test, signature)
 
@@ -573,9 +573,14 @@ Nsight Compute per 1M nonces on the RTX 3060 (base clock), parts measured by rem
 | 4 blocks per SM (64 registers) | 11.9 ms | the Legendre loop is a dependent chain, and 2 blocks of 8 warps could not hide it |
 | 5-bit elimination step: (3 f) xor 2 = 1 / f mod 2^5 | 11.7 ms | instead of two Newton steps for 8 bits |
 | fixed iterations per Legendre batch (QR_K 8) | 10.7 ms | |
+| branch-free swap; warp 0's Legendre test after the last barrier | 10.6 ms | ptxas had made the swap a branch; barrier stalls 5.0 -> 1.8 per issue |
+| update only the limbs still in use (warp vote) | 10.1 ms | f and g lose ~9 bits per batch: 5.05 limbs on average instead of 9 |
+| Jacobi sign kept in bit 1, mask from one clamped funnel shift | 10.0 ms | |
 
 The product tree itself gains little (~3 field multiplies per nonce instead of ~18, but the scan was not the cost).
-5 blocks per SM gives the same as 4.
+5 blocks per SM gives the same as 4. After the occupancy change the Legendre loop is bound by the integer ALU pipe
+(77% busy, math-pipe-throttle stalls) while the multiply pipe is at ~43%. Moving the swap and the u, v shifts to
+multiply-adds balanced the pipes but added instructions: no gain.
 
 In the divstep loop each lane needs a different number of iterations for its 30 steps, and a warp runs the largest:
 a simulation gives 349 warp iterations per element against 227 per lane. With QR_K iterations per batch in every lane,
@@ -587,8 +592,8 @@ model showed the entries passing 2^31.
 
 | | MH/s | W |
 |---|---|---|
-| RTX 3060, generated combs | 27.7 -> 30.1 | 162 -> 168 |
-| RX 9070 XT, three kernels (single kernel 52.0) | 49.1 -> 53.4 | 338 |
+| RTX 3060, generated combs | 27.7 -> 30.5 | 162 -> 168 |
+| RX 9070 XT, three kernels (single kernel 52.0) | 49.1 -> 53.5 | 339 |
 
 Live on Kryptex with the generated kernel: RTX 3060, 2 accepted / 0 rejected in 11 minutes.
 

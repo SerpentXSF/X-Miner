@@ -166,7 +166,7 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 | FishHash (Iron Fish) / KarlsenHashV2 | 23.5 MH/s (25.2 with `--gpu-mclock 2700`) | 27.5 MH/s @ 140 W | |
 | XelisHashV3 (Xelis) | 5.0 kH/s @ ~170 W | 4.49 kH/s @ 112 W | published: RTX 3060 5.5 kH/s, RTX 4090 15 kH/s |
 | QHash (Qubitcoin) | 2.51 GH/s | 0.96 GH/s @ 147 W | published: RTX 3060 0.70 GH/s, RTX 3070 1.14 GH/s |
-| NexaPow (Nexa) | 53.4 MH/s @ 338 W | 30.1 MH/s @ 168 W | lolMiner: ~95 / ~50; a 436 MB table is built at start (~5-8 s) |
+| NexaPow (Nexa) | 53.5 MH/s @ 339 W | 30.5 MH/s @ 168 W | lolMiner: ~95 / ~50; a 436 MB table is built at start (~5-8 s) |
 | BLAKE2b | 4.63 GH/s | 1.97 GH/s | |
 
 The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share

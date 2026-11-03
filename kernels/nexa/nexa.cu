@@ -560,7 +560,8 @@ __device__ __forceinline__ void posdivsteps30(int& eta, int& jac, u32 ff, u32 gg
 #ifndef QR_K
 #define QR_K 8
 #endif
-__device__ __forceinline__ void posdivsteps_k(int& eta, int& jac, u32 ff, u32 gg, u32& u, u32& v, u32& q, u32& r) {
+// (jac2: the Jacobi sign in bit 1)
+__device__ __forceinline__ void posdivsteps_k(int& eta, u32& jac2, u32 ff, u32 gg, u32& u, u32& v, u32& q, u32& r) {
   u = 1; v = 0; q = 0; r = 1;
   int i = 30;
 #pragma unroll
@@ -571,16 +572,21 @@ __device__ __forceinline__ void posdivsteps_k(int& eta, int& jac, u32 ff, u32 gg
     v <<= zeros;
     eta -= zeros;
     i -= zeros;
-    jac ^= zeros & (int)((ff >> 1) ^ (ff >> 2));
-    if (eta < 0 && i > 0) {  // (i > 0: g is odd)
-      eta = -eta;
-      jac ^= (int)((ff & gg) >> 1);
-      u32 tmp = ff; ff = gg; gg = tmp;
-      tmp = u; u = q; q = tmp;
-      tmp = v; v = r; r = tmp;
-    }
-    const int limit = min(min(eta + 1, i), 5);  // <= 0 only when i = 0
-    const u32 m = limit > 0 ? (1u << limit) - 1u : 0u;
+    jac2 ^= ((u32)zeros << 1) & (ff ^ (ff >> 1));  // bit 1: f = 3, 5 mod 8 and an odd shift
+    // swap when eta < 0 and i > 0 (g is odd then), without a branch: c = all ones then (eta & -i < 0)
+    const u32 c = (u32)((eta & -i) >> 31);
+    eta = (eta ^ (int)c) - (int)c;
+    jac2 ^= ff & gg & c;  // bit 1: both 3 mod 4
+    u32 t = (ff ^ gg) & c; ff ^= t; gg ^= t;
+    t = (u ^ q) & c; u ^= t; q ^= t;
+    t = (v ^ r) & c; v ^= t; r ^= t;
+    // m = 2^limit - 1, limit = min(eta + 1, i, 5) (0 when i = 0): 31 >> (5 - limit), the shift clamped at 32
+    const int sh = max(max(4 - eta, 5 - i), 0);
+#if defined(__CUDA_ARCH__) && !defined(__HIPCC__)
+    const u32 m = __funnelshift_rc(31u, 0u, (u32)sh);
+#else
+    const u32 m = sh > 5 ? 0u : 31u >> sh;
+#endif
     const u32 x = (ff * 3u) ^ 2u;  // 1 / f mod 2^5
     const u32 w = (gg * (0u - x)) & m;
     gg += ff * w;
@@ -594,7 +600,7 @@ __device__ __forceinline__ void posdivsteps_k(int& eta, int& jac, u32 ff, u32 gg
     v <<= zeros;
     eta -= zeros;
     i -= zeros;
-    jac ^= zeros & (int)((ff >> 1) ^ (ff >> 2));
+    jac2 ^= ((u32)zeros << 1) & (ff ^ (ff >> 1));
   }
   u <<= i;
   v <<= i;
@@ -628,17 +634,57 @@ __device__ __forceinline__ bool is_one30(const int f[9]) {
   return rest == 0;
 }
 
+// update_fg on the low N limbs only (both f and g < 2^(30 N); max(f, g) never grows), then N shrinks when the top limb
+// is zero in every lane of the warp (a vote over the lanes still running; each lane's own top limb is zero then).
+template <int N>
+__device__ __forceinline__ void update_fg_n(int f[9], int g[9], u32 u, u32 v, u32 q, u32 r, int& n) {
+  const long long tu = (int)u, tv = (int)v, tq = (int)q, tr = (int)r;
+  long long cf = tu * f[0] + tv * g[0], cg = tq * f[0] + tr * g[0];
+  cf >>= 30;
+  cg >>= 30;
+#pragma unroll
+  for (int k = 1; k < N; ++k) {
+    cf += tu * f[k] + tv * g[k];
+    cg += tq * f[k] + tr * g[k];
+    f[k - 1] = (int)cf & M30;
+    cf >>= 30;
+    g[k - 1] = (int)cg & M30;
+    cg >>= 30;
+  }
+  f[N - 1] = (int)cf;
+  g[N - 1] = (int)cg;
+  if (N > 1) {
+#if defined(__HIPCC__)
+    const bool top0 = __all((f[N - 1] | g[N - 1]) == 0);
+#else
+    const bool top0 = __all_sync(__activemask(), (f[N - 1] | g[N - 1]) == 0);
+#endif
+    if (top0) n = N - 1;
+  }
+}
+
 __device__ __forceinline__ bool is_qr(const u32 a_in[8]) {
   int f[9], g[9];
   to30(f, FP);
   to30(g, a_in);
-  int eta = -1, jac = 0;
+  int eta = -1, n = 9;
+  u32 jac2 = 0;
 #pragma unroll 1
   for (int it = 0; it < 80; ++it) {
     u32 u, v, q, r;
-    posdivsteps_k(eta, jac, (u32)f[0] | (u32)f[1] << 30, (u32)g[0] | (u32)g[1] << 30, u, v, q, r);
-    update_fg(f, g, u, v, q, r);
-    if (is_one30(f)) return (jac & 1) == 0;
+    posdivsteps_k(eta, jac2, (u32)f[0] | (u32)f[1] << 30, (u32)g[0] | (u32)g[1] << 30, u, v, q, r);
+    switch (n) {  // warp-uniform in practice
+      case 9: update_fg_n<9>(f, g, u, v, q, r, n); break;
+      case 8: update_fg_n<8>(f, g, u, v, q, r, n); break;
+      case 7: update_fg_n<7>(f, g, u, v, q, r, n); break;
+      case 6: update_fg_n<6>(f, g, u, v, q, r, n); break;
+      case 5: update_fg_n<5>(f, g, u, v, q, r, n); break;
+      case 4: update_fg_n<4>(f, g, u, v, q, r, n); break;
+      case 3: update_fg_n<3>(f, g, u, v, q, r, n); break;
+      case 2: update_fg_n<2>(f, g, u, v, q, r, n); break;
+      default: update_fg_n<1>(f, g, u, v, q, r, n); break;
+    }
+    if (is_one30(f)) return (jac2 & 2u) == 0;
   }
   return true;
 }
@@ -882,6 +928,7 @@ __device__ __forceinline__ void nexa_stage2_inv(u32 tid, const u32 PZ[9], const 
   }
   // The root's inversion is a long dependent chain on thread 0: warp 0 runs it while the other warps take their
   // quadratic-residue test (R.y = RY / RZ^3 has the Legendre symbol of RY RZ), instead of all waiting at the barrier.
+  // Warp 0 takes its own test at the end.
   qr = true;
   if (tid < 32) {
     if (tid == 0) {
@@ -896,7 +943,6 @@ __device__ __forceinline__ void nexa_stage2_inv(u32 tid, const u32 PZ[9], const 
     qr = ry_is_qr(RY, RZ);
   }
   __syncthreads();
-  if (tid < 32) qr = ry_is_qr(RY, RZ);
   // inverses down, in place: every node of a level reads its parent's inverse and its sibling's product, then all
   // write
 #pragma unroll 1
@@ -921,6 +967,7 @@ __device__ __forceinline__ void nexa_stage2_inv(u32 tid, const u32 PZ[9], const 
   for (int i = 0; i < 9; ++i) iq[i] = sh_t[TPB + tid][i];
   fe_mul(izp, iq, RZ);
   fe_mul(izr, iq, PZ);
+  if (tid < 32) qr = ry_is_qr(RY, RZ);  // after the last barrier: the block does not wait for it
 }
 
 // Part 2: the signature, powHash and the target check.
