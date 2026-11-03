@@ -20,7 +20,11 @@ typedef unsigned long long u64;
 #define NC (1 << NC_BITS)
 #define CSHIFT (NODE_BITS - NC_BITS)
 #define CCAP ((size_t)CAPB << (NB_BITS - NC_BITS))  // a coarse bucket spans the memory of its fine buckets
+#ifndef GEN_TPB
+#define GEN_TPB TPB
+#endif
 #define GEN_BLOCKS ((1u << 23) / (TPB * GEN_SB))
+#define GEN_PER (TPB * GEN_SB / GEN_TPB)  // sipblocks per generating thread (GEN_TPB threads per block)
 #define GEN_SEG ((u32)(CCAP / GEN_BLOCKS))  // a generating block's segment of a coarse bucket (mean 2^29 / 64 / GEN_BLOCKS)
 #define ROUND_SEG ((u32)(CCAP / NB))        // a round block's segment (at most ~1300 used, in round 0)
 #define MAX_SEGS 256                        // segments per split block
@@ -65,28 +69,118 @@ __device__ __forceinline__ void sipblock(const Keys& k, u32 b, u64 h[64]) {
   for (int i = 0; i < 63; ++i) h[i] ^= last;
 }
 
-// Generation into the coarse U buckets: each thread GEN_SB sipblocks, written into the block's segments; segs[c *
-// GEN_BLOCKS + block] = the edges in segment c.
-extern "C" __global__ __launch_bounds__(TPB) void c29_gen(Keys k, uint2* __restrict__ out, u32* __restrict__ segs) {
-  __shared__ u32 cnt[NC];
-  for (u32 i = threadIdx.x; i < NC; i += TPB) cnt[i] = 0;
+// Staged scatter into 64 buckets: put() parks an edge in its bucket's row of shared memory (or, when the row is full,
+// writes it straight out); flush() writes every row out as one contiguous run at the bucket's next position
+// (cnt[c], shared: block-local or pre-reserved) and empties the rows. Destination of bucket c: out + c * stride,
+// positions below cap. One scattered 8-byte store per edge costs several times the bandwidth of the runs.
+template <int SLOTS>
+__device__ __forceinline__ void stage_put(uint2 (*stage)[SLOTS], u32* fill, u32* cnt, uint2* out, size_t stride,
+                                          u32 cap, u32 c, uint2 x) {
+  const u32 slot = atomicAdd(&fill[c], 1u);
+  if (slot < SLOTS) {
+    stage[c][slot] = x;
+  } else {
+    const u32 pos = atomicAdd(&cnt[c], 1u);
+    if (pos < cap) out[c * stride + pos] = x;
+  }
+}
+template <int SLOTS, int TB>
+__device__ __forceinline__ void stage_flush(uint2 (*stage)[SLOTS], u32* fill, u32* cnt, uint2* out, size_t stride,
+                                            u32 cap) {
   __syncthreads();
-  const u32 b0 = (blockIdx.x * TPB + threadIdx.x) * GEN_SB;
-  uint2* o = out + (size_t)blockIdx.x * GEN_SEG;
-  u64 h[64];
-#pragma unroll 1
-  for (int s = 0; s < GEN_SB; ++s) {
-    sipblock(k, b0 + s, h);
-#pragma unroll
-    for (int i = 0; i < 64; ++i) {
-      const u32 u = (u32)h[i] & NODE_MASK, v = (u32)(h[i] >> 32) & NODE_MASK;
-      const u32 c = u >> CSHIFT;
-      const u32 pos = atomicAdd(&cnt[c], 1u);
-      if (pos < GEN_SEG) o[c * CCAP + pos] = make_uint2(u, v);
-    }
+  const u32 warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+  for (u32 c = warp; c < 64; c += TB / 32) {
+    const u32 n = min(fill[c], (u32)SLOTS);
+    u32 base = 0;
+    if (lane == 0) base = atomicAdd(&cnt[c], n);
+    base = SHFL0(base);
+    for (u32 j = lane; j < n; j += 32)
+      if (base + j < cap) out[c * stride + base + j] = stage[c][j];
   }
   __syncthreads();
-  for (u32 i = threadIdx.x; i < NC; i += TPB) segs[i * GEN_BLOCKS + blockIdx.x] = min(cnt[i], GEN_SEG);
+  for (u32 i = threadIdx.x; i < 64; i += TB) fill[i] = 0;
+  __syncthreads();
+}
+// The rounds' survivors are written directly by default: staging them (ROUND_STAGE 1) costs three barriers per
+// 1024-edge pass in 1024-thread blocks, and rounds 0-3 took 140 instead of 135 ms on an RTX 3060. The split gains.
+#ifndef ROUND_STAGE
+#define ROUND_STAGE 0
+#endif
+#ifndef RSLOTS
+#define RSLOTS 24  // staged edges per bucket in the rounds and the split (one TPB-edge pass between flushes;
+                   // with the rounds' 32 KB of bitmaps it keeps a block under 48 KB of static shared memory)
+#endif
+
+// Generation into the coarse U buckets: GEN_BLOCKS blocks of GEN_TPB threads, GEN_PER sipblocks per thread, written
+// into the block's segments; segs[c * GEN_BLOCKS + block] = the edges in segment c.
+// A sipblock's edges are its 64 hashes xored with the last one. Holding the 64 hashes needs 128 registers and a fully
+// unrolled block (~11k instructions: the warps then wait on instruction fetch), so each sipblock is hashed twice in a
+// rolled loop: once for the last hash, once to emit the edges. Edges are staged per coarse bucket in shared memory
+// (GEN_WAVE edges per thread at a time) and each bucket's run is written out contiguously: one scattered 8-byte store
+// per edge cost ~100 of ~150 ms on an RTX 3060. Moving the hash's 64-bit adds and rotations to the multiply pipe
+// (IMAD.WIDE.U32 by 1 / by 2^n, multipliers from shared memory) was slower: 116 vs 102 ms.
+#ifndef GEN_WAVE
+#define GEN_WAVE (2048 / GEN_TPB)  // a mean of 32 staged edges per bucket and wave
+#endif
+#define GEN_SLOTS 64  // staged edges per bucket and wave (mean GEN_TPB * GEN_WAVE / NC)
+__device__ __forceinline__ u64 siphash_next(u64& v0, u64& v1, u64& v2, u64& v3, u64 n) {
+  v3 ^= n;
+  SIPROUND; SIPROUND;
+  v0 ^= n;
+  v2 ^= 0xff;
+  SIPROUND; SIPROUND; SIPROUND; SIPROUND;
+  return (v0 ^ v1) ^ (v2 ^ v3);
+}
+extern "C" __global__ __launch_bounds__(GEN_TPB) void c29_gen(Keys k, uint2* __restrict__ out, u32* __restrict__ segs) {
+  __shared__ u32 cnt[NC], fill[NC];
+  __shared__ uint2 stage[NC][GEN_SLOTS];
+  for (u32 i = threadIdx.x; i < NC; i += GEN_TPB) cnt[i] = fill[i] = 0;
+  __syncthreads();
+  const u32 b0 = (blockIdx.x * GEN_TPB + threadIdx.x) * GEN_PER;
+  uint2* o = out + (size_t)blockIdx.x * GEN_SEG;
+  const u32 warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+#pragma unroll 1
+  for (int s = 0; s < GEN_PER; ++s) {
+    const u64 e0 = (u64)(b0 + s) << 6;
+    u64 last;
+    {
+      u64 v0 = k.k0, v1 = k.k1, v2 = k.k2, v3 = k.k3;
+#pragma unroll 1
+      for (int i = 0; i < 64; ++i) last = siphash_next(v0, v1, v2, v3, e0 + i);
+    }
+    u64 v0 = k.k0, v1 = k.k1, v2 = k.k2, v3 = k.k3;
+#pragma unroll 1
+    for (int w = 0; w < 64; w += GEN_WAVE) {
+#pragma unroll 1
+      for (int i = w; i < w + GEN_WAVE; ++i) {
+        u64 h = siphash_next(v0, v1, v2, v3, e0 + i);
+        if (i < 63) h ^= last;
+        const u32 u = (u32)h & NODE_MASK, v = (u32)(h >> 32) & NODE_MASK;
+        const u32 c = u >> CSHIFT;
+        const u32 slot = atomicAdd(&fill[c], 1u);
+        if (slot < GEN_SLOTS) {
+          stage[c][slot] = make_uint2(u, v);
+        } else {  // rare: a bucket's staging row is full; write the edge directly
+          const u32 pos = atomicAdd(&cnt[c], 1u);
+          if (pos < GEN_SEG) o[c * CCAP + pos] = make_uint2(u, v);
+        }
+      }
+      __syncthreads();
+      // each warp writes out whole buckets: their runs are contiguous in the block's segments
+      for (u32 c = warp; c < NC; c += GEN_TPB / 32) {
+        const u32 n = min(fill[c], (u32)GEN_SLOTS);
+        u32 base = 0;
+        if (lane == 0) base = atomicAdd(&cnt[c], n);
+        base = SHFL0(base);
+        for (u32 j = lane; j < n; j += 32)
+          if (base + j < GEN_SEG) o[c * CCAP + base + j] = stage[c][j];
+      }
+      __syncthreads();
+      for (u32 i = threadIdx.x; i < NC; i += GEN_TPB) fill[i] = 0;
+      __syncthreads();
+    }
+  }
+  for (u32 i = threadIdx.x; i < NC; i += GEN_TPB) segs[i * GEN_BLOCKS + blockIdx.x] = min(cnt[i], GEN_SEG);
 }
 
 // Coarse -> fine buckets of side `side`. A coarse bucket is `nseg` segments of `seg_cap` edges (segs[c * nseg + s]
@@ -97,10 +191,11 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_split(u32 side, const uint
                                                             const u32* __restrict__ segs, u32 nseg, u32 seg_cap,
                                                             uint2* __restrict__ out, u32* __restrict__ counts,
                                                             u32 parts) {
-  __shared__ u32 cnt[NB / NC], pre[MAX_SEGS + 1];
+  __shared__ u32 cnt[NB / NC], pre[MAX_SEGS + 1], fill[NB / NC];
+  __shared__ uint2 stage[NB / NC][RSLOTS];
   const u32 c = blockIdx.x / parts, part = blockIdx.x % parts;
   const u32 per = max(nseg / parts, 1u), sub = max(parts / nseg, 1u), s0 = part / sub * per;
-  for (u32 i = threadIdx.x; i < NB / NC; i += TPB) cnt[i] = 0;
+  for (u32 i = threadIdx.x; i < NB / NC; i += TPB) cnt[i] = fill[i] = 0;
   for (u32 i = threadIdx.x; i < per; i += TPB) pre[i + 1] = segs[c * nseg + s0 + i];
   __syncthreads();
   if (threadIdx.x == 0) {
@@ -133,46 +228,85 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_split(u32 side, const uint
     cnt[i] = m ? atomicAdd(&counts[c * (NB / NC) + i], m) : 0u;
   }
   __syncthreads();
-  for (u32 i = beg + threadIdx.x; i < n; i += TPB) {
-    uint2 x;
-    SPLIT_EDGE(i, x);
-    const u32 f = (side ? x.y : x.x) >> BSHIFT;
-    const u32 pos = atomicAdd(&cnt[f & smask], 1u);
-    if (pos < CAPB) out[(size_t)f * CAPB + pos] = x;
+  uint2* ob = out + (size_t)c * (NB / NC) * CAPB;  // this coarse bucket's fine buckets
+  for (u32 i0 = beg; i0 < n; i0 += TPB) {
+    const u32 i = i0 + threadIdx.x;
+    if (i < n) {
+      uint2 x;
+      SPLIT_EDGE(i, x);
+      stage_put<RSLOTS>(stage, fill, cnt, ob, CAPB, CAPB, ((side ? x.y : x.x) >> BSHIFT) & smask, x);
+    }
+    stage_flush<RSLOTS, TPB>(stage, fill, cnt, ob, CAPB, CAPB);
   }
 #undef SPLIT_EDGE
 }
+
+// Visits the n edges at e (16-byte aligned) as BODY(x) for each uint2 x: 16-byte loads, two in flight per thread.
+// (Same speed as one 8-byte load per iteration on an RTX 3060; the rounds wait on the bitmap atomics' results:
+// short-scoreboard and MIO stalls. Warp-aggregated atomics on the 64 bucket counters (match.any) were slower.)
+#define FOR_EDGES(e, n, BODY)                                                         \
+  {                                                                                   \
+    const uint4* e4_ = reinterpret_cast<const uint4*>(e);                             \
+    const u32 n2_ = (n) >> 1;                                                         \
+    for (u32 j_ = threadIdx.x; j_ < n2_; j_ += 2 * TPB) {                             \
+      const uint4 a_ = e4_[j_];                                                       \
+      const bool hb_ = j_ + TPB < n2_;                                                \
+      const uint4 b_ = hb_ ? e4_[j_ + TPB] : make_uint4(0, 0, 0, 0);                  \
+      { const uint2 x = make_uint2(a_.x, a_.y); BODY }                                \
+      { const uint2 x = make_uint2(a_.z, a_.w); BODY }                                \
+      if (hb_) {                                                                      \
+        { const uint2 x = make_uint2(b_.x, b_.y); BODY }                              \
+        { const uint2 x = make_uint2(b_.z, b_.w); BODY }                              \
+      }                                                                               \
+    }                                                                                 \
+    if (((n) & 1) && threadIdx.x == 0) { const uint2 x = (e)[(n) - 1]; BODY }         \
+  }
 
 // One trimming round on side `side` (0: u, 1: v), one block per fine bucket of that side; the survivors go to the
 // block's segments of the other side's coarse buckets (segs[c * NB + bucket]).
 extern "C" __global__ __launch_bounds__(TPB) void c29_round(u32 side, const uint2* __restrict__ in,
                                                             const u32* __restrict__ counts, uint2* __restrict__ out,
                                                             u32* __restrict__ segs) {
-  __shared__ u32 s1[LOCAL_WORDS], s2[LOCAL_WORDS], cnt[NC];
+  __shared__ u32 s1[LOCAL_WORDS], s2[LOCAL_WORDS], cnt[NC], fill[NC];
+#if ROUND_STAGE
+  __shared__ uint2 stage[NC][RSLOTS];
+#endif
   for (u32 i = threadIdx.x; i < LOCAL_WORDS; i += TPB) { s1[i] = 0; s2[i] = 0; }
-  for (u32 i = threadIdx.x; i < NC; i += TPB) cnt[i] = 0;
+  for (u32 i = threadIdx.x; i < NC; i += TPB) cnt[i] = fill[i] = 0;
   __syncthreads();
   const u32 bk = blockIdx.x;
   const u32 n = min(counts[bk], (u32)CAPB);
   const uint2* e = in + (size_t)bk * CAPB;
   const u32 lmask = (1u << BSHIFT) - 1u;
-  for (u32 i = threadIdx.x; i < n; i += TPB) {
-    const uint2 x = e[i];
+  FOR_EDGES(e, n, {
     const u32 l = (side ? x.y : x.x) & lmask;
     const u32 m = 1u << (l & 31);
     if (atomicOr(&s1[l >> 5], m) & m) atomicOr(&s2[l >> 5], m);
-  }
+  })
   __syncthreads();
   uint2* o = out + (size_t)bk * ROUND_SEG;
-  for (u32 i = threadIdx.x; i < n; i += TPB) {
-    const uint2 x = e[i];
-    const u32 l = (side ? x.y : x.x) & lmask;
-    if (!(s2[l >> 5] >> (l & 31) & 1u)) continue;
-    const u32 co = (side ? x.x : x.y) >> CSHIFT;
-    const u32 pos = atomicAdd(&cnt[co], 1u);
-    if (pos < ROUND_SEG) o[co * CCAP + pos] = x;
+#if ROUND_STAGE
+  for (u32 i0 = 0; i0 < n; i0 += TPB) {
+    const u32 i = i0 + threadIdx.x;
+    if (i < n) {
+      const uint2 x = e[i];
+      const u32 l = (side ? x.y : x.x) & lmask;
+      if (s2[l >> 5] >> (l & 31) & 1u)
+        stage_put<RSLOTS>(stage, fill, cnt, o, CCAP, ROUND_SEG, (side ? x.x : x.y) >> CSHIFT, x);
+    }
+    stage_flush<RSLOTS, TPB>(stage, fill, cnt, o, CCAP, ROUND_SEG);
   }
+#else
+  FOR_EDGES(e, n, {
+    const u32 l = (side ? x.y : x.x) & lmask;
+    if (s2[l >> 5] >> (l & 31) & 1u) {
+      const u32 co = (side ? x.x : x.y) >> CSHIFT;
+      const u32 pos = atomicAdd(&cnt[co], 1u);
+      if (pos < ROUND_SEG) o[co * CCAP + pos] = x;
+    }
+  })
   __syncthreads();
+#endif
   for (u32 i = threadIdx.x; i < NC; i += TPB) segs[i * NB + bk] = min(cnt[i], ROUND_SEG);
 }
 
@@ -181,40 +315,54 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round(u32 side, const uint
 extern "C" __global__ __launch_bounds__(TPB) void c29_round_r(u32 side, const uint2* __restrict__ in,
                                                               const u32* __restrict__ counts, uint2* __restrict__ out,
                                                               u32* __restrict__ ccounts) {
-  __shared__ u32 s1[LOCAL_WORDS], s2[LOCAL_WORDS], cnt[NC];
+  __shared__ u32 s1[LOCAL_WORDS], s2[LOCAL_WORDS], cnt[NC], fill[NC];
+#if ROUND_STAGE
+  __shared__ uint2 stage[NC][RSLOTS];
+#endif
   for (u32 i = threadIdx.x; i < LOCAL_WORDS; i += TPB) { s1[i] = 0; s2[i] = 0; }
-  for (u32 i = threadIdx.x; i < NC; i += TPB) cnt[i] = 0;
+  for (u32 i = threadIdx.x; i < NC; i += TPB) cnt[i] = fill[i] = 0;
   __syncthreads();
   const u32 bk = blockIdx.x;
   const u32 n = min(counts[bk], (u32)CAPB);
   const uint2* e = in + (size_t)bk * CAPB;
   const u32 lmask = (1u << BSHIFT) - 1u;
-  for (u32 i = threadIdx.x; i < n; i += TPB) {
-    const uint2 x = e[i];
+  FOR_EDGES(e, n, {
     const u32 l = (side ? x.y : x.x) & lmask;
     const u32 m = 1u << (l & 31);
     if (atomicOr(&s1[l >> 5], m) & m) atomicOr(&s2[l >> 5], m);
-  }
+  })
   __syncthreads();
-  for (u32 i = threadIdx.x; i < n; i += TPB) {
-    const uint2 x = e[i];
+  FOR_EDGES(e, n, {
     const u32 l = (side ? x.y : x.x) & lmask;
     if (s2[l >> 5] >> (l & 31) & 1u) atomicAdd(&cnt[(side ? x.x : x.y) >> CSHIFT], 1u);
-  }
+  })
   __syncthreads();
   for (u32 i = threadIdx.x; i < NC; i += TPB) {
     const u32 c = cnt[i];
     cnt[i] = c ? atomicAdd(&ccounts[i], c) : 0u;
   }
   __syncthreads();
-  for (u32 i = threadIdx.x; i < n; i += TPB) {
-    const uint2 x = e[i];
-    const u32 l = (side ? x.y : x.x) & lmask;
-    if (!(s2[l >> 5] >> (l & 31) & 1u)) continue;
-    const u32 co = (side ? x.x : x.y) >> CSHIFT;
-    const u32 pos = atomicAdd(&cnt[co], 1u);
-    if (pos < CCAP) out[co * CCAP + pos] = x;
+#if ROUND_STAGE
+  for (u32 i0 = 0; i0 < n; i0 += TPB) {
+    const u32 i = i0 + threadIdx.x;
+    if (i < n) {
+      const uint2 x = e[i];
+      const u32 l = (side ? x.y : x.x) & lmask;
+      if (s2[l >> 5] >> (l & 31) & 1u)
+        stage_put<RSLOTS>(stage, fill, cnt, out, CCAP, CCAP, (side ? x.x : x.y) >> CSHIFT, x);
+    }
+    stage_flush<RSLOTS, TPB>(stage, fill, cnt, out, CCAP, CCAP);
   }
+#else
+  FOR_EDGES(e, n, {
+    const u32 l = (side ? x.y : x.x) & lmask;
+    if (s2[l >> 5] >> (l & 31) & 1u) {
+      const u32 co = (side ? x.x : x.y) >> CSHIFT;
+      const u32 pos = atomicAdd(&cnt[co], 1u);
+      if (pos < CCAP) out[co * CCAP + pos] = x;
+    }
+  })
+#endif
 }
 
 // Buckets -> one flat list at the given offsets (one block per bucket).

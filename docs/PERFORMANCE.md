@@ -687,4 +687,25 @@ Per graph on the RX 9070 XT before the overlap (~150 ms of GPU time):
 
 The first rounds are bandwidth-bound, so the next lever is fewer bytes per edge.
 
+RTX 3060, 2026-11-03 (profile mode, per graph ~402 ms): generation + split 150 ms, rounds 0-3 135 ms, rounds 4-87
+~83 ms, flat rounds ~25 ms.
+- Generation ran with 1024-thread blocks, which cap registers at 64: a sipblock's 64 hashes (128 registers) spilled.
+  Timing builds then showed the real cost: without the global stores generation + split took 52 ms instead of 150;
+  each edge was one scattered 8-byte store into one of 64 buckets.
+- Now: generation stages edges per coarse bucket in shared memory and writes each bucket's run contiguously;
+  each sipblock is hashed twice in a rolled loop (once for the last hash, once to emit), because holding the 64
+  hashes needs a fully unrolled block of ~11k instructions and the warps then waited on instruction fetch; 512
+  threads per block. Generation + split 150 -> 102 ms; the split's writes staged the same way: 94 ms.
+- Tried, slower or no change: 128 / 256 threads per generating block; the hash's 64-bit adds and rotations on the
+  multiply pipe (IMAD.WIDE.U32 by 1 / by 2^n: 116 ms); staging the rounds' survivors (three barriers per 1024-edge
+  pass: rounds 0-3 135 -> 140 ms); 16-byte loads with four edges in flight per thread (same speed); warp-aggregated
+  atomics on the 64 bucket counters (later rounds slower). Rounds 0-3 wait on the bitmap atomics' results
+  (short-scoreboard and MIO stalls; round 0 at 54% of memory throughput).
+
+| RTX 3060 | g/s |
+|---|---|
+| before | 2.47 |
+| generation staged, two-pass hashing, 512 threads | 2.77 |
+| + split staged | 2.81 |
+
 Live on Kryptex: RX 9070 XT, 5 accepted / 0 rejected in 15 minutes at difficulty 20 (6.62 g/s shown).

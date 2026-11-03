@@ -36,8 +36,10 @@ bool Engine::init(std::string& err) {
   if (const char* e = std::getenv("XM_C29_ROUNDS")) rounds_ = std::clamp(std::atoi(e), 2, 1000);  // developer
   if (const char* e = std::getenv("XM_C29_FLAT")) flat_edges_ = std::strtoull(e, nullptr, 0);  // developer
   if (const char* e = std::getenv("XM_C29_SEGS")) seg_edges_ = std::strtoull(e, nullptr, 0);   // developer
+  if (const char* e = std::getenv("XM_C29_GEN_TPB")) gen_tpb_ = uint32_t(std::atoi(e));        // developer
   const uint64_t per_bucket = kEdges >> kNbBits;
-  capb_ = uint32_t(per_bucket + per_bucket / 25 + 512);  // +4% (the spread is ~0.3% = 1 sd)
+  capb_ = uint32_t(per_bucket + per_bucket / 25 + 512) & ~1u;  // +4% (the spread is ~0.3% = 1 sd); even: the
+                                                                // kernels read buckets with 16-byte loads
   const size_t edge_bytes = size_t(capb_) << kNbBits << 3;
   d_a_ = dev_.alloc(edge_bytes);
   d_b_ = dev_.alloc(edge_bytes);
@@ -67,7 +69,7 @@ bool Engine::init(std::string& err) {
   }
   const std::string src = "#define NB_BITS " + std::to_string(kNbBits) + "\n#define CAPB " + std::to_string(capb_) +
                           "u\n#define TPB " + std::to_string(kTpb) + "\n#define GEN_SB " + std::to_string(kGenSb) +
-                          "\n" + kernel;
+                          "\n#define GEN_TPB " + std::to_string(gen_tpb_) + "\n" + kernel;
   std::vector<std::string> opts;
   if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
   if (!gpu::rtc_compile(dev_.info(), src, "c29.cu", opts, module_)) {
@@ -113,7 +115,8 @@ bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err)
   };
   {
     void* args[] = {&ka, &d_b_, &d_cnt_b_};
-    if (!dev_.launch("c29_gen", gen_blocks, 1, 1, kTpb, 1, 1, 0, args) || !split(0, kEdges, gen_blocks)) return fail();
+    if (!dev_.launch("c29_gen", gen_blocks, 1, 1, gen_tpb_, 1, 1, 0, args) || !split(0, kEdges, gen_blocks))
+      return fail();
   }
   mark("gen", 0);
   // bucket rounds (shared-memory degree counts) while edges are many
