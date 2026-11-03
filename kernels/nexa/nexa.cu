@@ -504,7 +504,7 @@ __device__ __forceinline__ void comb_mul(u32 X[9], u32 Y[9], u32 Z[9], const u32
 // (the method of libsecp256k1's secp256k1_jacobi32_maybe_var, MIT, written here for the GPU): batches of 30 steps
 // are decided on the low 32 bits of f and g alone and collected in a 2x2 matrix, which is then applied to the full
 // numbers (9 signed 30-bit limbs). The sign flips when g is divided by an odd power of 2 while f = 3, 5 mod 8, and
-// when f and g are swapped while both are 3 mod 4. Converges (f = 1) after ~25 batches; 50 is the cap, after which
+// when f and g are swapped while both are 3 mod 4. Converges (f = 1) after ~27 batches; 80 is the cap, after which
 // the nonce is counted as a residue (a wrong guess there only loses that nonce: the CPU re-checks candidates).
 #define M30 0x3FFFFFFF
 __device__ __forceinline__ void to30(int r[9], const u32 a[8]) {
@@ -541,16 +541,65 @@ __device__ __forceinline__ void posdivsteps30(int& eta, int& jac, u32 ff, u32 gg
       tmp = u; u = q; q = tmp;
       tmp = v; v = r; r = tmp;
     }
+    // at most 5 bits per elimination: (3 f) xor 2 is 1 / f mod 2^5, against two Newton steps for 8 bits
+    // (a simulation gives 0.2% more warp iterations, for a much shorter chain)
     const int limit = eta + 1 > i ? i : eta + 1;
-    const u32 m = (0xFFFFFFFFu >> (32 - limit)) & 255u;
-    u32 x = ff;  // 1 / f mod 2^3, then Newton steps to mod 2^12
-    x *= 2u - ff * x;
-    x *= 2u - ff * x;
+    const u32 m = (0xFFFFFFFFu >> (32 - limit)) & 31u;
+    const u32 x = (ff * 3u) ^ 2u;
     const u32 w = (gg * (0u - x)) & m;  // cancels the bottom bits of g: g + f w = 0 mod 2^limit
     gg += ff * w;
     q += u * w;
     r += v * w;
   }
+}
+
+// The Legendre test's batch: QR_K warp-uniform iterations instead of exactly 30 steps (in the loop above lanes need
+// different iteration counts, and a warp runs the largest). A lane that reaches 30 steps idles; one that does fewer
+// (s) has its matrix scaled by 2^(30 - s), so the update still divides by 2^30. Invariant: f 2^s = u f0 + v g0,
+// g 2^s = q f0 + r g0. RTX 3060: kernel c -9% at QR_K 8 (7..10 within 2%).
+#ifndef QR_K
+#define QR_K 8
+#endif
+__device__ __forceinline__ void posdivsteps_k(int& eta, int& jac, u32 ff, u32 gg, u32& u, u32& v, u32& q, u32& r) {
+  u = 1; v = 0; q = 0; r = 1;
+  int i = 30;
+#pragma unroll
+  for (int it = 0; it < QR_K; ++it) {
+    const int zeros = __ffs(gg | (0xFFFFFFFFu << i)) - 1;  // the sentinel bit stops at i
+    gg >>= zeros;
+    u <<= zeros;
+    v <<= zeros;
+    eta -= zeros;
+    i -= zeros;
+    jac ^= zeros & (int)((ff >> 1) ^ (ff >> 2));
+    if (eta < 0 && i > 0) {  // (i > 0: g is odd)
+      eta = -eta;
+      jac ^= (int)((ff & gg) >> 1);
+      u32 tmp = ff; ff = gg; gg = tmp;
+      tmp = u; u = q; q = tmp;
+      tmp = v; v = r; r = tmp;
+    }
+    const int limit = min(min(eta + 1, i), 5);  // <= 0 only when i = 0
+    const u32 m = limit > 0 ? (1u << limit) - 1u : 0u;
+    const u32 x = (ff * 3u) ^ 2u;  // 1 / f mod 2^5
+    const u32 w = (gg * (0u - x)) & m;
+    gg += ff * w;
+    q += u * w;
+    r += v * w;
+  }
+  {  // strip the bits the last elimination cleared: the matrix bound then holds as at the end of the loop above
+     // (entries < 2^30 after scaling; without it they reach 2^31)
+    const int zeros = __ffs(gg | (0xFFFFFFFFu << i)) - 1;
+    u <<= zeros;
+    v <<= zeros;
+    eta -= zeros;
+    i -= zeros;
+    jac ^= zeros & (int)((ff >> 1) ^ (ff >> 2));
+  }
+  u <<= i;
+  v <<= i;
+  q <<= i;
+  r <<= i;
 }
 
 // (f, g) = [u v; q r] (f, g) / 2^30, 9 signed 30-bit limbs
@@ -585,9 +634,9 @@ __device__ __forceinline__ bool is_qr(const u32 a_in[8]) {
   to30(g, a_in);
   int eta = -1, jac = 0;
 #pragma unroll 1
-  for (int it = 0; it < 50; ++it) {
+  for (int it = 0; it < 80; ++it) {
     u32 u, v, q, r;
-    posdivsteps30(eta, jac, (u32)f[0] | (u32)f[1] << 30, (u32)g[0] | (u32)g[1] << 30, u, v, q, r);
+    posdivsteps_k(eta, jac, (u32)f[0] | (u32)f[1] << 30, (u32)g[0] | (u32)g[1] << 30, u, v, q, r);
     update_fg(f, g, u, v, q, r);
     if (is_one30(f)) return (jac & 1) == 0;
   }
@@ -801,92 +850,93 @@ __device__ __forceinline__ void nexa_stage1(const Params& p, u64 nonce, u32 x[8]
 }
 
 // Stage 2: from P = x G and R = k G (Jacobian): the block's batched inversion (every thread of the block takes
-// part), the signature, powHash and the target check.
-__device__ __forceinline__ void nexa_stage2(const Params& p, u32 tid, u32 x[8], u32 kk[8], const u32 h1[8], bool valid,
-                                            u32 PX[9], u32 PY[9], u32 PZ[9], u32 RX[9], u32 RY[9], u32 RZ[9],
-                                            u32 (*sh_pre)[9], u32 (*sh_suf)[9], u32* sh_inv, u32* __restrict__ found,
-                                            u32 maxf, u32* __restrict__ dbg) {
-  // ---- 1 / (PZ RZ) for the block: Montgomery's trick with block-wide prefix / suffix products ----
+// part), the signature, powHash and the target check. Two parts, so that kernel c loads P.X, P.Y, R.X and the
+// scalars only after the inversion and the quadratic-residue test (fewer live registers there, more warps per SM).
+// The inversion is Montgomery's trick on a product tree in shared memory (sh_t[2 TPB], the heap layout: node i has
+// children 2i, 2i + 1, leaves TPB..2 TPB - 1, any TPB): products up the tree, one inversion at the root, inverses
+// down (1 / child = 1 / parent * sibling). About 3 field multiplies per nonce, against 2 log2(TPB) + 2 for a
+// block-wide prefix / suffix scan.
+// Part 1: izp = 1 / PZ, izr = 1 / RZ, qr = R.y is a quadratic residue.
+__device__ __forceinline__ void nexa_stage2_inv(u32 tid, const u32 PZ[9], const u32 RZ[9], const u32 RY[9],
+                                                u32 (*sh_t)[9], u32 izp[9], u32 izr[9], bool& qr) {
+  // ---- 1 / (PZ RZ) for the block ----
   u32 q[9];
   fe_mul(q, PZ, RZ);
 #pragma unroll
-  for (int i = 0; i < 9; ++i) { sh_pre[tid][i] = q[i]; sh_suf[tid][i] = q[i]; }
+  for (int i = 0; i < 9; ++i) sh_t[TPB + tid][i] = q[i];
+  u32 lo = 1;  // the largest power of two below TPB: nodes [lo, 2 lo) are the lowest internal level
+  while (2 * lo < TPB) lo <<= 1;
   __syncthreads();
 #pragma unroll 1
-  for (u32 off = 1; off < TPB; off <<= 1) {
-    u32 a[9], b[9];
-    const bool hp = tid >= off, hs = tid + off < TPB;
-    if (hp) {
+  for (u32 m = lo; m >= 1; m >>= 1) {  // nodes [m, 2m) from their children
+    const u32 i = m + tid;
+    if (tid < m && i < TPB) {
+      u32 a[9], b[9];
 #pragma unroll
-      for (int i = 0; i < 9; ++i) a[i] = sh_pre[tid - off][i];
-    }
-    if (hs) {
+      for (int k = 0; k < 9; ++k) { a[k] = sh_t[2 * i][k]; b[k] = sh_t[2 * i + 1][k]; }
+      fe_mul(a, a, b);
 #pragma unroll
-      for (int i = 0; i < 9; ++i) b[i] = sh_suf[tid + off][i];
-    }
-    __syncthreads();
-    if (hp) {
-      u32 c[9];
-#pragma unroll
-      for (int i = 0; i < 9; ++i) c[i] = sh_pre[tid][i];
-      fe_mul(c, c, a);
-#pragma unroll
-      for (int i = 0; i < 9; ++i) sh_pre[tid][i] = c[i];
-    }
-    if (hs) {
-      u32 c[9];
-#pragma unroll
-      for (int i = 0; i < 9; ++i) c[i] = sh_suf[tid][i];
-      fe_mul(c, c, b);
-#pragma unroll
-      for (int i = 0; i < 9; ++i) sh_suf[tid][i] = c[i];
+      for (int k = 0; k < 9; ++k) sh_t[i][k] = a[k];
     }
     __syncthreads();
   }
-  // The block's one inversion is a long dependent chain on thread 0: warp 0 runs it while the other warps take their
+  // The root's inversion is a long dependent chain on thread 0: warp 0 runs it while the other warps take their
   // quadratic-residue test (R.y = RY / RZ^3 has the Legendre symbol of RY RZ), instead of all waiting at the barrier.
-  bool qr = true;
+  qr = true;
   if (tid < 32) {
     if (tid == 0) {
-      u32 tot[9], inv[9];
+      u32 r[9];
 #pragma unroll
-      for (int i = 0; i < 9; ++i) tot[i] = sh_pre[TPB - 1][i];
-      fe_inv_var(inv, tot);
+      for (int i = 0; i < 9; ++i) r[i] = sh_t[1][i];
+      fe_inv_var(r, r);
 #pragma unroll
-      for (int i = 0; i < 9; ++i) sh_inv[i] = inv[i];
+      for (int i = 0; i < 9; ++i) sh_t[1][i] = r[i];
     }
   } else {
     qr = ry_is_qr(RY, RZ);
   }
   __syncthreads();
   if (tid < 32) qr = ry_is_qr(RY, RZ);
-  u32 iq[9];  // 1 / q = inv(total) * prefix(tid - 1) * suffix(tid + 1)
+  // inverses down, in place: every node of a level reads its parent's inverse and its sibling's product, then all
+  // write
+#pragma unroll 1
+  for (u32 m = 2; m < 2 * TPB; m <<= 1) {  // nodes [m, 2m)
+    const u32 c = m + tid;
+    const bool on = tid < m && c < 2 * TPB;
+    u32 a[9], b[9];
+    if (on) {
 #pragma unroll
-  for (int i = 0; i < 9; ++i) iq[i] = sh_inv[i];
-  if (tid > 0) {
-    u32 a[9];
+      for (int k = 0; k < 9; ++k) { a[k] = sh_t[c >> 1][k]; b[k] = sh_t[c ^ 1u][k]; }
+    }
+    __syncthreads();
+    if (on) {
+      fe_mul(a, a, b);
 #pragma unroll
-    for (int i = 0; i < 9; ++i) a[i] = sh_pre[tid - 1][i];
-    fe_mul(iq, iq, a);
+      for (int k = 0; k < 9; ++k) sh_t[c][k] = a[k];
+    }
+    __syncthreads();
   }
-  if (tid + 1 < TPB) {
-    u32 a[9];
+  u32 iq[9];  // 1 / q
 #pragma unroll
-    for (int i = 0; i < 9; ++i) a[i] = sh_suf[tid + 1][i];
-    fe_mul(iq, iq, a);
-  }
+  for (int i = 0; i < 9; ++i) iq[i] = sh_t[TPB + tid][i];
+  fe_mul(izp, iq, RZ);
+  fe_mul(izr, iq, PZ);
+}
 
+// Part 2: the signature, powHash and the target check.
+__device__ __forceinline__ void nexa_stage2_sig(const Params& p, u32 tid, u32 x[8], u32 kk[8], const u32 h1[8],
+                                                bool valid, const u32 PX[9], const u32 PY[9], const u32 RX[9],
+                                                const u32 izp[9], const u32 izr[9], bool qr, u32* __restrict__ found,
+                                                u32 maxf, u32* __restrict__ dbg) {
   // ---- affine P.x, parity of P.y, R.x ----
-  u32 zi[9], zi2[9], t[9], px9[9], rx9[9];
-  fe_mul(zi, iq, RZ);  // 1 / PZ
-  fe_sqr(zi2, zi);
+  u32 zi2[9], t[9], px9[9], rx9[9];
+  fe_sqr(zi2, izp);
   fe_mul(px9, PX, zi2);
-  fe_mul(t, zi2, zi);
+  fe_mul(t, zi2, izp);
   fe_mul(t, PY, t);
   fe_canon(t);
   const u32 pyodd = t[0] & 1u;
-  fe_mul(zi, iq, PZ);  // 1 / RZ
-  fe_sqr(zi2, zi);
+  fe_sqr(zi2, izr);
   fe_mul(rx9, RX, zi2);
 
   // ---- k -> n - k unless R.y is a quadratic residue ----
@@ -956,9 +1006,7 @@ __device__ __forceinline__ void nexa_stage2(const Params& p, u32 tid, u32 x[8], 
 extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const uint4* __restrict__ tab,
                                                                 u32* __restrict__ found, u32 maxf,
                                                                 u32* __restrict__ dbg) {
-  __shared__ u32 sh_pre[TPB][9];
-  __shared__ u32 sh_suf[TPB][9];
-  __shared__ u32 sh_inv[9];
+  __shared__ u32 sh_t[2 * TPB][9];
   const u32 tid = threadIdx.x;
   const u64 nonce = p.base + (u64)blockIdx.x * TPB + tid;
   u32 x[8], kk[8], h1[8];
@@ -968,7 +1016,10 @@ extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const 
   u32 PX[9], PY[9], PZ[9], RX[9], RY[9], RZ[9];
   comb_mul(PX, PY, PZ, x, tab);
   comb_mul(RX, RY, RZ, kk, tab);
-  nexa_stage2(p, tid, x, kk, h1, valid, PX, PY, PZ, RX, RY, RZ, sh_pre, sh_suf, sh_inv, found, maxf, dbg);
+  u32 izp[9], izr[9];
+  bool qr;
+  nexa_stage2_inv(tid, PZ, RZ, RY, sh_t, izp, izr, qr);
+  nexa_stage2_sig(p, tid, x, kk, h1, valid, PX, PY, RX, izp, izr, qr, found, maxf, dbg);
 }
 #endif
 
@@ -1041,33 +1092,40 @@ extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa_b(const uint4* _
 }
 
 #ifndef XM_NEXA_GEN_SHELL
-extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa_c(Params p, const u32* __restrict__ st,
-                                                                  const u32* __restrict__ pr, u32 n,
-                                                                  u32* __restrict__ found, u32 maxf,
-                                                                  u32* __restrict__ dbg) {
-  __shared__ u32 sh_pre[TPB][9];
-  __shared__ u32 sh_suf[TPB][9];
-  __shared__ u32 sh_inv[9];
+#ifndef MINB_C
+#define MINB_C MINB
+#endif
+extern "C" __global__ __launch_bounds__(TPB, MINB_C) void xm_nexa_c(Params p, const u32* __restrict__ st,
+                                                                    const u32* __restrict__ pr, u32 n,
+                                                                    u32* __restrict__ found, u32 maxf,
+                                                                    u32* __restrict__ dbg) {
+  __shared__ u32 sh_t[2 * TPB][9];
   const u32 tid = threadIdx.x;
   const u32 t = blockIdx.x * TPB + tid;
-  u32 x[8], kk[8], h1[8], c32[48];
+  const uint4* q = reinterpret_cast<const uint4*>(pr + PR_ROW * (size_t)t);
+  // pr row words 8 c..8 c + 7: c = 0..5 for PX, PY, PZ, RX, RY, RZ
+  auto load = [&](u32 r[9], int c) {
+    const uint4 a = q[2 * c], b = q[2 * c + 1];
+    const u32 w[8] = {a.x, a.y, a.z, a.w, b.x, b.y, b.z, b.w};
+    fe_from32(r, w);
+  };
+  u32 izp[9], izr[9];
+  bool qr;
+  {
+    u32 PZ[9], RY[9], RZ[9];
+    load(PZ, 2);
+    load(RY, 4);
+    load(RZ, 5);
+    nexa_stage2_inv(tid, PZ, RZ, RY, sh_t, izp, izr, qr);
+  }
+  u32 x[8], kk[8], h1[8], PX[9], PY[9], RX[9];
 #pragma unroll
   for (int i = 0; i < 8; ++i) { x[i] = st[i * n + t]; kk[i] = st[(8 + i) * n + t]; h1[i] = st[(16 + i) * n + t]; }
   const bool valid = st[24 * n + t] != 0u;
-  const uint4* q = reinterpret_cast<const uint4*>(pr + PR_ROW * (size_t)t);
-#pragma unroll
-  for (int i = 0; i < 12; ++i) {
-    const uint4 v = q[i];
-    c32[4 * i] = v.x; c32[4 * i + 1] = v.y; c32[4 * i + 2] = v.z; c32[4 * i + 3] = v.w;
-  }
-  u32 PX[9], PY[9], PZ[9], RX[9], RY[9], RZ[9];
-  fe_from32(PX, c32);
-  fe_from32(PY, c32 + 8);
-  fe_from32(PZ, c32 + 16);
-  fe_from32(RX, c32 + 24);
-  fe_from32(RY, c32 + 32);
-  fe_from32(RZ, c32 + 40);
-  nexa_stage2(p, tid, x, kk, h1, valid, PX, PY, PZ, RX, RY, RZ, sh_pre, sh_suf, sh_inv, found, maxf, dbg);
+  load(PX, 0);
+  load(PY, 1);
+  load(RX, 3);
+  nexa_stage2_sig(p, tid, x, kk, h1, valid, PX, PY, RX, izp, izr, qr, found, maxf, dbg);
 }
 #endif
 #endif

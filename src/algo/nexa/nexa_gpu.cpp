@@ -118,10 +118,18 @@ bool Engine::init(std::string& err) {
       }
       kernel = ss.str();
     }
-    split_ = want_gen || std::getenv("XM_NEXA_SPLIT") != nullptr;  // developer: the three-kernel form, compiled
+    // The three-kernel form: with the generated kernel, and on AMD (RX 9070 XT: 53.1 vs 52.0 MH/s, 325 vs 339 W).
+    // Other NVIDIA GPUs keep the single kernel (RTX 3060 without the generated kernel: a tie). Developer:
+    // XM_NEXA_SPLIT=0/1.
+    split_ = want_gen || dev_.info().vendor == gpu::Vendor::Amd;
+    if (const char* e = std::getenv("XM_NEXA_SPLIT")) split_ = std::string(e) != "0";
+    // Kernel c of that form keeps few values live across its inversion and Legendre loops: fitted to 32 warps per SM
+    // (RTX 3060: its time -20% against 2 blocks of 256). Developer: XM_NEXA_MINB_C.
+    int minb_c = std::clamp(std::max(minb, 1024 / int(tpb_)), 1, 8);
+    if (const char* e = std::getenv("XM_NEXA_MINB_C")) minb_c = std::clamp(std::atoi(e), 1, 8);
     std::string src = "#define TPB " + std::to_string(tpb_) + "\n#define W " + std::to_string(w_) + "\n#define NW " +
-                      std::to_string(nw) + "\n#define MINB " + std::to_string(minb) + "\n" +
-                      (split_ ? "#define XM_NEXA_SPLIT\n" : "") + kernel;
+                      std::to_string(nw) + "\n#define MINB " + std::to_string(minb) + "\n#define MINB_C " +
+                      std::to_string(minb_c) + "\n" + (split_ ? "#define XM_NEXA_SPLIT\n" : "") + kernel;
     std::vector<std::string> opts;
     if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
     if (!gpu::rtc_compile(dev_.info(), src, "nexa.cu", opts, module_)) {
@@ -134,7 +142,7 @@ bool Engine::init(std::string& err) {
     }
   }
   std::string why;
-  gen_ = want_gen && gpu::add_kernels(dev_, "nexa", why);
+  gen_ = want_gen && split_ && gpu::add_kernels(dev_, "nexa", why);
   return true;
 }
 

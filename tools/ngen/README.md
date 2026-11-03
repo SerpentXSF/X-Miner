@@ -2,7 +2,7 @@
 
 `kernels/prebuilt/nexa_sm_86.cubin` holds one kernel, `xm_nexa_b`: the two comb scalar multiplications of NexaPow
 (P = x G and R = k G), written as scheduled sm_86 SASS by `ngen.py` and assembled with CuAssembler. On an RTX 3060 at
-170 W the miner then runs at 27.7 MH/s, against 25.3 MH/s with the compiled kernel. Other GPUs, and RTX 30 with
+170 W the miner then runs at 30.1 MH/s, against 25.4 MH/s with the compiled kernel. Other GPUs, and RTX 30 with
 non-default Nexa settings, use the run-time compiled kernel only.
 
 This is build-time tooling. Releases ship just the miner packages; the cubin is embedded in `x-miner`.

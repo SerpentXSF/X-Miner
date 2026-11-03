@@ -475,9 +475,10 @@ The kernel:
   scalar (Jacobian + affine, 7M + 4S). The 436 MB table is built at start on all CPU cores.
 - **Field arithmetic:** 9 limbs of 29 bits, so each product is one 64-bit multiply-add and the carries are resolved
   once per multiply.
-- **Inversion:** one per block, by Montgomery's trick over the block's z values. The inverse itself uses
-  Bernstein-Yang divsteps on thread 0, overlapped with the other warps' quadratic-residue test.
-- **Quadratic-residue test:** divsteps with Jacobi tracking (the method of libsecp256k1's jacobi32_maybe_var).
+- **Inversion:** one per block, by Montgomery's trick on a product tree of the block's z values. The inverse itself
+  uses Bernstein-Yang divsteps on thread 0, overlapped with the other warps' quadratic-residue test.
+- **Quadratic-residue test:** divsteps with Jacobi tracking (the method of libsecp256k1's jacobi32_maybe_var), with a
+  fixed iteration count per batch (below).
 
 Steps on the RTX 3060 (170 W) and RX 9070 XT:
 
@@ -536,8 +537,8 @@ Measured in a loop on the RTX 3060 (output checked against Python on every threa
 
 A large generated block cannot sit inside the single Nexa kernel: ptxas sinks, rematerializes and duplicates the
 marker instructions, and keeps ~40 registers live across the block. So on sm_86 the kernel runs as three launches
-(hashes / combs / inversion and check), with buffers between them. The split alone costs 5% on the RTX 3060; it is
-+3% on the RX 9070 XT, which keeps the single kernel.
+(hashes / combs / inversion and check), with buffers between them. The split alone cost 5% on the RTX 3060 at
+first; after the kernel c work below it is a tie there, and +2% on the RX 9070 XT, which now uses it too.
 
 | RTX 3060 | MH/s | W |
 |---|---|---|
@@ -558,7 +559,36 @@ change nothing. Nsight Compute on the three kernels per 1M nonces (locked base c
 |---|---|---|
 | a: hashes | 11.2 ms | ALU 97% (SHA rotations) |
 | b: combs, generated | 27.2 ms | |
-| c: inversion, signature, check | 15.7 ms | |
+| c: inversion, signature, check | 15.7 ms | 10.7 ms after the changes below |
+
+### Kernel c (inversion, quadratic-residue test, signature)
+
+Nsight Compute per 1M nonces on the RTX 3060 (base clock), parts measured by removing them (timing only):
+
+| Change | Kernel c | Note |
+|---|---|---|
+| prefix / suffix scan, 2 blocks per SM | 15.7 ms | |
+| product tree instead of the scan | 15.5 ms | the tree is 2.0 ms of it, the Legendre test 7.1 ms, the root inverse 1.1 ms |
+| load P.X, P.Y, R.X and the scalars after the inversion | 14.8 ms | |
+| 4 blocks per SM (64 registers) | 11.9 ms | the Legendre loop is a dependent chain, and 2 blocks of 8 warps could not hide it |
+| 5-bit elimination step: (3 f) xor 2 = 1 / f mod 2^5 | 11.7 ms | instead of two Newton steps for 8 bits |
+| fixed iterations per Legendre batch (QR_K 8) | 10.7 ms | |
+
+The product tree itself gains little (~3 field multiplies per nonce instead of ~18, but the scan was not the cost).
+5 blocks per SM gives the same as 4.
+
+In the divstep loop each lane needs a different number of iterations for its 30 steps, and a warp runs the largest:
+a simulation gives 349 warp iterations per element against 227 per lane. With QR_K iterations per batch in every lane,
+a lane that reaches 30 steps idles. A lane that does fewer steps (s) has its matrix scaled by 2^(30 - s), so the
+update still divides by 2^30. That takes more batches (28 instead of 26), with no divergence. One more zero-strip after
+the last iteration is needed: without it, a batch that ends right after an elimination scales unstripped terms, and the
+matrix entries reach 2^31. The 262144-signature check caught that as 91 extra wrong signatures, and a bit-exact Python
+model showed the entries passing 2^31.
+
+| | MH/s | W |
+|---|---|---|
+| RTX 3060, generated combs | 27.7 -> 30.1 | 162 -> 168 |
+| RX 9070 XT, three kernels (single kernel 52.0) | 49.1 -> 53.4 | 338 |
 
 Live on Kryptex with the generated kernel: RTX 3060, 2 accepted / 0 rejected in 11 minutes.
 
