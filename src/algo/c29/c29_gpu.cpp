@@ -55,6 +55,7 @@ bool Engine::init(std::string& err) {
   stage_rounds_ = direct_ ? 0 : 1;
   if (const char* e = std::getenv("XM_C29_RSTAGE")) stage_rounds_ = std::atoi(e);
   if (const char* e = std::getenv("XM_C29_GEN_TPB")) gen_tpb_ = uint32_t(std::atoi(e));        // developer
+  if (const char* e = std::getenv("XM_C29_RSMALL")) small_edges_ = std::strtoull(e, nullptr, 0);  // developer
   if (const char* e = std::getenv("XM_C29_SPLIT_TPB")) split_tpb_ = uint32_t(std::atoi(e));    // developer
   const uint64_t per_bucket = kEdges >> kNbBits;
   capb_ = uint32_t(per_bucket + per_bucket / 25 + 512) & ~1u;  // +4% (the spread is ~0.3% = 1 sd); even: the
@@ -88,8 +89,8 @@ bool Engine::init(std::string& err) {
   }
   const std::string src = "#define NB_BITS " + std::to_string(kNbBits) + "\n#define CAPB " + std::to_string(capb_) +
                           "u\n#define TPB " + std::to_string(kTpb) + "\n#define GEN_SB " + std::to_string(kGenSb) +
-                          "\n#define GEN_TPB " + std::to_string(gen_tpb_) + "\n#define SPLIT_TPB " +
-                          std::to_string(split_tpb_) + "\n" +
+                          "\n#define GEN_TPB " + std::to_string(gen_tpb_) + "\n#define RS_TPB " +
+                          std::to_string(kRsTpb) + "\n#define SPLIT_TPB " + std::to_string(split_tpb_) + "\n" +
                           (direct_ ? "#define GEN_DIRECT 1\n#define SPLIT_DIRECT 1\n#define ROUND_STAGE 0\n" : "") +
                           (nibble_ ? "#define ROUND_NIBBLE 1\n" : "") + kernel;
   std::vector<std::string> opts;
@@ -151,8 +152,10 @@ bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err)
     uint32_t stage = r < stage_rounds_ ? 1u : 0u;
     void* args[] = {&side, &d_a_, &d_cnt_a_, &d_b_, &d_cnt_b_, &stage};
     const bool segs = total >= seg_edges_;  // per-block segments while edges are many, else whole coarse buckets
+    const bool small = total < small_edges_;  // (then smaller blocks)
+    const char* kernel = segs ? "c29_round" : small ? "c29_round_rs" : "c29_round_r";
     if ((!segs && !dev_.memset(d_cnt_b_, 0, 4 * kNc)) ||
-        !dev_.launch(segs ? "c29_round" : "c29_round_r", nb, 1, 1, kTpb, 1, 1, segs ? round_shared_ : 0, args))
+        !dev_.launch(kernel, nb, 1, 1, small ? kRsTpb : kTpb, 1, 1, segs ? round_shared_ : 0, args))
       return fail();
     if (r < 8) mark("  round kernel", r);  // (profile mode: the first rounds' kernel and split separately)
     if (!split(side ^ 1, total, segs ? nb : 1)) return fail();

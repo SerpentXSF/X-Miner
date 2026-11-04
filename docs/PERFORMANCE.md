@@ -766,6 +766,20 @@ table and linked adjacency lists 3 and 55 ms. RTX 3060, fixed rounds: 200 3.36, 
 the GPU time: +4 rounds; below a third: -1): RTX 3060 4.07 g/s settling near 51 rounds (NAS CPU), RX 9070 XT 6.65 ->
 8.36 g/s near 42 rounds (CPU 44 ms vs GPU 116 ms).
 
+Profile after that (fixed 52 rounds, 2026-11-04): RTX 3060 generation 46 + split 28 ms, round 0 35 + 19, round 1
+20 + 10, rounds 2-3 27, rounds 4-51 ~57 ms (of ~240); RX 9070 XT generation 14 + split 17, round 0 18 + 11, rounds
+1-3 26, rounds 4-43 ~30 ms (of ~116). On the 9070 XT round 0 moves ~11 GB in 18 ms, at the DRAM limit.
+- A late bucket round (~1M edges) took 0.45 ms in its round kernel on the 3060: 4096 blocks of 1024 threads, one
+  resident per SM (32 KB of bitmaps each), ~150 waves of blocks. With 256-thread blocks below 2^24 edges: 0.22 ms per
+  late round kernel, RTX 3060 4.08 -> 4.20 g/s (cutoff 2^22 4.17, 2^23 4.19, 2^24 4.20, 2^25 4.16, 2^26 4.10). RX
+  9070 XT unchanged (8.42-8.44).
+- Not kept: counting a coarse bucket's degrees with global counters that stay in the cache (1024 blocks per coarse
+  bucket, 64 buckets in turn), to drop the splits: 536M counter atomics took 100 ms (bitmaps) / 155 ms (4-bit
+  counters) on the 3060 and 17 / 20 ms on the 9070 XT, against splits of 28 and 17 ms. 8192 fine buckets: the 9070
+  XT's round 0 18 -> 13 ms (a bucket's second read then hits the Infinity Cache), but later rounds lose it again
+  (8.41 g/s either way); the 3060 4.06 -> 3.89 g/s. Flat rounds from 4M edges: ~2.3 ms per round at ~1.5M edges
+  (64 MB global bitmaps), against ~0.6 ms bucketed.
+
 AMD keeps direct stores (one pass, hashes in registers, 1024 threads): on the RX 9070 XT staging made generation +
 split 34 -> 54 ms (6.67 -> 6.30 g/s); the Infinity Cache already merges the scattered 8-byte stores, and the staging
 only adds barriers. `XM_C29_DIRECT=0/1` overrides.

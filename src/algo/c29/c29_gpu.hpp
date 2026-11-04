@@ -103,6 +103,8 @@ class Engine {
   static constexpr uint64_t kSplitSlice = 16384;
   static constexpr uint32_t kMaxParts = 256, kMaxSegs = 256;  // kMaxSegs = MAX_SEGS in the kernel
   uint64_t flat_edges_ = 1ull << 18;  // developer: XM_C29_FLAT
+  static constexpr uint32_t kRsTpb = 256;  // threads per block of the later bucket rounds (RS_TPB in the kernel)
+  uint64_t small_edges_ = 1ull << 24;  // smaller blocks below this many edges (developer: XM_C29_RSMALL)
   uint64_t seg_edges_ = 1ull << 26;   // segmented rounds from this many edges up (developer: XM_C29_SEGS)
 };
 

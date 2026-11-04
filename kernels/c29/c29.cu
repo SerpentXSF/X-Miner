@@ -355,14 +355,15 @@ extern "C" __global__ __launch_bounds__(SPLIT_TPB) void c29_split(u32 side, cons
 // Visits the n edges at e (16-byte aligned) as BODY(x) for each uint2 x: 16-byte loads, two in flight per thread.
 // (Same speed as one 8-byte load per iteration on an RTX 3060; the rounds wait on the bitmap atomics' results:
 // short-scoreboard and MIO stalls. Warp-aggregated atomics on the 64 bucket counters (match.any) were slower.)
-#define FOR_EDGES(e, n, BODY)                                                         \
+#define FOR_EDGES(e, n, BODY) FOR_EDGES_TB(e, n, TPB, BODY)
+#define FOR_EDGES_TB(e, n, TB, BODY)                                                  \
   {                                                                                   \
     const uint4* e4_ = reinterpret_cast<const uint4*>(e);                             \
     const u32 n2_ = (n) >> 1;                                                         \
-    for (u32 j_ = threadIdx.x; j_ < n2_; j_ += 2 * TPB) {                             \
+    for (u32 j_ = threadIdx.x; j_ < n2_; j_ += 2 * (TB)) {                            \
       const uint4 a_ = e4_[j_];                                                       \
-      const bool hb_ = j_ + TPB < n2_;                                                \
-      const uint4 b_ = hb_ ? e4_[j_ + TPB] : make_uint4(0, 0, 0, 0);                  \
+      const bool hb_ = j_ + (TB) < n2_;                                               \
+      const uint4 b_ = hb_ ? e4_[j_ + (TB)] : make_uint4(0, 0, 0, 0);                 \
       { const uint2 x = make_uint2(a_.x, a_.y); BODY }                                \
       { const uint2 x = make_uint2(a_.z, a_.w); BODY }                                \
       if (hb_) {                                                                      \
@@ -451,34 +452,38 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round(u32 side, const uint
 
 // The same round for fewer edges: the survivors go to whole coarse buckets (one segment each, ccounts[c]), slots
 // reserved with one global atomic per bucket (a pass more over the input, but no per-block segments to split).
-extern "C" __global__ __launch_bounds__(TPB) void c29_round_r(u32 side, const uint2* __restrict__ in,
-                                                              const u32* __restrict__ counts, uint2* __restrict__ out,
-                                                              u32* __restrict__ ccounts) {
+#ifndef RS_TPB
+#define RS_TPB 256
+#endif
+template <int RTPB>
+__device__ __forceinline__ void round_r(u32 side, const uint2* __restrict__ in,
+                                        const u32* __restrict__ counts, uint2* __restrict__ out,
+                                        u32* __restrict__ ccounts) {
   __shared__ u32 s1[LOCAL_WORDS], s2[LOCAL_WORDS], cnt[NC], fill[NC];
-  for (u32 i = threadIdx.x; i < LOCAL_WORDS; i += TPB) { s1[i] = 0; s2[i] = 0; }
-  for (u32 i = threadIdx.x; i < NC; i += TPB) cnt[i] = fill[i] = 0;
+  for (u32 i = threadIdx.x; i < LOCAL_WORDS; i += RTPB) { s1[i] = 0; s2[i] = 0; }
+  for (u32 i = threadIdx.x; i < NC; i += RTPB) cnt[i] = fill[i] = 0;
   __syncthreads();
   const u32 bk = blockIdx.x;
   const u32 n = min(counts[bk], (u32)CAPB);
   const uint2* e = in + (size_t)bk * CAPB;
   const u32 lmask = (1u << BSHIFT) - 1u;
-  FOR_EDGES(e, n, {
+  FOR_EDGES_TB(e, n, RTPB, {
     const u32 l = (side ? x.y : x.x) & lmask;
     const u32 m = 1u << (l & 31);
     if (atomicOr(&s1[l >> 5], m) & m) atomicOr(&s2[l >> 5], m);
   })
   __syncthreads();
-  FOR_EDGES(e, n, {
+  FOR_EDGES_TB(e, n, RTPB, {
     const u32 l = (side ? x.y : x.x) & lmask;
     if (s2[l >> 5] >> (l & 31) & 1u) atomicAdd(&cnt[(side ? x.x : x.y) >> CSHIFT], 1u);
   })
   __syncthreads();
-  for (u32 i = threadIdx.x; i < NC; i += TPB) {
+  for (u32 i = threadIdx.x; i < NC; i += RTPB) {
     const u32 c = cnt[i];
     cnt[i] = c ? atomicAdd(&ccounts[i], c) : 0u;
   }
   __syncthreads();
-  FOR_EDGES(e, n, {
+  FOR_EDGES_TB(e, n, RTPB, {
     const u32 l = (side ? x.y : x.x) & lmask;
     if (s2[l >> 5] >> (l & 31) & 1u) {
       const u32 co = (side ? x.x : x.y) >> CSHIFT;
@@ -487,6 +492,19 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round_r(u32 side, const ui
     }
   })
 
+}
+extern "C" __global__ __launch_bounds__(TPB) void c29_round_r(u32 side, const uint2* __restrict__ in,
+                                                              const u32* __restrict__ counts, uint2* __restrict__ out,
+                                                              u32* __restrict__ ccounts) {
+  round_r<TPB>(side, in, counts, out, ccounts);
+}
+// Rounds below 2^24 edges (a few thousand edges per bucket and fewer): smaller blocks, several resident per SM (the
+// 32 KB of bitmaps, not the threads, limited residency). RTX 3060: 4.08 -> 4.20 g/s; at ~1M edges 0.45 -> 0.22 ms per
+// round kernel, at ~20M slower (the 2^24 cutoff measured best: 2^22 4.17, 2^25 4.16). RX 9070 XT unchanged.
+extern "C" __global__ __launch_bounds__(RS_TPB) void c29_round_rs(u32 side, const uint2* __restrict__ in,
+                                                                 const u32* __restrict__ counts,
+                                                                 uint2* __restrict__ out, u32* __restrict__ ccounts) {
+  round_r<RS_TPB>(side, in, counts, out, ccounts);
 }
 
 // Buckets -> one flat list at the given offsets (one block per bucket).

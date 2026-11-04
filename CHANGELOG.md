@@ -17,6 +17,8 @@
   alongside the next graph, is kept at about a third to a half of the GPU time), and a cycle search with flat arrays
   instead of a hash map and a vector per node (5-7x faster). RX 9070 XT 6.65 -> 8.36 g/s, RTX 3060 3.36 -> 4.07 g/s.
   The CPU now does real work: about one core per GPU at ~35-50%. Live on Kryptex: 7 accepted / 0 rejected (RTX 3060).
+- Tari Cuckaroo29: the bucket rounds below 2^24 edges run 256-thread blocks (several resident per SM; the late rounds
+  were waiting on ~150 waves of 1024-thread blocks). RTX 3060 4.08 -> 4.20 g/s; RX 9070 XT unchanged.
 
 - Nexa: a 24-bit comb window on NVIDIA cards with 10 GB or more (11 point additions per scalar instead of 13; the
   generated RTX 30 kernel is rebuilt for it) and 22 bits elsewhere. The 5.9 / 1.6 GB table is now built on the GPU by
