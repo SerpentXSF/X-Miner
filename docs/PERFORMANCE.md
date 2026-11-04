@@ -749,6 +749,12 @@ atomics) gain 2.5% on that kernel; staging round 0's survivors in shared memory 
 with round 0 staged, 3.03 with rounds 0-1, 3.02 with rounds 0-3. AMD keeps the bitmaps (64 KB of LDS per workgroup
 leaves no room for the counters) and unstaged rounds.
 
+Run length (2026-11-04): the staged writers flushed after every pass of one edge per thread, so a fine bucket's run
+was ~16 edges in the split and ~6 in round 0. Several edges per thread between flushes (more slots per bucket):
+split 1 edge / 24 slots 3.06 g/s, 2/48 3.27, 3/64 3.31, 4/80 3.31 (generation's split 36 -> 28 ms, round 0's 25 ->
+19 ms); round 0 then 4 edges / 48 slots, 3.32. Smaller split blocks for occupancy went the other way (512 threads
+2.83, 256 2.21 g/s: shorter runs). The writes' run length, not the occupancy, limits the split.
+
 AMD keeps direct stores (one pass, hashes in registers, 1024 threads): on the RX 9070 XT staging made generation +
 split 34 -> 54 ms (6.67 -> 6.30 g/s); the Infinity Cache already merges the scattered 8-byte stores, and the staging
 only adds barriers. `XM_C29_DIRECT=0/1` overrides.

@@ -52,6 +52,7 @@ bool Engine::init(std::string& err) {
   stage_rounds_ = direct_ ? 0 : 1;
   if (const char* e = std::getenv("XM_C29_RSTAGE")) stage_rounds_ = std::atoi(e);
   if (const char* e = std::getenv("XM_C29_GEN_TPB")) gen_tpb_ = uint32_t(std::atoi(e));        // developer
+  if (const char* e = std::getenv("XM_C29_SPLIT_TPB")) split_tpb_ = uint32_t(std::atoi(e));    // developer
   const uint64_t per_bucket = kEdges >> kNbBits;
   capb_ = uint32_t(per_bucket + per_bucket / 25 + 512) & ~1u;  // +4% (the spread is ~0.3% = 1 sd); even: the
                                                                 // kernels read buckets with 16-byte loads
@@ -84,7 +85,8 @@ bool Engine::init(std::string& err) {
   }
   const std::string src = "#define NB_BITS " + std::to_string(kNbBits) + "\n#define CAPB " + std::to_string(capb_) +
                           "u\n#define TPB " + std::to_string(kTpb) + "\n#define GEN_SB " + std::to_string(kGenSb) +
-                          "\n#define GEN_TPB " + std::to_string(gen_tpb_) + "\n" +
+                          "\n#define GEN_TPB " + std::to_string(gen_tpb_) + "\n#define SPLIT_TPB " +
+                          std::to_string(split_tpb_) + "\n" +
                           (direct_ ? "#define GEN_DIRECT 1\n#define SPLIT_DIRECT 1\n#define ROUND_STAGE 0\n" : "") +
                           (nibble_ ? "#define ROUND_NIBBLE 1\n" : "") + kernel;
   std::vector<std::string> opts;
@@ -128,7 +130,7 @@ bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err)
     while (parts < kMaxParts && (parts * 2 * kNc * kSplitSlice <= edges || nseg / parts > kMaxSegs))
       parts *= 2;
     void* args[] = {&side, &d_b_, &d_cnt_b_, &nseg, &seg_cap, &d_a_, &d_cnt_a_, &parts};
-    return dev_.memset(d_cnt_a_, 0, 4 * nb) && dev_.launch("c29_split", kNc * parts, 1, 1, kTpb, 1, 1, 0, args);
+    return dev_.memset(d_cnt_a_, 0, 4 * nb) && dev_.launch("c29_split", kNc * parts, 1, 1, split_tpb_, 1, 1, 0, args);
   };
   {
     void* args[] = {&ka, &d_b_, &d_cnt_b_};
@@ -149,9 +151,9 @@ bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err)
     if ((!segs && !dev_.memset(d_cnt_b_, 0, 4 * kNc)) ||
         !dev_.launch(segs ? "c29_round" : "c29_round_r", nb, 1, 1, kTpb, 1, 1, segs ? round_shared_ : 0, args))
       return fail();
-    if (r < 4) mark("  round kernel", r);  // (profile mode: the first rounds' kernel and split separately)
+    if (r < 8) mark("  round kernel", r);  // (profile mode: the first rounds' kernel and split separately)
     if (!split(side ^ 1, total, segs ? nb : 1)) return fail();
-    if (r < 4) mark("  split after round", r);
+    if (r < 8) mark("  split after round", r);
     // counts come back every 4th round (a host round trip each); in between `total` is an upper bound
     if ((r & 3) != 3 && r + 1 < rounds_) continue;
     if (!dev_.download(counts.data(), cin, 4 * nb)) return fail();

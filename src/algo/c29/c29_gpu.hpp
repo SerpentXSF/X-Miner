@@ -84,6 +84,7 @@ class Engine {
   uint32_t round_shared_ = 0;    // their dynamic shared memory per block
   int stage_rounds_ = 0;         // rounds with staged survivor writes
   uint32_t gen_tpb_ = 512;  // generating threads per block (developer: XM_C29_GEN_TPB; divides kTpb)
+  uint32_t split_tpb_ = kTpb;  // splitting threads per block (developer: XM_C29_SPLIT_TPB)
   int rounds_ = 200;  // trimming rounds (developer: XM_C29_ROUNDS); 160-300 measure the same
   Job job_, pend_job_;
   bool have_job_ = false;
