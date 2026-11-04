@@ -2,8 +2,8 @@
 
 `kernels/prebuilt/nexa_sm_86.cubin` holds one kernel, `xm_nexa_b`: the two comb scalar multiplications of NexaPow
 (P = x G and R = k G), written as scheduled sm_86 SASS by `ngen.py` and assembled with CuAssembler. On an RTX 3060 at
-170 W the miner then runs at 30.5 MH/s, against 25.4 MH/s with the compiled kernel. Other GPUs, and RTX 30 with
-non-default Nexa settings, use the run-time compiled kernel only.
+170 W the miner then runs at 33.3 MH/s (24-bit comb), against 28.3 MH/s with the compiled kernel. Other GPUs, and RTX
+30 with non-default Nexa settings, use the run-time compiled kernel only.
 
 This is build-time tooling. Releases ship just the miner packages; the cubin is embedded in `x-miner`.
 
@@ -14,7 +14,7 @@ This is build-time tooling. Releases ship just the miner packages; the cubin is 
 - `xm_nexa_b`: the comb multiplications;
 - `xm_nexa_c`: batched inversion, signature, powHash, target check.
 
-On sm_86 with the defaults (W 20, 256 threads, 2 blocks per SM), the engine compiles that form at run time and adds the
+On sm_86 with the defaults (W 24, 256 threads, 2 blocks per SM), the engine compiles that form at run time and adds the
 prebuilt module next to it (`Device::add_module`), whose `xm_nexa_b` then takes precedence. `XM_NEXA_GEN=0` keeps
 the single compiled kernel.
 
@@ -38,8 +38,10 @@ registers live across the block.
    register count is set to 128.
 3. The block (`ngen.py`):
    - takes the table pointer from the kernel parameters;
-   - two passes (x, then k), each with 13 windows: digit and carry, the entry's address, four `LDG.E.128.CONSTANT`,
-     y negated for a negative digit, and a mixed Jacobian + affine addition (madd-2007-bl, as the CUDA kernel);
+   - two passes (x, then k), each with 11 windows (`--w 24`, the default; `--w 20`: 13): digit and carry, the
+     entry's 64-bit address (window index times the window's table size plus the entry), four
+     `LDG.E.128.CONSTANT`, y negated for a negative digit, and a mixed Jacobian + affine addition (madd-2007-bl, as
+     the CUDA kernel);
    - stores X, Y, Z (8 words each) to the row.
 
    The field arithmetic is `field.py`: 8 x 32-bit words. A multiply sums each column of products in a 64-bit

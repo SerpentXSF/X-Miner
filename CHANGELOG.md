@@ -11,6 +11,13 @@
   split stages the same way and runs in one pass (its staged runs reserve their slots when written). RTX 3060
   2.47 -> 3.00 g/s (live on Kryptex 2 accepted / 0 rejected). AMD keeps direct stores (faster there).
 
+- Nexa: a 24-bit comb window on NVIDIA cards with 10 GB or more (11 point additions per scalar instead of 13; the
+  generated RTX 30 kernel is rebuilt for it) and 22 bits elsewhere. The 5.9 / 1.6 GB table is now built on the GPU by
+  a prebuilt kernel (kernels/nexatab) in a few seconds, instead of on the CPU (where 24 bits took ~25 s on 24 cores
+  and as much host memory per GPU). RTX 3060 30.5 -> 33.3 MH/s, RX 9070 XT 53.5 -> 55.6 MH/s.
+- Run-time compilers run on a thread with a 256 MB stack: compiling a large kernel overflowed a mining thread's
+  default 1 MB stack on Windows (the process ended with 0xC00000FD).
+
 ## 0.2.0 (2026-11-02)
 
 - Octopus (Conflux): the polynomial values as int8 matrix products on the GPU's matrix units (NVIDIA sm_80+ tensor

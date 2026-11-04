@@ -643,6 +643,27 @@ Live on Kryptex with the generated kernel: RTX 3060, 2 accepted / 0 rejected in 
 
 Live on Kryptex: RX 9070 XT, 9 accepted / 0 rejected in 25 minutes.
 
+### Comb window (2026-11-03)
+
+| Window | Additions per scalar | Table | RTX 3060 compiled | RTX 3060 generated | RX 9070 XT |
+|---|---|---|---|---|---|
+| 20 | 13 | 436 MB | 25.7 | 30.5 | 53.0 |
+| 22 | 12 | 1.6 GB | | | 55.6 |
+| 24 | 11 | 5.9 GB | 28.3 | 33.3 | 55.0 |
+
+Defaults: 24 on NVIDIA cards with 10 GB or more (the generated sm_86 kernel is built for 24), 22 elsewhere, 20 below
+4 GB. The table is built on the GPU (kernels/nexatab, prebuilt; one thread per entry: double-and-add from the
+window base, then the block's points made affine with one inversion), which takes a few seconds; on the CPU, 24 bits
+took ~25 s on 24 cores and 5.9 GB of host memory per GPU. Compiled at run time with the mining kernels, the table
+kernel added ~18 s to every start (and its compile overflowed the mining thread's 1 MB stack on Windows), hence the
+prebuilt module, loaded first and replaced by the run-time compiled one. Zero-digit slips get rarer with the window
+(2^-23 per window): 7 instead of 17 in the 262144-signature check.
+
+lolMiner's ~57 MH/s on an RTX 3060 (Kryptex user reports) is ~3.5k scheduler cycles per nonce, where our hashing
+alone takes ~1.65k. Affine additions with one batched inversion per window step were sized and rejected: an
+inversion costs ~70 multiplies, so it needs block-wide batches with a product tree per step (~20 barriers) or
+warp-shuffle scans (~10 multiplies per lane), which is no cheaper than the mixed additions at our multiply rate.
+
 ## Cuckaroo29 (Tari, cuckaroo29)
 
 One graph per nonce: 2^29 edges from siphash-2-4 (blocks of 64), trimmed until ~50K edges are left, then a CPU cycle

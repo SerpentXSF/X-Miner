@@ -25,7 +25,11 @@ $ccbin = (Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe" -ErrorActio
 
 # Each kernel source: kernels/<algo>/<algo>.cu (HIP and CUDA from one file) unless a vendor-specific
 # kernels/<algo>/<algo>.hip exists for AMD.
-foreach ($dir in Get-ChildItem (Join-Path $root "kernels") -Directory | Where-Object Name -ne "prebuilt") {
+# Run-time compiled only (the miner prepends their parameters): nexa and c29. kernels/prebuilt/nexa_sm_86.cubin is
+# generated SASS from tools/ngen (see tools/ngen/README.md); nexatab is nexa's prebuilt comb-table builder.
+$rtcOnly = @("prebuilt", "nexa", "c29")
+$dirs = Get-ChildItem (Join-Path $root "kernels") -Directory | Where-Object { $rtcOnly -notcontains $_.Name }
+foreach ($dir in $dirs) {
   $algo = $dir.Name
   $cu = Join-Path $dir.FullName "$algo.cu"
   $hip = Join-Path $dir.FullName "$algo.hip"

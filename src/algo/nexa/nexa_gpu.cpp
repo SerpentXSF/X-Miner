@@ -79,21 +79,48 @@ Engine::~Engine() {
 bool Engine::init(std::string& err) {
   dev_.make_current();
   if (const char* e = std::getenv("XM_NEXA_TPB")) tpb_ = std::max(32u, uint32_t(std::atoi(e)));  // developer tuning
-  if (const char* e = std::getenv("XM_NEXA_W")) w_ = std::clamp(std::atoi(e), 4, 22);
+  // Comb window: 24 bits (11 point additions per scalar, a 5.9 GB table) on NVIDIA cards with 10 GB or more (RTX
+  // 3060: compiled 25.7 -> 28.3 MH/s, generated 30.5 -> 33.3), else 22 (12 additions, 1.6 GB; best on the RX 9070
+  // XT: 53.0 at 20, 55.6 at 22, 55.0 at 24), 20 below 4 GB (13, 436 MB). Developer: XM_NEXA_W.
+  const size_t mem = dev_.info().memory;
+  w_ = dev_.info().vendor == gpu::Vendor::Nvidia && mem >= (size_t(10) << 30) ? 24 : mem >= (size_t(4) << 30) ? 22 : 20;
+  if (const char* e = std::getenv("XM_NEXA_W")) w_ = std::clamp(std::atoi(e), 9, 24);
   if (batch_ == 0) {
     batch_ = 1u << 20;
     if (const char* e = std::getenv("XM_NEXA_BATCH")) batch_ = uint32_t(std::strtoul(e, nullptr, 10));
   }
   batch_ = std::max(tpb_, batch_ / tpb_ * tpb_);
   const int nw = (256 + w_ - 1) / w_ + (256 % w_ == 0 ? 1 : 0);
-  // comb table: x then y, 8 little-endian limbs each, per entry
-  std::vector<uint32_t> tab((size_t(1) << (w_ - 1)) * size_t(nw) * 16);
-  crypto::secp256k1::comb_table(w_, nw, tab.data());
   d_found_ = dev_.alloc((1 + kMaxFound) * 4);
-  d_table_ = dev_.alloc(tab.size() * 4);
-  if (!d_found_ || !d_table_ || !dev_.upload(d_table_, tab.data(), tab.size() * 4)) {
+  if (!d_found_) {
     err = dev_.last_error();
     return false;
+  }
+  // The comb table, built on the GPU from the window bases 2^(W i) G (xm_nexa_table, prebuilt for every target:
+  // kernels/nexatab; 256 threads per block): entry i 2^(W-1) + m - 1 = m 2^(W i) G, affine x then y, 8 little-endian
+  // words each. Its module is loaded first; the run-time compiled one below replaces it.
+  if (!gpu::load_kernels(dev_, "nexatab", err)) return false;
+  {
+    std::vector<uint32_t> bases(size_t(nw) * 16);
+    for (int i = 0; i < nw; ++i) {
+      crypto::secp256k1::U256 k{};
+      k.w[(w_ * i) / 32] = 1u << ((w_ * i) % 32);
+      const auto pt = crypto::secp256k1::mul_g(k);
+      std::memcpy(&bases[16 * i], pt.x.w, 32);
+      std::memcpy(&bases[16 * i + 8], pt.y.w, 32);
+    }
+    const size_t entries = size_t(nw) << (w_ - 1);
+    d_table_ = dev_.alloc(entries * 64);
+    gpu::DevPtr d_bases = dev_.alloc(bases.size() * 4);
+    uint32_t w = uint32_t(w_);
+    void* args[] = {&d_bases, &d_table_, &w};
+    const bool ok = d_table_ && d_bases && dev_.upload(d_bases, bases.data(), bases.size() * 4) &&
+                    dev_.launch("xm_nexa_table", unsigned(entries / 256), 1, 1, 256, 1, 1, 0, args) && dev_.wait();
+    dev_.free(d_bases);
+    if (!ok) {
+      err = "NexaPow comb table (" + std::to_string(entries * 64 >> 20) + " MB): " + dev_.last_error();
+      return false;
+    }
   }
   // Blocks per SM the register budget is fitted to: 2 on NVIDIA (RTX 3060: 15.0 vs 10.6 MH/s with 1; 3 spills).
   // HIP reads the second launch bound differently; AMD keeps 1. Developer: XM_NEXA_MINB.
@@ -103,7 +130,7 @@ bool Engine::init(std::string& err) {
   // with the prebuilt (generated) xm_nexa_b added next to the run-time compiled kernels
   const char* gen_env = std::getenv("XM_NEXA_GEN");
   const auto archs = gpu::kernel_archs("nexa");
-  const bool want_gen = dev_.info().vendor == gpu::Vendor::Nvidia && w_ == 20 && tpb_ == 256 && minb == 2 &&
+  const bool want_gen = dev_.info().vendor == gpu::Vendor::Nvidia && w_ == kGenW && tpb_ == 256 && minb == 2 &&
                         std::find(archs.begin(), archs.end(), dev_.info().arch) != archs.end() &&
                         !(gen_env && std::string(gen_env) == "0");
   {

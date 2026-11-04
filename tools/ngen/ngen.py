@@ -1,9 +1,10 @@
 # Nexa (secp256k1) comb multiplications as generated sm_86 SASS: the build of kernels/prebuilt/nexa_sm_86.cubin.
 # nvcc compiles nshell.cu (kernels/nexa/nexa.cu in its three-kernel form); in xm_nexa_b the marker XORs become this
-# generator's block, which computes P = x G and R = k G with the signed 20-bit comb (13 windows, table entries of
-# 64 bytes: affine x then y, 8 little-endian words each) and stores them to the nonce's pr row. The field arithmetic
-# is field.py (8 x 32-bit words); nsass.py schedules; the emulator (nemu.py) checks the block against Python
-# elliptic-curve arithmetic before anything is assembled. usage: ngen.py --cuassembler <dir> [--ccbin <dir>]
+# generator's block, which computes P = x G and R = k G with the signed W-bit comb (--w, default 24: 11 windows;
+# 20: 13; table entries of 64 bytes: affine x then y, 8 little-endian words each) and stores them to the nonce's pr
+# row. The field arithmetic is field.py (8 x 32-bit words); nsass.py schedules; the emulator (nemu.py) checks the
+# block against Python elliptic-curve arithmetic before anything is assembled.
+# usage: ngen.py --cuassembler <dir> [--ccbin <dir>] [--w 24]
 #
 # Accepted slips, as in the CUDA kernel (they lose that nonce only; the CPU re-checks every candidate): a zero digit
 # (probability 2^-19 per window) adds the entry for 1 instead of nothing; field ops drop a final carry with
@@ -14,7 +15,9 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path[:0] = [HERE, os.path.join(HERE, "..", "qgen")]
 import field, nemu, nsass, splice
 
-W, NW = 20, 13
+W = 24
+def nwin(w): return (256 + w - 1) // w + (1 if 256 % w == 0 else 0)  # windows: 256 bits plus the last carry
+NW = nwin(W)
 P = 2 ** 256 - 2 ** 32 - 977
 GX = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798
 GY = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8
@@ -130,20 +133,22 @@ def comb_block(vals, free):
     def window(out):
         """Digit of this window (signed, with the carry), table entry address, loads into S1 (x) / S2 (y), y negated
         for a negative digit."""
-        out += ["LOP3.LUT R%d, R%d, 0xfffff, RZ, 0xc0, !PT" % (D, KS[0])]
-        out += ["SHF.R.U64 R%d, R%d, 0x14, R%d" % (KS[m], KS[m], KS[m + 1]) for m in range(7)]
-        out += ["SHF.R.U32.HI R%d, RZ, 0x14, R%d" % (KS[7], KS[7]),
+        # WB counts windows; window i's entries start at TB + i 2^(W + 5) (64-bit: the W 24 table is ~5.9 GB)
+        out += ["LOP3.LUT R%d, R%d, 0x%x, RZ, 0xc0, !PT" % (D, KS[0], (1 << W) - 1)]
+        out += ["SHF.R.U64 R%d, R%d, 0x%x, R%d" % (KS[m], KS[m], W, KS[m + 1]) for m in range(7)]
+        out += ["SHF.R.U32.HI R%d, RZ, 0x%x, R%d" % (KS[7], W, KS[7]),
                 "IADD3 R%d, R%d, R%d, RZ" % (D, D, CARRY),
-                "ISETP.GT.U32.AND P5, PT, R%d, 0x80000, PT" % D,
-                "IADD3 R%d, -R%d, 0x100000, RZ" % (ND, D),
+                "ISETP.GT.U32.AND P5, PT, R%d, 0x%x, PT" % (D, 1 << (W - 1)),
+                "IADD3 R%d, -R%d, 0x%x, RZ" % (ND, D, 1 << W),
                 "SEL R%d, R%d, R%d, P5" % (MAG, ND, D),
                 "SEL R%d, RZ, 0x1, !P5" % CARRY,
                 "ISETP.EQ.U32.AND P4, PT, R%d, RZ, PT" % MAG,
                 "SEL R%d, R%d, 0x1, !P4" % (MAG, MAG),
-                "IMAD R%d, R%d, 0x40, R%d" % (OFF, MAG, WB),
-                "IADD3 R%d, P0, R%d, R%d, RZ" % (A, TB, OFF),
-                "IADD3.X R%d, R%d, RZ, RZ, P0, !PT" % (A + 1, TB + 1),
-                "IADD3 R%d, R%d, 0x2000000, RZ" % (WB, WB)]
+                "IMAD.SHL.U32 R%d, R%d, 0x40, RZ" % (OFF, MAG),
+                "IMAD.WIDE.U32 R%d, R%d, 0x%x, R%d" % (A, WB, 1 << (W + 5), TB),
+                "IADD3 R%d, P0, R%d, R%d, RZ" % (A, A, OFF),
+                "IADD3.X R%d, R%d, RZ, RZ, P0, !PT" % (A + 1, A + 1),
+                "IADD3 R%d, R%d, 0x1, RZ" % (WB, WB)]
         for q, (dst, o) in enumerate([(tq[0], 0), (tq[1], 0x10), (tq[2], 0x20), (tq[3], 0x30)]):
             out.append("LDG.E.128.CONSTANT R%d, desc[UR4][R%d.64%s]" % (dst, A, "+0x%x" % o if o else ""))
         out += ["IMAD.MOV.U32 R%d, RZ, RZ, -0x3d1" % KP0, "IMAD.MOV.U32 R%d, RZ, RZ, -0x2" % KP1,
@@ -203,7 +208,7 @@ def comb_block(vals, free):
     body = []
     window(body)
     madd()
-    segs.append(("loop", ".L_ng_win", body, ["ISETP.NE.AND P6, PT, R%d, 0x%x, PT" % (WB, NW << 25), "@P6 BRA `(.L_ng_win)"]))
+    segs.append(("loop", ".L_ng_win", body, ["ISETP.NE.AND P6, PT, R%d, 0x%x, PT" % (WB, NW), "@P6 BRA `(.L_ng_win)"]))
     body = []
     for c, F in enumerate((X, Y, Z)):
         for i in range(8):
@@ -283,6 +288,7 @@ def run(cmd, env=None):
 
 
 def main():
+    global W, NW
     ap = argparse.ArgumentParser(description="Build kernels/prebuilt/nexa_sm_86.cubin (generated comb code).")
     ap.add_argument("--cuassembler", required=True, help="CuAssembler checkout with tools/qgen/cuassembler_sm86.patch")
     ap.add_argument("--nvcc", default="nvcc")
@@ -291,7 +297,9 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "kernels", "prebuilt", "nexa_sm_86.cubin"))
     ap.add_argument("--check", type=int, default=6, help="emulated (x, k) checks before assembling")
     ap.add_argument("--keep", help="directory to keep the intermediate files in")
+    ap.add_argument("--w", type=int, default=W, help="comb window bits (the miner's XM_NEXA_W; 24 or 20)")
     args = ap.parse_args()
+    W, NW = args.w, nwin(args.w)
     work = args.keep or tempfile.mkdtemp(prefix="ngen")
     os.makedirs(work, exist_ok=True)
     tools = os.path.dirname(shutil.which(args.nvcc) or args.nvcc)

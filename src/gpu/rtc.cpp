@@ -4,8 +4,11 @@
 #include <cstdlib>
 #include <fstream>
 #include <mutex>
-#ifndef _WIN32
+#ifdef _WIN32
+#include <process.h>
+#else
 #include <dirent.h>
+#include <pthread.h>
 #include <unistd.h>
 #endif
 #include <string>
@@ -139,15 +142,79 @@ void dump(const std::string& source, const std::string& name, const RtcOutput& o
                                                        std::streamsize(out.code.size()));
 }
 
+// Runs fn on a thread with a large stack: the compilers recurse deeply on big unrolled kernels and overflowed the
+// mining threads' default stacks (1 MB on Windows: NexaPow with its table kernel ended the process with 0xC00000FD).
+// The stack is reserved, not committed. Falls back to the calling thread if no thread can be made.
+void run_big_stack(void (*fn)(void*), void* arg) {
+  constexpr size_t kStack = size_t(256) << 20;
+  struct Call {
+    void (*fn)(void*);
+    void* arg;
+  } call{fn, arg};
+#ifdef _WIN32
+  auto entry = [](void* p) -> unsigned {
+    auto* c = static_cast<Call*>(p);
+    c->fn(c->arg);
+    return 0;
+  };
+  const uintptr_t h =
+      _beginthreadex(nullptr, unsigned(kStack), entry, &call, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+  if (!h) {
+    fn(arg);
+    return;
+  }
+  WaitForSingleObject(reinterpret_cast<HANDLE>(h), INFINITE);
+  CloseHandle(reinterpret_cast<HANDLE>(h));
+#else
+  pthread_attr_t at;
+  pthread_t t;
+  pthread_attr_init(&at);
+  pthread_attr_setstacksize(&at, kStack);
+  auto entry = [](void* p) -> void* {
+    auto* c = static_cast<Call*>(p);
+    c->fn(c->arg);
+    return nullptr;
+  };
+  const bool started = pthread_create(&t, &at, entry, &call) == 0;
+  pthread_attr_destroy(&at);
+  if (!started) {
+    fn(arg);
+    return;
+  }
+  pthread_join(t, nullptr);
+#endif
+}
+
+bool rtc_compile_here(const DeviceInfo& dev, const std::string& source, const std::string& name,
+                      const std::vector<std::string>& options, RtcOutput& out);
+
 }  // namespace
+
+bool rtc_compile(const DeviceInfo& dev, const std::string& source, const std::string& name,
+                 const std::vector<std::string>& options, RtcOutput& out) {
+  struct Args {
+    const DeviceInfo& dev;
+    const std::string& source;
+    const std::string& name;
+    const std::vector<std::string>& options;
+    RtcOutput& out;
+    bool ok;
+  } a{dev, source, name, options, out, false};
+  run_big_stack([](void* p) {
+    auto* x = static_cast<Args*>(p);
+    x->ok = rtc_compile_here(x->dev, x->source, x->name, x->options, x->out);
+  }, &a);
+  return a.ok;
+}
 
 std::string rtc_library(Vendor v) {
   if (v == Vendor::Nvidia) return nvrtc().ready ? nvrtc().lib.name() : "";
   return hiprtc().ready ? hiprtc().lib.name() : "";
 }
 
-bool rtc_compile(const DeviceInfo& dev, const std::string& source, const std::string& name,
-                 const std::vector<std::string>& options, RtcOutput& out) {
+namespace {
+bool rtc_compile_here(const DeviceInfo& dev, const std::string& source, const std::string& name,
+                      const std::vector<std::string>& options, RtcOutput& out) {
   std::lock_guard<std::mutex> lk(rtc_mutex());
   out = RtcOutput{};
   std::vector<std::string> opts = options;
@@ -250,6 +317,7 @@ bool rtc_compile(const DeviceInfo& dev, const std::string& source, const std::st
   if (ok) dump(source, name, out);
   return ok;
 }
+}  // namespace
 
 KernelBlob rtc_blob(const RtcOutput& out, Vendor v, const char* algorithm) {
   return KernelBlob{algorithm, v, out.arch.c_str(), out.code.data(), out.code.size()};

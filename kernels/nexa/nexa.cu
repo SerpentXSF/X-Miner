@@ -446,6 +446,34 @@ __device__ __forceinline__ void madd(u32 X[9], u32 Y[9], u32 Z[9], const u32 x2[
   fe_sub(Y, t1, t3);
 }
 
+// (X, Y, Z) = 2 (X, Y, Z) (dbl-2009-l, a = 0); X, Y m1, Z m2 in and out.
+__device__ __forceinline__ void jdouble(u32 X[9], u32 Y[9], u32 Z[9]) {
+  u32 A[9], B[9], C[9], D[9], E[9], t[9];
+  fe_sqr(A, X);
+  fe_sqr(B, Y);
+  fe_sqr(C, B);
+  fe_add(t, X, B);
+  fe_sqr(t, t);
+  fe_sub(t, t, A);
+  fe_sub(D, t, C);
+  fe_add(D, D, D);      // D = 2 ((X + B)^2 - A - C), m2
+  fe_add(E, A, A);
+  fe_add(E, E, A);
+  fe_norm(E);           // E = 3 A
+  fe_mul(Z, Y, Z);
+  fe_add(Z, Z, Z);      // Z3 = 2 Y Z, m2
+  fe_sqr(t, E);         // F = E^2
+  fe_sub(t, t, D);
+  fe_sub(X, t, D);      // X3 = F - 2 D
+  fe_sub(t, D, X);
+  fe_mul(t, E, t);      // E (D - X3)
+  fe_add(C, C, C);
+  fe_add(C, C, C);
+  fe_norm(C);
+  fe_add(C, C, C);      // 8 C, m2
+  fe_sub(Y, t, C);      // Y3
+}
+
 // k G with the signed W-bit comb: digit i (window i plus the carry from below) in [-2^(W-1) + 1, 2^(W-1)] picks
 // table entry |d| of window i (8 x 32-bit affine x, y), negated for d < 0. NW windows cover 256 bits plus the last
 // carry.
@@ -898,16 +926,12 @@ __device__ __forceinline__ void nexa_stage1(const Params& p, u64 nonce, u32 x[8]
 // Stage 2: from P = x G and R = k G (Jacobian): the block's batched inversion (every thread of the block takes
 // part), the signature, powHash and the target check. Two parts, so that kernel c loads P.X, P.Y, R.X and the
 // scalars only after the inversion and the quadratic-residue test (fewer live registers there, more warps per SM).
-// The inversion is Montgomery's trick on a product tree in shared memory (sh_t[2 TPB], the heap layout: node i has
-// children 2i, 2i + 1, leaves TPB..2 TPB - 1, any TPB): products up the tree, one inversion at the root, inverses
-// down (1 / child = 1 / parent * sibling). About 3 field multiplies per nonce, against 2 log2(TPB) + 2 for a
-// block-wide prefix / suffix scan.
-// Part 1: izp = 1 / PZ, izr = 1 / RZ, qr = R.y is a quadratic residue.
-__device__ __forceinline__ void nexa_stage2_inv(u32 tid, const u32 PZ[9], const u32 RZ[9], const u32 RY[9],
-                                                u32 (*sh_t)[9], u32 izp[9], u32 izr[9], bool& qr) {
-  // ---- 1 / (PZ RZ) for the block ----
-  u32 q[9];
-  fe_mul(q, PZ, RZ);
+// The inversion is Montgomery's trick on a product tree (tree_up / tree_down below).
+// Montgomery's trick on a product tree in shared memory (sh_t[2 TPB], the heap layout: node i has children 2i, 2i + 1,
+// leaves TPB..2 TPB - 1, any TPB): tree_up() multiplies the leaves q up to the root sh_t[1]; after the root has been
+// replaced by its inverse (and a barrier), tree_down() gives each thread 1 / q (1 / child = 1 / parent * sibling).
+// About 3 field multiplies per value, against 2 log2(TPB) + 2 for a block-wide prefix / suffix scan.
+__device__ __forceinline__ void tree_up(u32 tid, const u32 q[9], u32 (*sh_t)[9]) {
 #pragma unroll
   for (int i = 0; i < 9; ++i) sh_t[TPB + tid][i] = q[i];
   u32 lo = 1;  // the largest power of two below TPB: nodes [lo, 2 lo) are the lowest internal level
@@ -926,25 +950,10 @@ __device__ __forceinline__ void nexa_stage2_inv(u32 tid, const u32 PZ[9], const 
     }
     __syncthreads();
   }
-  // The root's inversion is a long dependent chain on thread 0: warp 0 runs it while the other warps take their
-  // quadratic-residue test (R.y = RY / RZ^3 has the Legendre symbol of RY RZ), instead of all waiting at the barrier.
-  // Warp 0 takes its own test at the end.
-  qr = true;
-  if (tid < 32) {
-    if (tid == 0) {
-      u32 r[9];
-#pragma unroll
-      for (int i = 0; i < 9; ++i) r[i] = sh_t[1][i];
-      fe_inv_var(r, r);
-#pragma unroll
-      for (int i = 0; i < 9; ++i) sh_t[1][i] = r[i];
-    }
-  } else {
-    qr = ry_is_qr(RY, RZ);
-  }
-  __syncthreads();
-  // inverses down, in place: every node of a level reads its parent's inverse and its sibling's product, then all
-  // write
+}
+// inverses down, in place: every node of a level reads its parent's inverse and its sibling's product, then all
+// write
+__device__ __forceinline__ void tree_down(u32 tid, u32 (*sh_t)[9], u32 iq[9]) {
 #pragma unroll 1
   for (u32 m = 2; m < 2 * TPB; m <<= 1) {  // nodes [m, 2m)
     const u32 c = m + tid;
@@ -962,9 +971,36 @@ __device__ __forceinline__ void nexa_stage2_inv(u32 tid, const u32 PZ[9], const 
     }
     __syncthreads();
   }
-  u32 iq[9];  // 1 / q
 #pragma unroll
   for (int i = 0; i < 9; ++i) iq[i] = sh_t[TPB + tid][i];
+}
+
+// Part 1: izp = 1 / PZ, izr = 1 / RZ, qr = R.y is a quadratic residue.
+__device__ __forceinline__ void nexa_stage2_inv(u32 tid, const u32 PZ[9], const u32 RZ[9], const u32 RY[9],
+                                                u32 (*sh_t)[9], u32 izp[9], u32 izr[9], bool& qr) {
+  // ---- 1 / (PZ RZ) for the block ----
+  u32 q[9];
+  fe_mul(q, PZ, RZ);
+  tree_up(tid, q, sh_t);
+  // The root's inversion is a long dependent chain on thread 0: warp 0 runs it while the other warps take their
+  // quadratic-residue test (R.y = RY / RZ^3 has the Legendre symbol of RY RZ), instead of all waiting at the barrier.
+  // Warp 0 takes its own test at the end.
+  qr = true;
+  if (tid < 32) {
+    if (tid == 0) {
+      u32 r[9];
+#pragma unroll
+      for (int i = 0; i < 9; ++i) r[i] = sh_t[1][i];
+      fe_inv_var(r, r);
+#pragma unroll
+      for (int i = 0; i < 9; ++i) sh_t[1][i] = r[i];
+    }
+  } else {
+    qr = ry_is_qr(RY, RZ);
+  }
+  __syncthreads();
+  u32 iq[9];  // 1 / q
+  tree_down(tid, sh_t, iq);
   fe_mul(izp, iq, RZ);
   fe_mul(izr, iq, PZ);
   if (tid < 32) qr = ry_is_qr(RY, RZ);  // after the last barrier: the block does not wait for it
@@ -1049,7 +1085,7 @@ __device__ __forceinline__ void nexa_stage2_sig(const Params& p, u32 tid, u32 x[
   }
 }
 
-#ifndef XM_NEXA_GEN_SHELL  // (the generated build's cubin holds xm_nexa_b only)
+#if !defined(XM_NEXA_GEN_SHELL) && !defined(XM_NEXA_TABLE_ONLY)  // (the generated build's cubin holds xm_nexa_b only)
 extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const uint4* __restrict__ tab,
                                                                 u32* __restrict__ found, u32 maxf,
                                                                 u32* __restrict__ dbg) {
@@ -1175,4 +1211,57 @@ extern "C" __global__ __launch_bounds__(TPB, MINB_C) void xm_nexa_c(Params p, co
   nexa_stage2_sig(p, tid, x, kk, h1, valid, PX, PY, RX, izp, izr, qr, found, maxf, dbg);
 }
 #endif
+#endif
+
+#ifdef XM_NEXA_TABLE_ONLY
+// The comb table on the GPU (prebuilt as kernels/prebuilt/nexatab_*, see kernels/nexatab/nexatab.cu: compiled at run
+// time it added ~18 s to every start): entry e = i 2^(w-1) + m - 1 = m 2^(w i) G (window i, 1 <= m <= 2^(w-1)),
+// affine x then y as 8 little-endian words each (64 bytes). One thread per entry: m B_i by double-and-add from the
+// window base B_i (bases: one affine point per window from the host, 16 words each), then the block's points made
+// affine with one inversion (tree_up / tree_down). The w 24 table is 5.9 GB: on the CPU it took ~25 s on 24 cores
+// and as much host memory per GPU. Grid: windows 2^(w-1) / TPB blocks.
+extern "C" __global__ __launch_bounds__(TPB) void xm_nexa_table(const u32* __restrict__ bases, uint4* __restrict__ out,
+                                                                u32 w) {
+  __shared__ u32 sh_t[2 * TPB][9];
+  const u32 tid = threadIdx.x;
+  const u32 e = blockIdx.x * TPB + tid;
+  const u32 wi = e >> (w - 1), m = (e & ((1u << (w - 1)) - 1u)) + 1u;
+  u32 bx[9], by[9], X[9], Y[9], Z[9];
+  fe_from32(bx, bases + 16 * wi);
+  fe_from32(by, bases + 16 * wi + 8);
+#pragma unroll
+  for (int i = 0; i < 9; ++i) { X[i] = bx[i]; Y[i] = by[i]; Z[i] = i ? 0u : 1u; }
+  const int top = 31 - __clz((int)m);
+#pragma unroll 1
+  for (int b = top - 1; b >= 0; --b) {
+    jdouble(X, Y, Z);
+    if (m >> b & 1u) madd(X, Y, Z, bx, by);
+  }
+  // affine: x = X / Z^2, y = Y / Z^3
+  tree_up(tid, Z, sh_t);
+  if (tid == 0) {
+    u32 r[9];
+#pragma unroll
+    for (int i = 0; i < 9; ++i) r[i] = sh_t[1][i];
+    fe_inv_var(r, r);
+#pragma unroll
+    for (int i = 0; i < 9; ++i) sh_t[1][i] = r[i];
+  }
+  __syncthreads();
+  u32 zi[9], zi2[9], t[9], xw[8], yw[8];
+  tree_down(tid, sh_t, zi);
+  fe_sqr(zi2, zi);
+  fe_mul(X, X, zi2);
+  fe_mul(t, zi2, zi);
+  fe_mul(Y, Y, t);
+  fe_canon(X);
+  fe_canon(Y);
+  fe_to32(xw, X);
+  fe_to32(yw, Y);
+  uint4* o = out + 4 * (size_t)e;
+  o[0] = make_uint4(xw[0], xw[1], xw[2], xw[3]);
+  o[1] = make_uint4(xw[4], xw[5], xw[6], xw[7]);
+  o[2] = make_uint4(yw[0], yw[1], yw[2], yw[3]);
+  o[3] = make_uint4(yw[4], yw[5], yw[6], yw[7]);
+}
 #endif
