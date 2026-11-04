@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <unordered_map>
 
 #include "algo/blake2b/blake2b.hpp"
 
@@ -148,48 +147,74 @@ uint64_t target_difficulty(const char* hex16) {
 }
 
 std::vector<std::array<uint32_t, kProofSize>> find_cycles(const std::vector<std::pair<uint32_t, uint32_t>>& edges) {
-  // union-find over a spanning forest; an edge inside one tree closes the cycle tree path + edge
-  std::unordered_map<uint64_t, uint32_t> id;
+  // union-find over a spanning forest; an edge inside one tree closes the cycle tree path + edge. Flat arrays only
+  // (an open-addressing node table, linked adjacency lists): the leftover edges grow when the GPU trims fewer rounds,
+  // and a hash map plus a vector per node spent most of the time allocating.
+  const uint32_t ne = uint32_t(edges.size());
+  uint32_t cap = 1;
+  while (cap < 3 * ne + 16) cap <<= 1;
+  std::vector<uint64_t> keys(cap, 0);  // key + 1 (0 = empty)
+  std::vector<uint32_t> ids(cap);
   std::vector<uint32_t> parent;
-  std::vector<std::vector<std::pair<uint32_t, uint32_t>>> adj;  // (neighbor, edge index)
+  parent.reserve(2 * size_t(ne));
   auto node = [&](uint64_t key) {
-    auto it = id.find(key);
-    if (it != id.end()) return it->second;
+    ++key;
+    uint32_t h = uint32_t((key * 0x9e3779b97f4a7c15ull) >> 32) & (cap - 1);
+    while (keys[h]) {
+      if (keys[h] == key) return ids[h];
+      h = (h + 1) & (cap - 1);
+    }
     const uint32_t n = uint32_t(parent.size());
-    id.emplace(key, n);
+    keys[h] = key;
+    ids[h] = n;
     parent.push_back(n);
-    adj.emplace_back();
     return n;
   };
   auto find = [&](uint32_t x) {
     while (parent[x] != x) x = parent[x] = parent[parent[x]];
     return x;
   };
+  // forest adjacency: per node a list through `link` (two entries per tree edge: entry 2e + side)
+  std::vector<int32_t> head;
+  head.reserve(2 * size_t(ne));
+  std::vector<int32_t> link(2 * size_t(ne), -1);
+  std::vector<uint32_t> to(2 * size_t(ne));
   std::vector<std::array<uint32_t, kProofSize>> out;
   std::vector<int32_t> prev_node, prev_edge;
-  for (uint32_t e = 0; e < edges.size(); ++e) {
+  std::vector<uint32_t> queue;
+  for (uint32_t e = 0; e < ne; ++e) {
     const uint32_t a = node(edges[e].first), b = node(uint64_t(1) << 32 | edges[e].second);
+    if (head.size() < parent.size()) head.resize(parent.size(), -1);
     const uint32_t ra = find(a), rb = find(b);
     if (ra != rb) {
       parent[ra] = rb;
-      adj[a].push_back({b, e});
-      adj[b].push_back({a, e});
+      to[2 * e] = b;
+      link[2 * e] = head[a];
+      head[a] = int32_t(2 * e);
+      to[2 * e + 1] = a;
+      link[2 * e + 1] = head[b];
+      head[b] = int32_t(2 * e + 1);
       continue;
     }
-    // tree path a -> b by BFS (the trees here are small)
-    prev_node.assign(parent.size(), -1);
-    prev_edge.assign(parent.size(), -1);
-    std::vector<uint32_t> queue{a};
+    // tree path a -> b by BFS (the trees here are small); only the nodes visited are reset afterwards
+    if (prev_node.size() < parent.size()) {
+      prev_node.resize(parent.size(), -1);
+      prev_edge.resize(parent.size(), -1);
+    }
+    queue.assign(1, a);
     prev_node[a] = int32_t(a);
     for (size_t q = 0; q < queue.size() && prev_node[b] < 0; ++q)
-      for (auto [nb, ei] : adj[queue[q]])
+      for (int32_t j = head[queue[q]]; j >= 0; j = link[j]) {
+        const uint32_t nb = to[j];
         if (prev_node[nb] < 0) {
           prev_node[nb] = int32_t(queue[q]);
-          prev_edge[nb] = int32_t(ei);
+          prev_edge[nb] = j >> 1;
           queue.push_back(nb);
         }
+      }
     std::vector<uint32_t> cyc{e};
     for (uint32_t x = b; x != a && cyc.size() <= kProofSize; x = uint32_t(prev_node[x])) cyc.push_back(uint32_t(prev_edge[x]));
+    for (uint32_t x : queue) prev_node[x] = prev_edge[x] = -1;
     if (cyc.size() == kProofSize) {
       std::sort(cyc.begin(), cyc.end());
       std::array<uint32_t, kProofSize> c{};

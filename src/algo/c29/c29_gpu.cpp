@@ -33,7 +33,10 @@ Engine::~Engine() {
 
 bool Engine::init(std::string& err) {
   dev_.make_current();
-  if (const char* e = std::getenv("XM_C29_ROUNDS")) rounds_ = std::clamp(std::atoi(e), 2, 1000);  // developer
+  if (const char* e = std::getenv("XM_C29_ROUNDS")) {  // developer
+    rounds_ = std::clamp(std::atoi(e), 2, 1000);
+    adapt_rounds_ = false;
+  }
   if (const char* e = std::getenv("XM_C29_FLAT")) flat_edges_ = std::strtoull(e, nullptr, 0);  // developer
   if (const char* e = std::getenv("XM_C29_SEGS")) seg_edges_ = std::strtoull(e, nullptr, 0);   // developer
   // Edge writes: NVIDIA stages them in shared memory and writes contiguous runs (RTX 3060 2.47 -> 3.00 g/s); AMD
@@ -259,6 +262,10 @@ bool Engine::solve_pipelined(const Keys& k, uint64_t tag, std::vector<Proof>& pr
     const auto [cycles, cpu_ms] = pend_.search.get();
     st.cpu_ms = cpu_ms;
     st.cycles = uint32_t(cycles.size());
+    if (adapt_rounds_) {  // see rounds_
+      if (cpu_ms > 0.5 * st.gpu_ms) rounds_ = std::min(rounds_ + 4, kMaxRounds);
+      else if (cpu_ms < 0.33 * st.gpu_ms) rounds_ = std::max(rounds_ - 1, kMinRounds);
+    }
     if (!finish(pend_.keys, pend_.edges, cycles, proofs, err)) return false;
     have_prev = true;
     prev_tag = pend_.tag;

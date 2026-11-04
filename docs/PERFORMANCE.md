@@ -757,6 +757,15 @@ split 1 edge / 24 slots 3.06 g/s, 2/48 3.27, 3/64 3.31, 4/80 3.31 (generation's 
 Generation the same way (512 threads): waves of 4 edges per thread / 64 slots 3.33, 8/88 3.35, 16/92 3.36, 32/92
 3.33 g/s (generation kernel 49 -> 46 ms).
 
+Trimming rounds (2026-11-04): with 200 rounds the RTX 3060 spent ~70 of 293 ms per graph in rounds 32-200, which are
+short and latency-bound (bucket rounds ~0.57 ms, flat rounds ~0.33 ms each; flattening earlier is slower: 2^20 edges
+3.11, 2^22 2.64 g/s). The CPU cycle search runs in parallel with the next graph, so fewer rounds win while it keeps
+up. It took 16 ms for 52K edges and 390 ms for 550K (a hash map and a vector per node); with an open-addressing
+table and linked adjacency lists 3 and 55 ms. RTX 3060, fixed rounds: 200 3.36, 130 3.55, 80 3.82, 60 3.98, 50 4.06,
+40 4.13, 30 3.93 g/s (CPU 3 / 55 / 73 / 139 / 238 ms at 200 / 60 / 50 / 40 / 30). Adapted per GPU (CPU above half
+the GPU time: +4 rounds; below a third: -1): RTX 3060 4.07 g/s settling near 51 rounds (NAS CPU), RX 9070 XT 6.65 ->
+8.36 g/s near 42 rounds (CPU 44 ms vs GPU 116 ms).
+
 AMD keeps direct stores (one pass, hashes in registers, 1024 threads): on the RX 9070 XT staging made generation +
 split 34 -> 54 ms (6.67 -> 6.30 g/s); the Infinity Cache already merges the scattered 8-byte stores, and the staging
 only adds barriers. `XM_C29_DIRECT=0/1` overrides.

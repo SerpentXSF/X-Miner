@@ -85,7 +85,13 @@ class Engine {
   int stage_rounds_ = 0;         // rounds with staged survivor writes
   uint32_t gen_tpb_ = 512;  // generating threads per block (developer: XM_C29_GEN_TPB; divides kTpb)
   uint32_t split_tpb_ = kTpb;  // splitting threads per block (developer: XM_C29_SPLIT_TPB)
-  int rounds_ = 200;  // trimming rounds (developer: XM_C29_ROUNDS); 160-300 measure the same
+  // Trimming rounds. The late rounds are short and latency-bound on the GPU, while the CPU's cycle search over the
+  // edges they would remove runs in parallel with the next graph: fewer rounds are faster as long as the search keeps
+  // up. Adapted while mining so the search takes about a third to a half of the GPU time (RTX 3060: 200 rounds 3.36,
+  // 60 3.98, 40 4.13 g/s with the CPU at 3, 55, 139 ms per graph). Developer: XM_C29_ROUNDS (fixed).
+  int rounds_ = 60;
+  bool adapt_rounds_ = true;
+  static constexpr int kMinRounds = 40, kMaxRounds = 200;
   Job job_, pend_job_;
   bool have_job_ = false;
   uint64_t counter_ = 0, cpu_rejects_ = 0;

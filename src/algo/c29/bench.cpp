@@ -25,7 +25,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       continue;
     }
     info("BENCH", "GPU " + std::to_string(d) + " " + devs[d].name + ": cuckaroo29, " + std::to_string(eng.rounds()) +
-                      " trimming rounds, " + std::to_string(cfg.benchmark_seconds) + " s");
+                      " trimming rounds at the start, " + std::to_string(cfg.benchmark_seconds) + " s");
     auto t0 = std::chrono::steady_clock::now(), last = t0;
     uint64_t graphs = 0, window = 0, cycles = 0, proofs = 0, overflows = 0, remaining = 0;
     double gpu_ms = 0, cpu_ms = 0;
@@ -65,8 +65,9 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
           ++samples;
         }
         char buf[160];
-        std::snprintf(buf, sizeof buf, "%.3f g/s  %d W  edges left %.0f  cycles %llu", window / dt, int(r.power_w),
-                      double(remaining) / double(graphs), static_cast<unsigned long long>(cycles));
+        std::snprintf(buf, sizeof buf, "%.3f g/s  %d W  edges left %.0f  cycles %llu  rounds %d", window / dt,
+                      int(r.power_w), double(remaining) / double(graphs), static_cast<unsigned long long>(cycles),
+                      eng.rounds());
         log_line(Tone::Radar, "RATE", buf);
         window = 0;
         last = now;
@@ -76,11 +77,11 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     char line[320];
     std::snprintf(line, sizeof line,
                   "%.3f g/s over %.0f s (%llu graphs); %llu cycles (expected ~%.1f), %llu verified, %llu overflows, "
-                  "%.0f edges left per graph, GPU %.1f ms + CPU %.1f ms per graph%s",
+                  "%.0f edges left per graph, GPU %.1f ms + CPU %.1f ms per graph, %d rounds at the end%s",
                   graphs / secs, secs, static_cast<unsigned long long>(graphs), static_cast<unsigned long long>(cycles),
                   graphs / 42.0, static_cast<unsigned long long>(proofs), static_cast<unsigned long long>(overflows),
                   graphs ? double(remaining) / double(graphs) : 0.0, graphs ? gpu_ms / graphs : 0.0,
-                  graphs ? cpu_ms / graphs : 0.0, samples ? (", " + std::to_string(int(watts / samples)) + " W").c_str() : "");
+                  graphs ? cpu_ms / graphs : 0.0, eng.rounds(), samples ? (", " + std::to_string(int(watts / samples)) + " W").c_str() : "");
     const bool ok = proofs == cycles && eng.cpu_rejects() == 0;
     log_line(ok ? Tone::Ok : Tone::Red, "DONE", line);
     if (!ok) ++failures;
