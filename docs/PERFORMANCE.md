@@ -754,6 +754,8 @@ was ~16 edges in the split and ~6 in round 0. Several edges per thread between f
 split 1 edge / 24 slots 3.06 g/s, 2/48 3.27, 3/64 3.31, 4/80 3.31 (generation's split 36 -> 28 ms, round 0's 25 ->
 19 ms); round 0 then 4 edges / 48 slots, 3.32. Smaller split blocks for occupancy went the other way (512 threads
 2.83, 256 2.21 g/s: shorter runs). The writes' run length, not the occupancy, limits the split.
+Generation the same way (512 threads): waves of 4 edges per thread / 64 slots 3.33, 8/88 3.35, 16/92 3.36, 32/92
+3.33 g/s (generation kernel 49 -> 46 ms).
 
 AMD keeps direct stores (one pass, hashes in registers, 1024 threads): on the RX 9070 XT staging made generation +
 split 34 -> 54 ms (6.67 -> 6.30 g/s); the Infinity Cache already merges the scattered 8-byte stores, and the staging

@@ -144,10 +144,14 @@ __device__ __forceinline__ void stage_flush(uint2 (*stage)[SLOTS], u32* fill, u3
 // (GEN_WAVE edges per thread at a time) and each bucket's run is written out contiguously: one scattered 8-byte store
 // per edge cost ~100 of ~150 ms on an RTX 3060. Moving the hash's 64-bit adds and rotations to the multiply pipe
 // (IMAD.WIDE.U32 by 1 / by 2^n, multipliers from shared memory) was slower: 116 vs 102 ms.
+// Edges per thread and wave, and staged edges per bucket (mean GEN_TPB * GEN_WAVE / NC; a full row writes directly).
+// Longer runs per wave: RTX 3060 (512 threads) waves of 4 / 64 slots 3.33 g/s, 8/88 3.35, 16/92 3.36, 32/92 3.33.
 #ifndef GEN_WAVE
-#define GEN_WAVE (2048 / GEN_TPB)  // a mean of 32 staged edges per bucket and wave
+#define GEN_WAVE (8192 / GEN_TPB)  // a mean of 128 edges per bucket and wave
 #endif
-#define GEN_SLOTS 64  // staged edges per bucket and wave (mean GEN_TPB * GEN_WAVE / NC)
+#ifndef GEN_SLOTS
+#define GEN_SLOTS 92  // (46 KB of the 48 KB of static shared memory)
+#endif
 __device__ __forceinline__ u64 siphash_next(u64& v0, u64& v1, u64& v2, u64& v3, u64 n) {
   v3 ^= n;
   SIPROUND; SIPROUND;

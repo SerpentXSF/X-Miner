@@ -11,7 +11,8 @@
   split stages the same way and runs in one pass (its staged runs reserve their slots when written). RTX 3060
   2.47 -> 3.00 g/s (live on Kryptex 2 accepted / 0 rejected). AMD keeps direct stores (faster there). NVIDIA also
   counts node degrees with 4-bit counters in the big rounds and stages round 0's survivors (3.06 g/s), and the
-  staged writers take several edges per thread between flushes, for longer runs: 3.32 g/s.
+  staged writers (generation, split, round 0) take several edges per thread between flushes, for longer runs:
+  3.36 g/s.
 
 - Nexa: a 24-bit comb window on NVIDIA cards with 10 GB or more (11 point additions per scalar instead of 13; the
   generated RTX 30 kernel is rebuilt for it) and 22 bits elsewhere. The 5.9 / 1.6 GB table is now built on the GPU by
