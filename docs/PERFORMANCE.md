@@ -715,6 +715,11 @@ at base clock shows 54%), so the rounds need fewer bytes per edge to go faster: 
 the counting pass reads 4 bytes per edge instead of 8 (estimated ~5%). Walking the split's input segment by segment
 instead of a binary search per edge only helps generation's large segments, and is used there.
 
+Separate u and v arrays (tried 2026-11-03): in every bucket, round 0 41 -> 89 ms (each survivor becomes two
+scattered 4-byte stores); in the fine buckets only (the split writes them as staged runs, the counting pass reads 4
+bytes per edge), round 0 stays at 40.7 ms. So the counting pass is not bandwidth-bound either: the shared-memory
+bitmap atomics are. Not kept.
+
 AMD keeps direct stores (one pass, hashes in registers, 1024 threads): on the RX 9070 XT staging made generation +
 split 34 -> 54 ms (6.67 -> 6.30 g/s); the Infinity Cache already merges the scattered 8-byte stores, and the staging
 only adds barriers. `XM_C29_DIRECT=0/1` overrides.
