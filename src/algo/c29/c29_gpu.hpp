@@ -83,7 +83,7 @@ class Engine {
   bool nibble_ = false;          // 4-bit degree counters in the big rounds (NVIDIA)
   uint32_t round_shared_ = 0;    // their dynamic shared memory per block
   int stage_rounds_ = 0;         // rounds with staged survivor writes
-  uint32_t gen_tpb_ = 512;  // generating threads per block (developer: XM_C29_GEN_TPB; divides kTpb)
+  uint32_t gen_tpb_ = 256;  // generating threads per block (set in init; developer: XM_C29_GEN_TPB; divides kTpb)
   uint32_t split_tpb_ = kTpb;  // splitting threads per block (developer: XM_C29_SPLIT_TPB)
   // Trimming rounds. The late rounds are short and latency-bound on the GPU, while the CPU's cycle search over the
   // edges they would remove runs in parallel with the next graph: fewer rounds are faster as long as the search keeps

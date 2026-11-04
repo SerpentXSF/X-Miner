@@ -25,7 +25,8 @@
   64-bit shift, a shift and an OR of each): hashing 9.9 -> 8.0 ms per graph, 8.70 g/s.
 - Tari Cuckaroo29 NVIDIA: edge generation (hashing each sipblock twice, ~43 of its ~46 ms) keeps the first 32 hashes
   of the first pass in registers with the hash state after them, so the second pass hashes only the other 32.
-  Generation 45.9 -> 39.2 ms, RTX 3060 4.20 -> 4.30 g/s.
+  Generation 45.9 -> 39.2 ms, RTX 3060 4.20 -> 4.30 g/s; with 256-thread generating blocks (were 512) 36.1 ms,
+  4.37 g/s.
 
 - Nexa: a 24-bit comb window on NVIDIA cards with 10 GB or more (11 point additions per scalar instead of 13; the
   generated RTX 30 kernel is rebuilt for it) and 22 bits elsewhere. The 5.9 / 1.6 GB table is now built on the GPU by

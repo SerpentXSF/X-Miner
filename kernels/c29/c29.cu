@@ -168,6 +168,9 @@ __device__ __forceinline__ void stage_flush(uint2 (*stage)[SLOTS], u32* fill, u3
 #ifndef GEN_KEEP
 #define GEN_KEEP 32  // hashes per sipblock kept in registers from the first pass (a multiple of GEN_WAVE)
 #endif
+#if GEN_KEEP % GEN_WAVE || 64 % GEN_WAVE
+#error "GEN_KEEP and 64 must be multiples of GEN_WAVE"
+#endif
 __device__ __forceinline__ u64 siphash_next(u64& v0, u64& v1, u64& v2, u64& v3, u64 n) {
   v3 ^= n;
   SIPROUND; SIPROUND;

@@ -783,7 +783,8 @@ Profile after that (fixed 52 rounds, 2026-11-04): RTX 3060 generation 46 + split
 - RTX 3060 generation is hashing too: 42.6 of 45.9 ms without its stores, and it hashes every sipblock twice (once
   for the last hash, once to emit). The first pass now keeps its first 32 hashes in registers, unrolled, plus the
   hash state after them; the second pass starts there. Kept 16: 42.8 ms, 32: 39.2, 40 (waves of 8): 51.8, 48: 59.6
-  (spills); 4.20 -> 4.30 g/s.
+  (spills); 4.20 -> 4.30 g/s. Then 256-thread generating blocks (512 before): 36.1 ms, 4.37 g/s; at 256 threads
+  keeping 48 (86 ms) or all 64 (96 ms) is far slower.
 - Not kept: counting a coarse bucket's degrees with global counters that stay in the cache (1024 blocks per coarse
   bucket, 64 buckets in turn), to drop the splits: 536M counter atomics took 100 ms (bitmaps) / 155 ms (4-bit
   counters) on the 3060 and 17 / 20 ms on the 9070 XT, against splits of 28 and 17 ms. 8192 fine buckets: the 9070
