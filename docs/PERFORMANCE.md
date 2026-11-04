@@ -776,6 +776,9 @@ Profile after that (fixed 52 rounds, 2026-11-04): RTX 3060 generation 46 + split
 - A round reads its bucket twice (count, then filter); the second pass now goes back to front, so it starts on what
   the cache still holds: RX 9070 XT 8.44 -> 8.53 g/s (round 0 kernel 18.0 -> 16.5 ms), RTX 3060 4.19 -> 4.20 (its
   3 MB L2 holds little of a 1 MB bucket per SM). Fewer resident workgroups (padding the LDS) did not help further.
+- RX 9070 XT generation (13.0 ms with 512-thread blocks) is mostly hashing: 9.9 ms without its stores. The compiler
+  turned each 64-bit rotation into a 64-bit shift, a 32-bit shift and an OR; two funnel shifts (`v_alignbit_b32`)
+  instead: hashing 8.0 ms, generation 12.1 ms, 8.61 -> 8.70 g/s.
 - Not kept: counting a coarse bucket's degrees with global counters that stay in the cache (1024 blocks per coarse
   bucket, 64 buckets in turn), to drop the splits: 536M counter atomics took 100 ms (bitmaps) / 155 ms (4-bit
   counters) on the 3060 and 17 / 20 ms on the 9070 XT, against splits of 28 and 17 ms. 8192 fine buckets: the 9070

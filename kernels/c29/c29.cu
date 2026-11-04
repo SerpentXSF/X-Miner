@@ -37,7 +37,18 @@ typedef unsigned long long u64;
 #define SHFL0(x) __shfl_sync(0xffffffffu, (x), 0)
 #endif
 
+#if defined(__HIPCC__) && !defined(ROTL_SHIFT)
+// AMD: two funnel shifts (v_alignbit_b32) per rotation; the compiler's shift form used a 64-bit shift plus a shift and
+// an OR. RX 9070 XT: generation 13.0 -> 12.1 ms (its hashing alone 9.9 -> 8.0 ms), 8.61 -> 8.70 g/s.
+__device__ __forceinline__ u64 rotl(u64 x, int n) {
+  const u32 lo = (u32)x, hi = (u32)(x >> 32);
+  if (n == 32) return ((u64)lo << 32) | hi;
+  if (n > 32) return rotl(((u64)lo << 32) | hi, n - 32);
+  return ((u64)__builtin_amdgcn_alignbit(hi, lo, 32 - n) << 32) | __builtin_amdgcn_alignbit(lo, hi, 32 - n);
+}
+#else
 __device__ __forceinline__ u64 rotl(u64 x, int n) { return (x << n) | (x >> (64 - n)); }
+#endif
 
 #define SIPROUND                                                                   \
   do {                                                                             \
