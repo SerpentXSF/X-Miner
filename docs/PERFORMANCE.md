@@ -783,7 +783,7 @@ Profile after that (fixed 52 rounds, 2026-11-04): RTX 3060 generation 46 + split
   (8.41 g/s either way); the 3060 4.06 -> 3.89 g/s. Flat rounds from 4M edges: ~2.3 ms per round at ~1.5M edges
   (64 MB global bitmaps), against ~0.6 ms bucketed.
 
-AMD keeps direct stores (one pass, hashes in registers, 1024 threads): on the RX 9070 XT staging made generation +
+AMD keeps direct stores (one pass, hashes in registers; 512 threads since 2026-11-04, generation 14.2 -> 13.0 ms): on the RX 9070 XT staging made generation +
 split 34 -> 54 ms (6.67 -> 6.30 g/s); the Infinity Cache already merges the scattered 8-byte stores, and the staging
 only adds barriers. `XM_C29_DIRECT=0/1` overrides.
 

@@ -41,10 +41,10 @@ bool Engine::init(std::string& err) {
   if (const char* e = std::getenv("XM_C29_SEGS")) seg_edges_ = std::strtoull(e, nullptr, 0);   // developer
   // Edge writes: NVIDIA stages them in shared memory and writes contiguous runs (RTX 3060 2.47 -> 3.00 g/s); AMD
   // writes them straight out, where the Infinity Cache merges scattered stores (RX 9070 XT: staged 6.30 vs direct
-  // 6.67 g/s). Developer: XM_C29_DIRECT=0/1, XM_C29_GEN_TPB.
+  // 6.67 g/s). Both generate with 512-thread blocks (RX 9070 XT 1024: 14.2 ms, 512: 13.0, 256: 16.5). Developer:
+  // XM_C29_DIRECT=0/1, XM_C29_GEN_TPB.
   direct_ = dev_.info().vendor == gpu::Vendor::Amd;
   if (const char* e = std::getenv("XM_C29_DIRECT")) direct_ = std::atoi(e) != 0;
-  if (direct_) gen_tpb_ = kTpb;
   // Degree counting of the big rounds: 4-bit counters (64 KB of dynamic shared memory, one atomic per edge with no
   // result to wait for) on NVIDIA; AMD's 64 KB per workgroup has no room for them. Developer: XM_C29_NIBBLE=0/1.
   nibble_ = dev_.info().vendor == gpu::Vendor::Nvidia;

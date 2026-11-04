@@ -97,8 +97,8 @@ class Engine {
   uint64_t counter_ = 0, cpu_rejects_ = 0;
   Pending pend_;  // its future waits for a running search on destruction (host memory only)
   // 4096 fine buckets (2^17 nodes each: two 16 KB shared bitmaps) reached through 64 coarse ones (split in slices of
-  // ~16K edges); 1024 threads, 8 sipblocks per generating thread; bucket rounds while at least 256K edges are left,
-  // then one flat list.
+  // ~16K edges); 1024 threads, generation sized as 8 sipblocks per thread of kTpb; bucket rounds while at least 256K
+  // edges are left, then one flat list.
   static constexpr int kNbBits = 12, kTpb = 1024, kGenSb = 8, kNc = 64;
   static constexpr uint64_t kSplitSlice = 16384;
   static constexpr uint32_t kMaxParts = 256, kMaxSegs = 256;  // kMaxSegs = MAX_SEGS in the kernel
