@@ -778,7 +778,12 @@ Profile after that (fixed 52 rounds, 2026-11-04): RTX 3060 generation 46 + split
   3 MB L2 holds little of a 1 MB bucket per SM). Fewer resident workgroups (padding the LDS) did not help further.
 - RX 9070 XT generation (13.0 ms with 512-thread blocks) is mostly hashing: 9.9 ms without its stores. The compiler
   turned each 64-bit rotation into a 64-bit shift, a 32-bit shift and an OR; two funnel shifts (`v_alignbit_b32`)
-  instead: hashing 8.0 ms, generation 12.1 ms, 8.61 -> 8.70 g/s.
+  instead: hashing 8.0 ms, generation 12.1 ms, 8.61 -> 8.70 g/s. Autolykos2, Octopus, KawPow and Xelis v3 with the
+  same rotations measured unchanged (memory-bound), so they keep the plain form.
+- RTX 3060 generation is hashing too: 42.6 of 45.9 ms without its stores, and it hashes every sipblock twice (once
+  for the last hash, once to emit). The first pass now keeps its first 32 hashes in registers, unrolled, plus the
+  hash state after them; the second pass starts there. Kept 16: 42.8 ms, 32: 39.2, 40 (waves of 8): 51.8, 48: 59.6
+  (spills); 4.20 -> 4.30 g/s.
 - Not kept: counting a coarse bucket's degrees with global counters that stay in the cache (1024 blocks per coarse
   bucket, 64 buckets in turn), to drop the splits: 536M counter atomics took 100 ms (bitmaps) / 155 ms (4-bit
   counters) on the 3060 and 17 / 20 ms on the 9070 XT, against splits of 28 and 17 ms. 8192 fine buckets: the 9070

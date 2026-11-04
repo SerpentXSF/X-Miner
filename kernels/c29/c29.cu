@@ -150,8 +150,10 @@ __device__ __forceinline__ void stage_flush(uint2 (*stage)[SLOTS], u32* fill, u3
 // Generation into the coarse U buckets: GEN_BLOCKS blocks of GEN_TPB threads, GEN_PER sipblocks per thread, written
 // into the block's segments; segs[c * GEN_BLOCKS + block] = the edges in segment c.
 // A sipblock's edges are its 64 hashes xored with the last one. Holding the 64 hashes needs 128 registers and a fully
-// unrolled block (~11k instructions: the warps then wait on instruction fetch), so each sipblock is hashed twice in a
-// rolled loop: once for the last hash, once to emit the edges. Edges are staged per coarse bucket in shared memory
+// unrolled block (~11k instructions: the warps then wait on instruction fetch), so each sipblock is hashed twice:
+// once for the last hash, once to emit the edges. The first pass keeps its first GEN_KEEP hashes in registers
+// (unrolled) and the hash state after them, so the second pass recomputes only the rest (RTX 3060, where hashing is
+// ~43 of ~46 ms of generation: keep 0 45.9 ms, 16 42.8, 32 39.2, 48 59.6 (spilled); 4.20 -> 4.30 g/s). Edges are staged per coarse bucket in shared memory
 // (GEN_WAVE edges per thread at a time) and each bucket's run is written out contiguously: one scattered 8-byte store
 // per edge cost ~100 of ~150 ms on an RTX 3060. Moving the hash's 64-bit adds and rotations to the multiply pipe
 // (IMAD.WIDE.U32 by 1 / by 2^n, multipliers from shared memory) was slower: 116 vs 102 ms.
@@ -162,6 +164,9 @@ __device__ __forceinline__ void stage_flush(uint2 (*stage)[SLOTS], u32* fill, u3
 #endif
 #ifndef GEN_SLOTS
 #define GEN_SLOTS 92  // (46 KB of the 48 KB of static shared memory)
+#endif
+#ifndef GEN_KEEP
+#define GEN_KEEP 32  // hashes per sipblock kept in registers from the first pass (a multiple of GEN_WAVE)
 #endif
 __device__ __forceinline__ u64 siphash_next(u64& v0, u64& v1, u64& v2, u64& v3, u64 n) {
   v3 ^= n;
@@ -204,47 +209,76 @@ extern "C" __global__ __launch_bounds__(GEN_TPB) void c29_gen(Keys k, uint2* __r
   const u32 b0 = (blockIdx.x * GEN_TPB + threadIdx.x) * GEN_PER;
   uint2* o = out + (size_t)blockIdx.x * GEN_SEG;
   const u32 warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+  // one edge of hash h (index i in its sipblock) into its bucket's staging row
+#define GEN_EMIT(h0, i)                                                    \
+  {                                                                        \
+    const u64 h_ = (i) < 63 ? (h0) ^ last : (h0);                          \
+    const u32 u = (u32)h_ & NODE_MASK, v = (u32)(h_ >> 32) & NODE_MASK;    \
+    const u32 c = u >> CSHIFT;                                             \
+    const u32 slot = atomicAdd(&fill[c], 1u);                              \
+    if (slot < GEN_SLOTS) {                                                \
+      stage[c][slot] = make_uint2(u, v);                                   \
+    } else { /* rare: a bucket's staging row is full; write it directly */ \
+      const u32 pos = atomicAdd(&cnt[c], 1u);                              \
+      if (pos < GEN_SEG) o[c * CCAP + pos] = make_uint2(u, v);             \
+    }                                                                      \
+  }
+  // each warp writes out whole buckets: their runs are contiguous in the block's segments
+#define GEN_FLUSH                                                          \
+  {                                                                        \
+    __syncthreads();                                                       \
+    for (u32 c = warp; c < NC; c += GEN_TPB / 32) {                        \
+      const u32 n = min(fill[c], (u32)GEN_SLOTS);                          \
+      u32 base = 0;                                                        \
+      if (lane == 0) base = atomicAdd(&cnt[c], n);                         \
+      base = SHFL0(base);                                                  \
+      for (u32 j = lane; j < n; j += 32)                                   \
+        if (base + j < GEN_SEG) o[c * CCAP + base + j] = stage[c][j];      \
+    }                                                                      \
+    __syncthreads();                                                       \
+    for (u32 i_ = threadIdx.x; i_ < NC; i_ += GEN_TPB) fill[i_] = 0;       \
+    __syncthreads();                                                       \
+  }
 #pragma unroll 1
   for (int s = 0; s < GEN_PER; ++s) {
     const u64 e0 = (u64)(b0 + s) << 6;
-    u64 last;
-    {
-      u64 v0 = k.k0, v1 = k.k1, v2 = k.k2, v3 = k.k3;
-#pragma unroll 1
-      for (int i = 0; i < 64; ++i) last = siphash_next(v0, v1, v2, v3, e0 + i);
-    }
     u64 v0 = k.k0, v1 = k.k1, v2 = k.k2, v3 = k.k3;
+#if GEN_KEEP
+    // the first GEN_KEEP hashes stay in registers (unrolled); the state after them is kept for the second pass
+    u64 hk[GEN_KEEP];
+#pragma unroll
+    for (int i = 0; i < GEN_KEEP; ++i) hk[i] = siphash_next(v0, v1, v2, v3, e0 + i);
+    const u64 c0 = v0, c1 = v1, c2 = v2, c3 = v3;
+#endif
+    u64 last = 0;
 #pragma unroll 1
-    for (int w = 0; w < 64; w += GEN_WAVE) {
+    for (int i = GEN_KEEP; i < 64; ++i) last = siphash_next(v0, v1, v2, v3, e0 + i);
+#if GEN_KEEP
+#if GEN_KEEP == 64
+    last = hk[63];
+#endif
+#pragma unroll
+    for (int w = 0; w < GEN_KEEP; w += GEN_WAVE) {
+#pragma unroll
+      for (int i = w; i < w + GEN_WAVE; ++i) GEN_EMIT(hk[i], i)
+      GEN_FLUSH
+    }
+    v0 = c0; v1 = c1; v2 = c2; v3 = c3;
+#else
+    v0 = k.k0; v1 = k.k1; v2 = k.k2; v3 = k.k3;
+#endif
+#pragma unroll 1
+    for (int w = GEN_KEEP; w < 64; w += GEN_WAVE) {
 #pragma unroll 1
       for (int i = w; i < w + GEN_WAVE; ++i) {
-        u64 h = siphash_next(v0, v1, v2, v3, e0 + i);
-        if (i < 63) h ^= last;
-        const u32 u = (u32)h & NODE_MASK, v = (u32)(h >> 32) & NODE_MASK;
-        const u32 c = u >> CSHIFT;
-        const u32 slot = atomicAdd(&fill[c], 1u);
-        if (slot < GEN_SLOTS) {
-          stage[c][slot] = make_uint2(u, v);
-        } else {  // rare: a bucket's staging row is full; write the edge directly
-          const u32 pos = atomicAdd(&cnt[c], 1u);
-          if (pos < GEN_SEG) o[c * CCAP + pos] = make_uint2(u, v);
-        }
+        const u64 h = siphash_next(v0, v1, v2, v3, e0 + i);
+        GEN_EMIT(h, i)
       }
-      __syncthreads();
-      // each warp writes out whole buckets: their runs are contiguous in the block's segments
-      for (u32 c = warp; c < NC; c += GEN_TPB / 32) {
-        const u32 n = min(fill[c], (u32)GEN_SLOTS);
-        u32 base = 0;
-        if (lane == 0) base = atomicAdd(&cnt[c], n);
-        base = SHFL0(base);
-        for (u32 j = lane; j < n; j += 32)
-          if (base + j < GEN_SEG) o[c * CCAP + base + j] = stage[c][j];
-      }
-      __syncthreads();
-      for (u32 i = threadIdx.x; i < NC; i += GEN_TPB) fill[i] = 0;
-      __syncthreads();
+      GEN_FLUSH
     }
   }
+#undef GEN_EMIT
+#undef GEN_FLUSH
   for (u32 i = threadIdx.x; i < NC; i += GEN_TPB) segs[i * GEN_BLOCKS + blockIdx.x] = min(cnt[i], GEN_SEG);
 }
 #endif

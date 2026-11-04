@@ -23,6 +23,9 @@
   holds. RX 9070 XT 8.44 -> 8.53 g/s (round 0 18.0 -> 16.5 ms); RTX 3060 unchanged. AMD generation with 512-thread
   blocks like NVIDIA (was 1024): 8.61 g/s. AMD siphash rotations as funnel shifts (v_alignbit; the compiler made a
   64-bit shift, a shift and an OR of each): hashing 9.9 -> 8.0 ms per graph, 8.70 g/s.
+- Tari Cuckaroo29 NVIDIA: edge generation (hashing each sipblock twice, ~43 of its ~46 ms) keeps the first 32 hashes
+  of the first pass in registers with the hash state after them, so the second pass hashes only the other 32.
+  Generation 45.9 -> 39.2 ms, RTX 3060 4.20 -> 4.30 g/s.
 
 - Nexa: a 24-bit comb window on NVIDIA cards with 10 GB or more (11 point additions per scalar instead of 13; the
   generated RTX 30 kernel is rebuilt for it) and 22 bits elsewhere. The 5.9 / 1.6 GB table is now built on the GPU by
