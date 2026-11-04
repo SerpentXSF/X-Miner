@@ -79,7 +79,10 @@ class Engine {
   gpu::DevPtr d_a_ = 0, d_b_ = 0, d_cnt_a_ = 0, d_cnt_b_ = 0, d_off_ = 0, d_n_ = 0, d_bm1_ = 0, d_bm2_ = 0,
               d_want_ = 0, d_found_ = 0;
   uint32_t capb_ = 0;
-  bool direct_ = false;     // direct (unstaged) edge writes in generation and split (AMD)
+  bool direct_ = false;          // direct (unstaged) edge writes in generation and split (AMD)
+  bool nibble_ = false;          // 4-bit degree counters in the big rounds (NVIDIA)
+  uint32_t round_shared_ = 0;    // their dynamic shared memory per block
+  int stage_rounds_ = 0;         // rounds with staged survivor writes
   uint32_t gen_tpb_ = 512;  // generating threads per block (developer: XM_C29_GEN_TPB; divides kTpb)
   int rounds_ = 200;  // trimming rounds (developer: XM_C29_ROUNDS); 160-300 measure the same
   Job job_, pend_job_;

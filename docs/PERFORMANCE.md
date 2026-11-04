@@ -741,6 +741,14 @@ scattered 4-byte stores); in the fine buckets only (the split writes them as sta
 bytes per edge), round 0 stays at 40.7 ms. So the counting pass is not bandwidth-bound either: the shared-memory
 bitmap atomics are. Not kept.
 
+Round 0 on the RTX 3060 (2026-11-04, timing builds): 41.0 ms; 25.7 ms without its survivor stores, so the scattered
+8-byte stores cost ~15 ms there and the rest is about the time to read the bucket twice. 4-bit degree counters (64 KB
+of dynamic shared memory, one atomic add per edge with no result to wait for, instead of the two bitmaps' dependent
+atomics) gain 2.5% on that kernel; staging round 0's survivors in shared memory and writing runs takes it to
+36.5 ms. Staging later rounds as well costs more than it saves (fewer edges per bucket): RTX 3060 3.01 -> 3.06 g/s
+with round 0 staged, 3.03 with rounds 0-1, 3.02 with rounds 0-3. AMD keeps the bitmaps (64 KB of LDS per workgroup
+leaves no room for the counters) and unstaged rounds.
+
 AMD keeps direct stores (one pass, hashes in registers, 1024 threads): on the RX 9070 XT staging made generation +
 split 34 -> 54 ms (6.67 -> 6.30 g/s); the Infinity Cache already merges the scattered 8-byte stores, and the staging
 only adds barriers. `XM_C29_DIRECT=0/1` overrides.

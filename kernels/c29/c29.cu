@@ -101,10 +101,10 @@ __device__ __forceinline__ void stage_flush(uint2 (*stage)[SLOTS], u32* fill, u3
   for (u32 i = threadIdx.x; i < 64; i += TB) fill[i] = 0;
   __syncthreads();
 }
-// The rounds' survivors are written directly by default: staging them (ROUND_STAGE 1) costs three barriers per
-// 1024-edge pass in 1024-thread blocks, and rounds 0-3 took 140 instead of 135 ms on an RTX 3060. The split gains.
+// Staged survivor writes in c29_round (ROUND_STAGE: compiled in, NVIDIA; the host enables them per round, round 0
+// by default: RTX 3060 3.01 -> 3.06 g/s; all four segment rounds 3.02).
 #ifndef ROUND_STAGE
-#define ROUND_STAGE 0
+#define ROUND_STAGE 1
 #endif
 #ifndef GEN_DIRECT
 #define GEN_DIRECT 0
@@ -340,14 +340,37 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_split(u32 side, const uint
 
 // One trimming round on side `side` (0: u, 1: v), one block per fine bucket of that side; the survivors go to the
 // block's segments of the other side's coarse buckets (segs[c * NB + bucket]).
+// Degree counts of a bucket's 2^BSHIFT nodes. ROUND_NIBBLE (NVIDIA; 64 KB of dynamic shared memory): a 4-bit counter
+// per node, one atomic add per edge whose result nobody waits for (a count wraps only at 16, never seen in practice).
+// Otherwise two bitmaps (seen once, seen twice): the second atomic depends on the first's result, and the rounds
+// waited on those results (short-scoreboard and MIO stalls).
+#ifndef ROUND_NIBBLE
+#define ROUND_NIBBLE 0
+#endif
+#if ROUND_NIBBLE
+#define DEG_DECL extern __shared__ u32 nib[]; /* LOCAL_WORDS * 4 words */
+#define DEG_CLEAR for (u32 i = threadIdx.x; i < 4 * LOCAL_WORDS; i += TPB) nib[i] = 0;
+#define DEG_COUNT(l) atomicAdd(&nib[(l) >> 3], 1u << (((l) & 7u) << 2));
+#define DEG_KEEP(l) ((nib[(l) >> 3] >> (((l) & 7u) << 2) & 15u) >= 2u)
+#else
+#define DEG_DECL __shared__ u32 s1[LOCAL_WORDS], s2[LOCAL_WORDS];
+#define DEG_CLEAR for (u32 i = threadIdx.x; i < LOCAL_WORDS; i += TPB) { s1[i] = 0; s2[i] = 0; }
+#define DEG_COUNT(l) { const u32 m_ = 1u << ((l) & 31); if (atomicOr(&s1[(l) >> 5], m_) & m_) atomicOr(&s2[(l) >> 5], m_); }
+#define DEG_KEEP(l) (s2[(l) >> 5] >> ((l) & 31) & 1u)
+#endif
+// One trimming round on side `side` (0: u, 1: v), one block per fine bucket of that side; the survivors go to the
+// block's segments of the other side's coarse buckets (segs[c * NB + bucket]). stage != 0 (the host's choice per
+// round): the survivors are staged in shared memory and written as runs (RTX 3060 round 0: 41.0 -> 36.5 ms; with
+// fewer edges per bucket the barriers cost more than the scattered stores).
 extern "C" __global__ __launch_bounds__(TPB) void c29_round(u32 side, const uint2* __restrict__ in,
                                                             const u32* __restrict__ counts, uint2* __restrict__ out,
-                                                            u32* __restrict__ segs) {
-  __shared__ u32 s1[LOCAL_WORDS], s2[LOCAL_WORDS], cnt[NC], fill[NC];
+                                                            u32* __restrict__ segs, u32 stage_on) {
+  DEG_DECL
+  __shared__ u32 cnt[NC], fill[NC];
 #if ROUND_STAGE
   __shared__ uint2 stage[NC][RSLOTS];
 #endif
-  for (u32 i = threadIdx.x; i < LOCAL_WORDS; i += TPB) { s1[i] = 0; s2[i] = 0; }
+  DEG_CLEAR
   for (u32 i = threadIdx.x; i < NC; i += TPB) cnt[i] = fill[i] = 0;
   __syncthreads();
   const u32 bk = blockIdx.x;
@@ -356,33 +379,35 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round(u32 side, const uint
   const u32 lmask = (1u << BSHIFT) - 1u;
   FOR_EDGES(e, n, {
     const u32 l = (side ? x.y : x.x) & lmask;
-    const u32 m = 1u << (l & 31);
-    if (atomicOr(&s1[l >> 5], m) & m) atomicOr(&s2[l >> 5], m);
+    DEG_COUNT(l)
   })
   __syncthreads();
   uint2* o = out + (size_t)bk * ROUND_SEG;
 #if ROUND_STAGE
-  for (u32 i0 = 0; i0 < n; i0 += TPB) {
-    const u32 i = i0 + threadIdx.x;
-    if (i < n) {
-      const uint2 x = e[i];
-      const u32 l = (side ? x.y : x.x) & lmask;
-      if (s2[l >> 5] >> (l & 31) & 1u)
-        stage_put<RSLOTS>(stage, fill, cnt, o, CCAP, ROUND_SEG, (side ? x.x : x.y) >> CSHIFT, x);
+  if (stage_on) {
+    for (u32 i0 = 0; i0 < n; i0 += TPB) {
+      const u32 i = i0 + threadIdx.x;
+      if (i < n) {
+        const uint2 x = e[i];
+        const u32 l = (side ? x.y : x.x) & lmask;
+        if (DEG_KEEP(l))
+          stage_put<RSLOTS>(stage, fill, cnt, o, CCAP, ROUND_SEG, (side ? x.x : x.y) >> CSHIFT, x);
+      }
+      stage_flush<RSLOTS, TPB>(stage, fill, cnt, o, CCAP, ROUND_SEG);
     }
-    stage_flush<RSLOTS, TPB>(stage, fill, cnt, o, CCAP, ROUND_SEG);
-  }
-#else
-  FOR_EDGES(e, n, {
-    const u32 l = (side ? x.y : x.x) & lmask;
-    if (s2[l >> 5] >> (l & 31) & 1u) {
-      const u32 co = (side ? x.x : x.y) >> CSHIFT;
-      const u32 pos = atomicAdd(&cnt[co], 1u);
-      if (pos < ROUND_SEG) o[co * CCAP + pos] = x;
-    }
-  })
-  __syncthreads();
+  } else
 #endif
+  {
+    FOR_EDGES(e, n, {
+      const u32 l = (side ? x.y : x.x) & lmask;
+      if (DEG_KEEP(l)) {
+        const u32 co = (side ? x.x : x.y) >> CSHIFT;
+        const u32 pos = atomicAdd(&cnt[co], 1u);
+        if (pos < ROUND_SEG) o[co * CCAP + pos] = x;
+      }
+    })
+    __syncthreads();
+  }
   for (u32 i = threadIdx.x; i < NC; i += TPB) segs[i * NB + bk] = min(cnt[i], ROUND_SEG);
 }
 
@@ -392,9 +417,6 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round_r(u32 side, const ui
                                                               const u32* __restrict__ counts, uint2* __restrict__ out,
                                                               u32* __restrict__ ccounts) {
   __shared__ u32 s1[LOCAL_WORDS], s2[LOCAL_WORDS], cnt[NC], fill[NC];
-#if ROUND_STAGE
-  __shared__ uint2 stage[NC][RSLOTS];
-#endif
   for (u32 i = threadIdx.x; i < LOCAL_WORDS; i += TPB) { s1[i] = 0; s2[i] = 0; }
   for (u32 i = threadIdx.x; i < NC; i += TPB) cnt[i] = fill[i] = 0;
   __syncthreads();
@@ -418,18 +440,6 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round_r(u32 side, const ui
     cnt[i] = c ? atomicAdd(&ccounts[i], c) : 0u;
   }
   __syncthreads();
-#if ROUND_STAGE
-  for (u32 i0 = 0; i0 < n; i0 += TPB) {
-    const u32 i = i0 + threadIdx.x;
-    if (i < n) {
-      const uint2 x = e[i];
-      const u32 l = (side ? x.y : x.x) & lmask;
-      if (s2[l >> 5] >> (l & 31) & 1u)
-        stage_put<RSLOTS>(stage, fill, cnt, out, CCAP, CCAP, (side ? x.x : x.y) >> CSHIFT, x);
-    }
-    stage_flush<RSLOTS, TPB>(stage, fill, cnt, out, CCAP, CCAP);
-  }
-#else
   FOR_EDGES(e, n, {
     const u32 l = (side ? x.y : x.x) & lmask;
     if (s2[l >> 5] >> (l & 31) & 1u) {
@@ -438,7 +448,7 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round_r(u32 side, const ui
       if (pos < CCAP) out[co * CCAP + pos] = x;
     }
   })
-#endif
+
 }
 
 // Buckets -> one flat list at the given offsets (one block per bucket).

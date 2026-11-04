@@ -42,6 +42,15 @@ bool Engine::init(std::string& err) {
   direct_ = dev_.info().vendor == gpu::Vendor::Amd;
   if (const char* e = std::getenv("XM_C29_DIRECT")) direct_ = std::atoi(e) != 0;
   if (direct_) gen_tpb_ = kTpb;
+  // Degree counting of the big rounds: 4-bit counters (64 KB of dynamic shared memory, one atomic per edge with no
+  // result to wait for) on NVIDIA; AMD's 64 KB per workgroup has no room for them. Developer: XM_C29_NIBBLE=0/1.
+  nibble_ = dev_.info().vendor == gpu::Vendor::Nvidia;
+  if (const char* e = std::getenv("XM_C29_NIBBLE")) nibble_ = std::atoi(e) != 0;
+  round_shared_ = nibble_ ? (1u << (29 - kNbBits)) / 2 : 0;  // 4 bits per node
+  // Rounds whose survivors are staged and written as runs (NVIDIA): only where buckets are full enough to pay for the
+  // barriers. Developer: XM_C29_RSTAGE=<rounds>.
+  stage_rounds_ = direct_ ? 0 : 1;
+  if (const char* e = std::getenv("XM_C29_RSTAGE")) stage_rounds_ = std::atoi(e);
   if (const char* e = std::getenv("XM_C29_GEN_TPB")) gen_tpb_ = uint32_t(std::atoi(e));        // developer
   const uint64_t per_bucket = kEdges >> kNbBits;
   capb_ = uint32_t(per_bucket + per_bucket / 25 + 512) & ~1u;  // +4% (the spread is ~0.3% = 1 sd); even: the
@@ -76,7 +85,8 @@ bool Engine::init(std::string& err) {
   const std::string src = "#define NB_BITS " + std::to_string(kNbBits) + "\n#define CAPB " + std::to_string(capb_) +
                           "u\n#define TPB " + std::to_string(kTpb) + "\n#define GEN_SB " + std::to_string(kGenSb) +
                           "\n#define GEN_TPB " + std::to_string(gen_tpb_) + "\n" +
-                          (direct_ ? "#define GEN_DIRECT 1\n#define SPLIT_DIRECT 1\n" : "") + kernel;
+                          (direct_ ? "#define GEN_DIRECT 1\n#define SPLIT_DIRECT 1\n#define ROUND_STAGE 0\n" : "") +
+                          (nibble_ ? "#define ROUND_NIBBLE 1\n" : "") + kernel;
   std::vector<std::string> opts;
   if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
   if (!gpu::rtc_compile(dev_.info(), src, "c29.cu", opts, module_)) {
@@ -133,10 +143,11 @@ bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err)
   int r = 0;
   for (; r < rounds_ && total >= flat_edges_; ++r) {
     uint32_t side = uint32_t(r & 1);
-    void* args[] = {&side, &d_a_, &d_cnt_a_, &d_b_, &d_cnt_b_};
+    uint32_t stage = r < stage_rounds_ ? 1u : 0u;
+    void* args[] = {&side, &d_a_, &d_cnt_a_, &d_b_, &d_cnt_b_, &stage};
     const bool segs = total >= seg_edges_;  // per-block segments while edges are many, else whole coarse buckets
     if ((!segs && !dev_.memset(d_cnt_b_, 0, 4 * kNc)) ||
-        !dev_.launch(segs ? "c29_round" : "c29_round_r", nb, 1, 1, kTpb, 1, 1, 0, args))
+        !dev_.launch(segs ? "c29_round" : "c29_round_r", nb, 1, 1, kTpb, 1, 1, segs ? round_shared_ : 0, args))
       return fail();
     if (r < 4) mark("  round kernel", r);  // (profile mode: the first rounds' kernel and split separately)
     if (!split(side ^ 1, total, segs ? nb : 1)) return fail();
