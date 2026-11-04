@@ -355,15 +355,23 @@ extern "C" __global__ __launch_bounds__(SPLIT_TPB) void c29_split(u32 side, cons
 // Visits the n edges at e (16-byte aligned) as BODY(x) for each uint2 x: 16-byte loads, two in flight per thread.
 // (Same speed as one 8-byte load per iteration on an RTX 3060; the rounds wait on the bitmap atomics' results:
 // short-scoreboard and MIO stalls. Warp-aggregated atomics on the 64 bucket counters (match.any) were slower.)
-#define FOR_EDGES(e, n, BODY) FOR_EDGES_TB(e, n, TPB, BODY)
-#define FOR_EDGES_TB(e, n, TB, BODY)                                                  \
+// FOR_EDGES_REV: the same, last edges first. A round reads its bucket twice (count, then filter); read back to front
+// the second time, its first reads are the ones the cache most likely still holds.
+#ifndef REV_PASS
+#define REV_PASS 1
+#endif
+#define FOR_EDGES(e, n, BODY) FOR_EDGES_D(e, n, TPB, 0, BODY)
+#define FOR_EDGES_TB(e, n, TB, BODY) FOR_EDGES_D(e, n, TB, 0, BODY)
+#define FOR_EDGES_REV(e, n, TB, BODY) FOR_EDGES_D(e, n, TB, REV_PASS, BODY)
+#define FOR_EDGES_D(e, n, TB, REV, BODY)                                              \
   {                                                                                   \
     const uint4* e4_ = reinterpret_cast<const uint4*>(e);                             \
     const u32 n2_ = (n) >> 1;                                                         \
-    for (u32 j_ = threadIdx.x; j_ < n2_; j_ += 2 * (TB)) {                            \
+    for (u32 j0_ = threadIdx.x; j0_ < n2_; j0_ += 2 * (TB)) {                         \
+      const u32 j_ = (REV) ? n2_ - 1 - j0_ : j0_;                                     \
       const uint4 a_ = e4_[j_];                                                       \
-      const bool hb_ = j_ + (TB) < n2_;                                               \
-      const uint4 b_ = hb_ ? e4_[j_ + (TB)] : make_uint4(0, 0, 0, 0);                 \
+      const bool hb_ = j0_ + (TB) < n2_;                                              \
+      const uint4 b_ = hb_ ? e4_[(REV) ? j_ - (TB) : j_ + (TB)] : make_uint4(0, 0, 0, 0); \
       { const uint2 x = make_uint2(a_.x, a_.y); BODY }                                \
       { const uint2 x = make_uint2(a_.z, a_.w); BODY }                                \
       if (hb_) {                                                                      \
@@ -426,7 +434,7 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round(u32 side, const uint
       for (u32 k = 0; k < ROUND_PER; ++k) {
         const u32 i = i0 + k * TPB + threadIdx.x;
         if (i < n) {
-          const uint2 x = e[i];
+          const uint2 x = e[REV_PASS ? n - 1 - i : i];
           const u32 l = (side ? x.y : x.x) & lmask;
           if (DEG_KEEP(l))
             stage_put<RSLOTS>(stage, fill, cnt, o, CCAP, ROUND_SEG, (side ? x.x : x.y) >> CSHIFT, x);
@@ -437,7 +445,7 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round(u32 side, const uint
   } else
 #endif
   {
-    FOR_EDGES(e, n, {
+    FOR_EDGES_REV(e, n, TPB, {
       const u32 l = (side ? x.y : x.x) & lmask;
       if (DEG_KEEP(l)) {
         const u32 co = (side ? x.x : x.y) >> CSHIFT;
@@ -473,7 +481,7 @@ __device__ __forceinline__ void round_r(u32 side, const uint2* __restrict__ in,
     if (atomicOr(&s1[l >> 5], m) & m) atomicOr(&s2[l >> 5], m);
   })
   __syncthreads();
-  FOR_EDGES_TB(e, n, RTPB, {
+  FOR_EDGES_REV(e, n, RTPB, {
     const u32 l = (side ? x.y : x.x) & lmask;
     if (s2[l >> 5] >> (l & 31) & 1u) atomicAdd(&cnt[(side ? x.x : x.y) >> CSHIFT], 1u);
   })

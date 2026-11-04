@@ -773,6 +773,9 @@ Profile after that (fixed 52 rounds, 2026-11-04): RTX 3060 generation 46 + split
   resident per SM (32 KB of bitmaps each), ~150 waves of blocks. With 256-thread blocks below 2^24 edges: 0.22 ms per
   late round kernel, RTX 3060 4.08 -> 4.20 g/s (cutoff 2^22 4.17, 2^23 4.19, 2^24 4.20, 2^25 4.16, 2^26 4.10). RX
   9070 XT unchanged (8.42-8.44).
+- A round reads its bucket twice (count, then filter); the second pass now goes back to front, so it starts on what
+  the cache still holds: RX 9070 XT 8.44 -> 8.53 g/s (round 0 kernel 18.0 -> 16.5 ms), RTX 3060 4.19 -> 4.20 (its
+  3 MB L2 holds little of a 1 MB bucket per SM). Fewer resident workgroups (padding the LDS) did not help further.
 - Not kept: counting a coarse bucket's degrees with global counters that stay in the cache (1024 blocks per coarse
   bucket, 64 buckets in turn), to drop the splits: 536M counter atomics took 100 ms (bitmaps) / 155 ms (4-bit
   counters) on the 3060 and 17 / 20 ms on the 9070 XT, against splits of 28 and 17 ms. 8192 fine buckets: the 9070
