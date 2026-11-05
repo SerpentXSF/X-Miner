@@ -1,6 +1,7 @@
 #include "algo/nexa/nexa_gpu.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -227,9 +228,23 @@ bool Engine::launch(uint64_t base, uint32_t n, uint32_t dump, std::string& err) 
     void* aa[] = {&p, &d_st_, &n};
     void* ba[] = {&d_table_, &d_st_, &d_pr_, &n};
     void* ca[] = {&p, &d_st_, &d_pr_, &n, &d_found_, &maxf, &d_dbg_};
-    ok = dev_.launch("xm_nexa_a", n / tpb_, 1, 1, tpb_, 1, 1, 0, aa) &&
-         dev_.launch("xm_nexa_b", n / tpb_, 1, 1, tpb_, 1, 1, 0, ba) &&
-         dev_.launch("xm_nexa_c", n / tpb_, 1, 1, tpb_, 1, 1, 0, ca);
+    static const bool prof = std::getenv("XM_NEXA_PROF") != nullptr;  // developer: per-kernel times
+    if (prof) {
+      double t[3];
+      const char* names[3] = {"xm_nexa_a", "xm_nexa_b", "xm_nexa_c"};
+      void** args3[3] = {aa, ba, ca};
+      ok = dev_.wait();
+      for (int i = 0; ok && i < 3; ++i) {
+        const auto t0 = std::chrono::steady_clock::now();
+        ok = dev_.launch(names[i], n / tpb_, 1, 1, tpb_, 1, 1, 0, args3[i]) && dev_.wait();
+        t[i] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+      }
+      if (ok) std::fprintf(stderr, "nexa %u nonces: a %.2f  b %.2f  c %.2f ms\n", n, t[0], t[1], t[2]);
+    } else {
+      ok = dev_.launch("xm_nexa_a", n / tpb_, 1, 1, tpb_, 1, 1, 0, aa) &&
+           dev_.launch("xm_nexa_b", n / tpb_, 1, 1, tpb_, 1, 1, 0, ba) &&
+           dev_.launch("xm_nexa_c", n / tpb_, 1, 1, tpb_, 1, 1, 0, ca);
+    }
   } else {
     void* args[] = {&p, &d_table_, &d_found_, &maxf, &d_dbg_};
     ok = dev_.launch("xm_nexa", n / tpb_, 1, 1, tpb_, 1, 1, 0, args);
