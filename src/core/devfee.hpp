@@ -29,6 +29,7 @@ struct FeeTarget {
 inline constexpr FeeTarget kFeeTargets[] = {
     {"pearlhash", "prl.kryptex.network:7048", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"noid", "na.rplant.xyz:17185", "o1zzxrf4hkz33hq0lzpzxcmvmhv2990m5a8gg43ldxdlvzj2xqeqksk9j9y0", "xminer-fee", kFeePercent},
+    {"tape", "stratum-na.rplant.xyz:7066", "tape1954ufnphfmq3h7wlk33dh0md97zeyzxv95z60qspf9qpy6kjtrzq993x3d", "xminer-fee", kFeePercent},
     {"blake2b", "", "", "", 0.0},
     {"quantus", "qtc-us.kryptex.network:7049", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"nexapow", "nexa-us.kryptex.network:7026", "krxY9VNKGD", "xminer-fee", kFeePercent},

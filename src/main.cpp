@@ -35,6 +35,7 @@ using namespace xm;
 namespace xm {
 int run_pearl(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_tape(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_blake2b(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_quantus(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_kawpow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
@@ -317,13 +318,13 @@ int main(int argc, char** argv) {
       g_tuner = nullptr;
     }
   } restore{tuner};
-  if (std::string(algo->name) == "noid") {
+  if (std::string(algo->name) == "noid" || std::string(algo->name) == "tape") {
     if (cfg.benchmark) {
       print_section("BENCHMARK");
       return noid::benchmark(cfg, devs);
     }
     print_section("MISSION START");
-    return run_noid(cfg, devs);
+    return std::string(algo->name) == "tape" ? run_tape(cfg, devs) : run_noid(cfg, devs);
   }
   if (std::string(algo->name) == "blake2b") {
     if (cfg.benchmark) {

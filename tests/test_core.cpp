@@ -43,6 +43,7 @@ TEST(zero_fee_never_windows) {
 TEST(fee_targets_listed) {
   CHECK(fee_target("pearlhash") != nullptr);
   CHECK(fee_target("noid") != nullptr);
+  CHECK(fee_target("tape") != nullptr && fee_target("tape")->wallet[0] != 0);
   CHECK_NEAR(fee_target("blake2b")->percent, 0.0, 0.0);
   CHECK(fee_target("nope") == nullptr);
 }

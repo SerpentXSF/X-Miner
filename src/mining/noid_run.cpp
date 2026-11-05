@@ -1,4 +1,6 @@
-// Parano1d mining: the shared coordinator with the Parano1d engine and pool.
+// Parano1d mining: the shared coordinator with the Parano1d engine and pool. RETRO BOOMER (TAPE) is a Parano1d
+// fork with the same proof of work and stratum (rplant, tested live 2026-11-04): the same engine under its own
+// name, so it has its own dev-fee target.
 #include "algo/noid/noid_gpu.hpp"
 #include "mining/coordinator.hpp"
 #include "pool/noid_pool.hpp"
@@ -7,8 +9,16 @@ namespace xm {
 
 namespace {
 
-struct NoidTraits {
+struct NoidTag {
   static constexpr const char* kName = "noid";
+};
+struct TapeTag {
+  static constexpr const char* kName = "tape";
+};
+
+template <class Tag>
+struct NoidTraits {
+  static constexpr const char* kName = Tag::kName;
   // The GPU pre-filters on the top 64 digest bits, so a CPU reject is an expected near miss, not an error.
   static constexpr bool kCpuRejectIsError = false;
   using Pool = NoidPool;
@@ -35,7 +45,11 @@ struct NoidTraits {
 }  // namespace
 
 int run_noid(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
-  return run_mining<NoidTraits>(cfg, devs);
+  return run_mining<NoidTraits<NoidTag>>(cfg, devs);
+}
+
+int run_tape(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
+  return run_mining<NoidTraits<TapeTag>>(cfg, devs);
 }
 
 }  // namespace xm

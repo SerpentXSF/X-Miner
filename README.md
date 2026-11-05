@@ -14,7 +14,7 @@ per 100 minutes of mining, shown in the console and API); none on BLAKE2b.
 | Bitcoin Knots RDTS | `blake2b` | Xelis (XEL) | `xelishashv3` |
 | Qubitcoin (QTC) | `qhash` | Neurai (XNA) | `neurai` |
 | EthereumPoW (ETHW) | `ethash` | Quai (QUAI) | `quai` |
-| Nexa (NEXA) | `nexapow` | | |
+| Nexa (NEXA) | `nexapow` | RETRO BOOMER (TAPE) | `tape` |
 
 Every algorithm is checked against its coin's published test vectors where they exist (ProgPowZ and Octopus have
 none: GPU against the CPU reference), by a GPU-against-CPU `--selftest`, and with shares accepted on a live pool from
@@ -27,6 +27,7 @@ both an RX 9070 XT and an RTX 3060.
    - `start-pearl-kryptex.bat` / `.sh`: Pearl on Kryptex (use your Kryptex `krx...` username)
    - `start-pearl-herominers.bat` / `.sh`: Pearl on HeroMiners (your PRL address)
    - `start-noid-rplant.bat` / `.sh`: Parano1d on rplant.xyz (your `o1...` NOID address)
+   - `start-tape-rplant.bat` / `.sh`: RETRO BOOMER (TAPE) on rplant.xyz (your `tape1...` address)
    - `start-quantus-kryptex.bat` / `.sh`: Quantus on Kryptex (your Kryptex `krx...` username)
    - `start-kawpow-kryptex.bat` / `.sh`: Ravencoin on Kryptex (your Kryptex `krx...` username)
    - `start-neurai-kryptex.bat` / `.sh`: Neurai on Kryptex (your Kryptex `krx...` username)
@@ -185,6 +186,8 @@ Pool certificates are not verified, as with other miners (pools use self-signed 
   the object-style Pearl stratum. Kryptex gets gzip-compressed share proofs (negotiated automatically).
 - Parano1d: rplant (`na.rplant.xyz:17185`, plain or TLS on the same port), InnovLab
   (`stratum+ssl://us.innovlab.cc:19601`) and other `parano1d-stratum-v1` pools.
+- RETRO BOOMER (TAPE): a Parano1d fork with the same proof of work and stratum. rplant (`stratum-na.rplant.xyz:7066`,
+  TLS on 17066; also `stratum-eu` / `stratum-asia`). Its own `--algorithm tape` so the dev fee mines TAPE.
 - Quantus: Kryptex (`qtc-us.kryptex.network:7049`, `qtc.kryptex.network:7049`; XMRig-style stratum).
 - KawPow (Ravencoin): Kryptex (`rvn-us.kryptex.network:7031`) and other pools that speak the kawpowminer stratum
   (`mining.subscribe` / `mining.notify` with header hash, seed hash, target and height).

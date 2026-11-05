@@ -2,6 +2,11 @@
 
 ## 0.2.0b (unreleased)
 
+- RETRO BOOMER (TAPE), `--algorithm tape` (alias `retroboomer`): a Parano1d fork with the same proof of work and
+  stratum, mined by the Parano1d engine under its own name (its own dev-fee target). rplant
+  (`stratum-na.rplant.xyz:7066`), with launchers `start-tape-rplant.bat` / `.sh`. Live on rplant: RX 9070 XT 34
+  accepted / 0 rejected in 10 minutes at 21.7 MH/s, RTX 3060 5 / 0 at 10.8 MH/s. 1% dev fee, mined on TAPE.
+
 - Parano1d (NOID) on NVIDIA: in each 32 x 32 carry-less product, two of a bit class's four integer products are summed
   in the multiply's addend instead of XORed (carry-free except when all four class masks are full, probability 2^-32
   per pair; such a nonce is lost at most, candidates are re-checked on the CPU). RTX 3060 9.9 -> 10.8 MH/s.
