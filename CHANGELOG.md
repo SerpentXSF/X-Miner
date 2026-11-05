@@ -27,6 +27,9 @@
   of the first pass in registers with the hash state after them, so the second pass hashes only the other 32.
   Generation 45.9 -> 39.2 ms, RTX 3060 4.20 -> 4.30 g/s; with 256-thread generating blocks (were 512) 36.1 ms,
   4.37 g/s.
+- Tari Cuckaroo29 AMD: the big rounds run one workgroup per WGP, each looping over buckets, so the buckets in flight
+  fit the Infinity Cache and the second pass over each hits it. RX 9070 XT 8.62 -> 8.88 g/s (round 0 16.5 ->
+  13.7 ms); NVIDIA keeps a block per bucket (no gain on the RTX 3060).
 
 - Nexa: a 24-bit comb window on NVIDIA cards with 10 GB or more (11 point additions per scalar instead of 13; the
   generated RTX 30 kernel is rebuilt for it) and 22 bits elsewhere. The 5.9 / 1.6 GB table is now built on the GPU by

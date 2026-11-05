@@ -788,6 +788,9 @@ Profile after that (fixed 52 rounds, 2026-11-04): RTX 3060 generation 46 + split
 - Late rounds, not kept: an 8 KB shared hash table of node degrees instead of the 32 KB of bitmaps below 2^21 edges
   (more blocks resident). The 9070 XT's late round kernel went 0.25 -> 0.15 ms, but only ~14 rounds use it: 8.62 vs
   8.65 g/s, RTX 3060 4.39 vs 4.40, within noise. Memsets (~1 us) and launches (~8 us) are not the late rounds' cost.
+- RX 9070 XT, segmented rounds with a capped grid (blocks loop over buckets) so fewer ~1 MB buckets are in flight
+  and the second pass hits the Infinity Cache: round 0 kernel at 16 blocks 13.2 ms, 24 12.9, 32 13.7, 40 15.0, 64+
+  ~16.5; round 1 best at 32. One block per WGP (32): 8.62 -> 8.88 g/s. RTX 3060 at 28 / 56 blocks: unchanged.
 - Not kept: counting a coarse bucket's degrees with global counters that stay in the cache (1024 blocks per coarse
   bucket, 64 buckets in turn), to drop the splits: 536M counter atomics took 100 ms (bitmaps) / 155 ms (4-bit
   counters) on the 3060 and 17 / 20 ms on the 9070 XT, against splits of 28 and 17 ms. 8192 fine buckets: the 9070

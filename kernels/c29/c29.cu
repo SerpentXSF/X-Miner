@@ -453,7 +453,8 @@ extern "C" __global__ __launch_bounds__(SPLIT_TPB) void c29_split(u32 side, cons
 // One trimming round on side `side` (0: u, 1: v), one block per fine bucket of that side; the survivors go to the
 // block's segments of the other side's coarse buckets (segs[c * NB + bucket]). stage != 0 (the host's choice per
 // round): the survivors are staged in shared memory and written as runs (RTX 3060 round 0: 41.0 -> 36.5 ms; with
-// fewer edges per bucket the barriers cost more than the scattered stores).
+// fewer edges per bucket the barriers cost more than the scattered stores). A block may loop over several buckets
+// (the host's grid; see Engine::rgrid_).
 extern "C" __global__ __launch_bounds__(TPB) void c29_round(u32 side, const uint2* __restrict__ in,
                                                             const u32* __restrict__ counts, uint2* __restrict__ out,
                                                             u32* __restrict__ segs, u32 stage_on) {
@@ -462,10 +463,10 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round(u32 side, const uint
 #if ROUND_STAGE
   __shared__ uint2 stage[NC][RSLOTS];
 #endif
+  for (u32 bk = blockIdx.x; bk < NB; bk += gridDim.x) {
   DEG_CLEAR
   for (u32 i = threadIdx.x; i < NC; i += TPB) cnt[i] = fill[i] = 0;
   __syncthreads();
-  const u32 bk = blockIdx.x;
   const u32 n = min(counts[bk], (u32)CAPB);
   const uint2* e = in + (size_t)bk * CAPB;
   const u32 lmask = (1u << BSHIFT) - 1u;
@@ -504,6 +505,8 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round(u32 side, const uint
     __syncthreads();
   }
   for (u32 i = threadIdx.x; i < NC; i += TPB) segs[i * NB + bk] = min(cnt[i], ROUND_SEG);
+  __syncthreads();
+  }
 }
 
 // The same round for fewer edges: the survivors go to whole coarse buckets (one segment each, ccounts[c]), slots

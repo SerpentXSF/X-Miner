@@ -57,6 +57,12 @@ bool Engine::init(std::string& err) {
   stage_rounds_ = direct_ ? 0 : 1;
   if (const char* e = std::getenv("XM_C29_RSTAGE")) stage_rounds_ = std::atoi(e);
   if (const char* e = std::getenv("XM_C29_GEN_TPB")) gen_tpb_ = uint32_t(std::atoi(e));        // developer
+  // AMD: the segmented rounds run one block per WGP, each looping over buckets, so the buckets in flight (~1 MB each
+  // in round 0) fit the Infinity Cache and the second pass over a bucket hits it (RX 9070 XT round 0 16.5 -> 13.7 ms,
+  // 8.62 -> 8.88 g/s). NVIDIA's 3 MB L2 gains nothing (RTX 3060 unchanged). Developer: XM_C29_RGRID (0: a block per
+  // bucket).
+  if (dev_.info().vendor == gpu::Vendor::Amd) rgrid_ = uint32_t(std::max(dev_.info().compute_units, 0));
+  if (const char* e = std::getenv("XM_C29_RGRID")) rgrid_ = uint32_t(std::atoi(e));
   if (const char* e = std::getenv("XM_C29_RSMALL")) small_edges_ = std::strtoull(e, nullptr, 0);  // developer
   if (const char* e = std::getenv("XM_C29_SPLIT_TPB")) split_tpb_ = uint32_t(std::atoi(e));    // developer
   const uint64_t per_bucket = kEdges >> kNbBits;
@@ -157,7 +163,7 @@ bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err)
     const bool small = total < small_edges_;  // (then smaller blocks)
     const char* kernel = segs ? "c29_round" : small ? "c29_round_rs" : "c29_round_r";
     if ((!segs && !dev_.memset(d_cnt_b_, 0, 4 * kNc)) ||
-        !dev_.launch(kernel, nb, 1, 1, small ? kRsTpb : kTpb, 1, 1, segs ? round_shared_ : 0, args))
+        !dev_.launch(kernel, segs && rgrid_ ? rgrid_ : nb, 1, 1, small ? kRsTpb : kTpb, 1, 1, segs ? round_shared_ : 0, args))
       return fail();
     if (r < 8) mark("  round kernel", r);  // (profile mode: the first rounds' kernel and split separately)
     if (!split(side ^ 1, total, segs ? nb : 1)) return fail();
