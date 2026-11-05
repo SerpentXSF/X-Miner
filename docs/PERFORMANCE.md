@@ -791,6 +791,11 @@ Profile after that (fixed 52 rounds, 2026-11-04): RTX 3060 generation 46 + split
 - RX 9070 XT, segmented rounds with a capped grid (blocks loop over buckets) so fewer ~1 MB buckets are in flight
   and the second pass hits the Infinity Cache: round 0 kernel at 16 blocks 13.2 ms, 24 12.9, 32 13.7, 40 15.0, 64+
   ~16.5; round 1 best at 32. One block per WGP (32): 8.62 -> 8.88 g/s. RTX 3060 at 28 / 56 blocks: unchanged.
+- Not kept (RX 9070 XT): generation straight into the 4096 fine buckets, to drop generation's split (17 ms). Per
+  sipblock round a workgroup counted its edges per bucket in LDS and reserved each bucket's run with one global atomic
+  (~8 edges, 64 bytes per run). Generation took 83 ms (11 ms without the stores; 16 ms with the same scatter folded
+  into a 2 MB window; 88 ms with buckets interleaved in 128-byte chunks), against 12 + 17 ms with coarse segments,
+  whose runs are ~4 KB. The run length, not the address spread, is the cost.
 - Not kept: counting a coarse bucket's degrees with global counters that stay in the cache (1024 blocks per coarse
   bucket, 64 buckets in turn), to drop the splits: 536M counter atomics took 100 ms (bitmaps) / 155 ms (4-bit
   counters) on the 3060 and 17 / 20 ms on the 9070 XT, against splits of 28 and 17 ms. 8192 fine buckets: the 9070
