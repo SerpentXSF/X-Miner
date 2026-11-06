@@ -101,6 +101,9 @@ TEST(hashrate_formatting) {
   CHECK_EQ(format_hashrate(100.43e12), std::string("100.43 TH/s"));
   CHECK_EQ(format_hashrate(25.06e6), std::string("25.06 MH/s"));
   CHECK_EQ(format_hashrate(950), std::string("950.00 H/s"));
+  set_hashrate_unit("g");  // Cuckaroo29: graphs per second
+  CHECK_EQ(format_hashrate(8.9), std::string("8.90 g/s"));
+  set_hashrate_unit("H");
   CHECK_EQ(format_duration(22320), std::string("6h 12m"));
 }
 

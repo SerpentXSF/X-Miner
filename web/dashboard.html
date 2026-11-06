@@ -114,8 +114,9 @@
 <div class="offline" id="offline">Miner not responding</div>
 <script>
 const COLORS = ["#39e0d0", "#ff3d8b", "#f5c518", "#2f6fdc", "#39e0a0", "#e8323c", "#faebca", "#8e9ac7"];
-const UNITS = ["H/s", "kH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"];
-function split(h) { let u = 0; while (h >= 1000 && u < 6) { h /= 1000; u++; } return [h, UNITS[u]]; }
+const PREFIXES = ["", "k", "M", "G", "T", "P", "E"];
+let unit = "H";  // the API's x.unit: "g" (graphs) for Cuckaroo29
+function split(h) { let u = 0; while (h >= 1000 && u < 6) { h /= 1000; u++; } return [h, PREFIXES[u] + unit + "/s"]; }
 function fmt(h) { const [v, u] = split(h); return v.toFixed(2) + " " + u; }
 function dur(s) { s = Math.floor(s); const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`; }
@@ -140,6 +141,7 @@ async function tick() {
   try { s = await (await fetch("/api/summary", {cache: "no-store"})).json(); $("offline").style.display = "none"; }
   catch { $("offline").style.display = "block"; return; }
   const x = s.x;
+  if (x.unit) unit = x.unit;
   $("ver").textContent = `v${x.version} · ${x.vendor} · ${x.algorithm}`;
   $("status").textContent = x.connected ? `● Online · ${dur(x.uptime)}` : "● Connecting";
   $("status").style.color = x.connected ? "var(--ok)" : "var(--vfin)";

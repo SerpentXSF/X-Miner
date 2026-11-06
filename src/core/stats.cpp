@@ -120,15 +120,25 @@ Snapshot Stats::snapshot() const {
   return out;
 }
 
+namespace {
+std::string& unit_store() {
+  static std::string u = "H";
+  return u;
+}
+}  // namespace
+
+void set_hashrate_unit(const std::string& unit) { unit_store() = unit; }
+const std::string& hashrate_unit() { return unit_store(); }
+
 std::string format_hashrate(double hps) {
-  static const char* units[] = {"H/s", "kH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"};
+  static const char* prefixes[] = {"", "k", "M", "G", "T", "P", "E"};
   int u = 0;
   while (hps >= 1000.0 && u < 6) {
     hps /= 1000.0;
     ++u;
   }
-  char buf[32];
-  std::snprintf(buf, sizeof buf, "%.2f %s", hps, units[u]);
+  char buf[48];
+  std::snprintf(buf, sizeof buf, "%.2f %s%s/s", hps, prefixes[u], unit_store().c_str());
   return buf;
 }
 

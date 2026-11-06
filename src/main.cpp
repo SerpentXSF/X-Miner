@@ -390,6 +390,7 @@ int main(int argc, char** argv) {
     return iron ? run_fishhash(cfg, devs) : run_karlsen(cfg, devs);
   }
   if (std::string(algo->name) == "cuckaroo29") {
+    set_hashrate_unit("g");  // graphs per second
     if (cfg.benchmark) {
       print_section("BENCHMARK");
       return c29::benchmark(cfg, devs);

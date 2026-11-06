@@ -2,6 +2,9 @@
 
 ## 0.2.0b (unreleased)
 
+- Cuckaroo29 rates show as graphs per second (`g/s`) in the console and dashboard (were labelled H/s); the API
+  summary carries the unit (`x.unit`).
+
 - RETRO BOOMER (TAPE), `--algorithm tape` (alias `retroboomer`): a Parano1d fork with the same proof of work and
   stratum, mined by the Parano1d engine under its own name (its own dev-fee target). rplant
   (`stratum-na.rplant.xyz:7066`), with launchers `start-tape-rplant.bat` / `.sh`. Live on rplant: RX 9070 XT 34

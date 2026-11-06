@@ -68,6 +68,9 @@ class Stats {
 };
 
 std::string format_hashrate(double hps);  // "100.43 TH/s"
+// The rate's base unit: "H" (hashes) by default, "g" for Cuckaroo29 (graphs). Set once at startup.
+void set_hashrate_unit(const std::string& unit);
+const std::string& hashrate_unit();
 std::string format_duration(double seconds);  // "6h 12m"
 
 }  // namespace xm

@@ -45,6 +45,7 @@ nlohmann::json build_summary(const Snapshot& s, const RunState& r) {
   out["x"] = {{"version", XM_VERSION},
               {"vendor", XM_VENDOR},
               {"algorithm", r.algorithm},
+              {"unit", hashrate_unit()},
               {"pool", r.pool},
               {"connected", r.connected},
               {"uptime", s.uptime_s},
