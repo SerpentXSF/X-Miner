@@ -14,6 +14,7 @@
 #pragma once
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <memory>
@@ -95,6 +96,7 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   // Watchdog: exit (so the launcher's restart loop recovers the GPU) after kMaxGpuErrors consecutive GPU errors, when
   // a GPU makes no progress for kStallSeconds while there is work, or when no GPU could be started.
   constexpr int kMaxGpuErrors = 10;
+  constexpr int kInitRetries = 5;  // start-up retries on out of GPU memory, 5 s apart
   constexpr int kStallSeconds = 120;
   std::atomic<int> exit_code{0}, init_failed{0};
   auto steady_s = [] {
@@ -124,10 +126,24 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
                             static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
       auto eng = T::make_engine(*dev, seed, cfg.intensity_for(i));
       std::string err;
-      if (!eng->init(err)) {
-        error("GPU", unit + " " + devs[i].name + ": " + err);
-        ++init_failed;
-        return;
+      // Out of GPU memory at start is often a miner that is still exiting (a quick restart): retry a few times.
+      for (int attempt = 1; !eng->init(err); ++attempt) {
+        std::string low = err;
+        for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        const bool oom = low.find("out of memory") != std::string::npos ||
+                         low.find("outofmemory") != std::string::npos ||
+                         low.find("not enough gpu memory") != std::string::npos;
+        if (!oom || attempt > kInitRetries || stop) {
+          error("GPU", unit + " " + devs[i].name + ": " + err);
+          ++init_failed;
+          return;
+        }
+        warn("GPU", unit + " " + devs[i].name + ": " + err + "; retrying in 5 s (" + std::to_string(attempt) + "/" +
+                        std::to_string(kInitRetries) + ")");
+        eng.reset();  // frees what the failed init allocated
+        for (int t = 0; t < 50 && !stop; ++t) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        eng = T::make_engine(*dev, seed, cfg.intensity_for(i));
+        err.clear();
       }
       int errors = 0;  // consecutive
       auto gpu_error = [&](const std::string& e) {

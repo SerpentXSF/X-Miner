@@ -2,6 +2,9 @@
 
 ## 0.2.0b (unreleased)
 
+- A GPU that is out of memory at start (often a previous miner still exiting, after a quick restart) is retried
+  five times, 5 s apart, instead of dropped.
+
 - Cuckaroo29 rates show as graphs per second (`g/s`) in the console and dashboard (were labelled H/s); the API
   summary carries the unit (`x.unit`).
 
