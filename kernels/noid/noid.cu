@@ -10,8 +10,16 @@
 #endif
 #include "noid/noid_comp.h"
 #include "noid/noid_perm.h"
+#if defined(NOID_T64)  // kernels/noidt: the 64-bit tower basis of noid_t64.h (CLMAD, CUDA 13.3+)
+#include "noid/noid_t64.h"
+typedef CMulNib64 NoidCMul;
+#define NOID_SMEM_WORDS NOID_T64_TBL_WORDS
+#else
+typedef CMulByte NoidCMul;
+#define NOID_SMEM_WORDS NOID_CTBL_WORDS
+#endif
 
-struct NoidJob {      // all W4 values in the composite basis
+struct NoidJob {      // all W4 values in the kernel's basis (composite, or tower64 with NOID_T64)
   W4 mid[4];          // sponge state after fields 0..9
   W4 f[5];            // fields 11..15
   W4 nonce_base;      // the nonce with the low 32 bits zero
@@ -25,14 +33,14 @@ struct RcGlobal {
 };
 
 // Grid of 1-D blocks; each thread tests one nonce (low 32 bits = counter_base + thread index).
-// f2t_hi[i] = top 64 bits of the tower image of composite bit i.
-// Constant multiplies use byte tables (NOID_CTBL_WORDS words = 24 KB) copied from tbl into shared memory / LDS;
-// launch with 24 KB of dynamic shared memory.
+// f2t_hi[i] = top 64 bits of the tower image of kernel-basis bit i.
+// Constant multiplies use tables (NOID_SMEM_WORDS words: 24 KB of byte tables, 12 KB of nibble tables with
+// NOID_T64) copied from tbl into shared memory / LDS; launch with that much dynamic shared memory.
 extern "C" __global__ void xm_noid_search(NoidJob job, const W4* __restrict__ rc, const uint32_t* __restrict__ tbl,
                                           const uint64_t* __restrict__ f2t_hi, uint32_t counter_base,
                                           uint32_t* __restrict__ found, uint32_t max_found) {
   extern __shared__ uint32_t stbl[];
-  for (uint32_t i = threadIdx.x; i < NOID_CTBL_WORDS; i += blockDim.x) stbl[i] = tbl[i];
+  for (uint32_t i = threadIdx.x; i < NOID_SMEM_WORDS; i += blockDim.x) stbl[i] = tbl[i];
   __syncthreads();
 #ifndef XM_NOID_LANES
 #define XM_NOID_LANES 1
@@ -40,7 +48,7 @@ extern "C" __global__ void xm_noid_search(NoidJob job, const W4* __restrict__ rc
   constexpr int L = XM_NOID_LANES;  // nonces per thread (only 1 is supported by permute())
   static_assert(L == 1, "XM_NOID_LANES");
   const uint32_t lo0 = counter_base + (blockIdx.x * blockDim.x + threadIdx.x) * L;
-  CMulByte mul{stbl};
+  NoidCMul mul{stbl};
   RcGlobal rcg{rc};
   W4 s[L][4];
 #pragma unroll

@@ -8,8 +8,8 @@
 #           <algo>_compute_80.ptx         (portable PTX, JIT-compiled by the driver on newer GPUs)
 #   Except quantus_sm_86.cubin: generated SASS from tools/qgen (Python + CuAssembler, see tools/qgen/README.md).
 #   Without -CuAssembler (or XM_CUASSEMBLER) the committed file is kept.
-#   noidcl_sm_86 / _sm_89 / _sm_120.cubin: NOID with the CLMAD instruction, CUDA 13.3+ only (-Nvcc13 <cuda-13.3>/bin/nvcc.exe);
-#   NVIDIA only, no PTX. Without -Nvcc13 the committed files are kept.
+#   noidt_* and noidcl_sm_86 / _sm_89 / _sm_120.cubin: NOID with the CLMAD instruction (tower64 and composite basis),
+#   CUDA 13.3+ only (-Nvcc13 <cuda-13.3>/bin/nvcc.exe); NVIDIA only, no PTX. Without -Nvcc13 the committed files are kept.
 param([string]$HipClang = "", [string[]]$AmdArchs = @("gfx1201", "gfx1200"), [string[]]$NvArchs = @("sm_86", "sm_89"),
       [string]$NvPtx = "compute_80", [string]$Nvcc = "", [string]$Nvcc13 = "", [switch]$NoPtx, [string]$CuAssembler = $env:XM_CUASSEMBLER)
 $ErrorActionPreference = "Stop"
@@ -35,8 +35,8 @@ foreach ($dir in $dirs) {
   $algo = $dir.Name
   $cu = Join-Path $dir.FullName "$algo.cu"
   $hip = Join-Path $dir.FullName "$algo.hip"
-  if ($algo -eq "noidcl") {
-    if (-not $Nvcc13) { Write-Warning "no -Nvcc13: keeping the committed noidcl cubins"; continue }
+  if ($algo -eq "noidcl" -or $algo -eq "noidt") {
+    if (-not $Nvcc13) { Write-Warning "no -Nvcc13: keeping the committed $algo cubins"; continue }
     foreach ($a in @("sm_86", "sm_89", "sm_120")) {
       & $Nvcc13 -ccbin $ccbin -cubin "-arch=$a" -O3 -std=c++17 -I (Join-Path $root "kernels") `
         -o (Join-Path $out "${algo}_$a.cubin") $cu

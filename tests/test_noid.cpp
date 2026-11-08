@@ -167,6 +167,43 @@ TEST(noid_composite_permutation_matches_reference) {
   }
 }
 
+TEST(noid_t64_basis_matches_reference) {
+  // Tower64 multiply and square (kernels/noid/noid_t64.h, CLMAD emulated on the CPU) against the flat reference.
+  uint64_t x = 0x0123456789abcdefull;
+  for (int i = 0; i < 300; ++i) {
+    x = x * 6364136223846793005ull + 1442695040888963407ull;
+    U128 a = u(x ^ (x >> 13), x * 0x9e3779b97f4a7c15ull);
+    x = x * 6364136223846793005ull + 1442695040888963407ull;
+    U128 b = u(x * 0xbf58476d1ce4e5b9ull, x ^ (x >> 31));
+    if (i == 0) a = u(~0ull, ~0ull), b = u(~0ull, ~0ull);
+    CHECK(t64_to_flat(flat_to_t64(a)) == a);
+    W4 ta = to_w4(flat_to_t64(a)), tb = to_w4(flat_to_t64(b));
+    CHECK(t64_to_flat(from_w4(gmult(ta, tb))) == gf_mul(a, b));
+    CHECK(t64_to_flat(from_w4(gsqrt(ta))) == gf_mul(a, a));
+  }
+  U128 c[6];
+  constants_flat(c);
+  for (const U128& k : c) CHECK(flat_to_t64(k).hi == 0);
+}
+
+TEST(noid_t64_permutation_matches_reference) {
+  std::vector<uint32_t> tbl(NOID_T64_TBL_WORDS);
+  constant_tables_t64(tbl.data());
+  CMulNib64 mul{tbl.data()};
+  RcT64 rc;
+  for (uint64_t seed : {0ull, 7ull, 0xfedcba9876543210ull}) {
+    State ref;
+    W4 s[4];
+    for (int i = 0; i < 4; ++i) {
+      ref[i] = u(seed * 0x9e3779b97f4a7c15ull + i, ~seed ^ (i * 0x1111ull));
+      s[i] = to_w4(flat_to_t64(ref[i]));
+    }
+    permute_flat(ref);
+    permute(s, mul, rc);
+    for (int i = 0; i < 4; ++i) CHECK(t64_to_flat(from_w4(s[i])) == ref[i]);
+  }
+}
+
 // Stratum parsing against a job captured from rplant (na.rplant.xyz:17185, height 241943).
 TEST(noid_stratum_job_layout) {
   const std::string fields_hex =
