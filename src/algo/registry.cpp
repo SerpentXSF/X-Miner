@@ -25,7 +25,7 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"tape", "retroboomer,retro-boomer", "RETRO BOOMER (TAPE, Parano1d PoW)", "noid", true},
       {"blake2b", "rdts,btcb2,blake2b-rdts", "Bitcoin Knots BLAKE2b (RDTS)", "blake2b", true},
       {"quantus", "qtc,qpow,quantus-network", "Quantus (QTC)", "quantus", true},
-      {"kawpow", "rvn,ravencoin", "Ravencoin (RVN)", "@rtc", true},
+      {"kawpow", "rvn,ravencoin,neox,neoxa,satox,satoxcoin", "Ravencoin (RVN)", "@rtc", true},  // Neoxa, Satoxcoin: plain KawPow
       {"firopow", "firo", "Firo (FIRO)", "@rtc", true},
       {"neurai", "xna,kawpow-xna", "Neurai (XNA)", "@rtc", true},
       {"evrprogpow", "evr,evrmore", "Evrmore (EVR)", "@rtc", true},

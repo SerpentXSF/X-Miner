@@ -11,6 +11,8 @@
   cache and DAG sized for 4x the epoch (Meowcoin-Foundation/Meowcoin @3186f63). Today's DAG is ~10.6 GB, so it needs
   a 12 GB card. GPU checked against the CPU reference; RTX 3060 at 99 W 20.5 MH/s. No dev fee yet.
 
+- Neoxa (NEOX) and Satoxcoin (SATOX) run plain KawPoW: `--algorithm neoxa` / `satox` are aliases of `kawpow`.
+
 - Selftest: Nexa no longer fails on the other-signature candidates the search kernel returns on purpose.
 
 - Parano1d (NOID) and TAPE on NVIDIA: a kernel with the GPU's carry-less multiply instruction (CLMAD, new in CUDA
