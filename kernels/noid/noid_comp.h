@@ -20,6 +20,21 @@
 typedef uint32_t NoidKOp;
 NOID_HD NoidKOp kop1(uint32_t w) { return w; }
 NOID_HD NoidKOp kopx(NoidKOp a, NoidKOp b) { return a ^ b; }
+#if defined(NOID_CLMAD)
+// CUDA 13.3+ (PTX ISA 9.3) on sm_80+: the hardware carry-less multiply (CLMAD, ~2 per SM per clock on the RTX
+// 3060, its own pipe), one instruction per K-product. NOID_CLMAD_MASK: bit i set = product i of gmulc on CLMAD,
+// clear = cl32 on IMAD.WIDE (to balance the pipes).
+#ifndef NOID_CLMAD_MASK
+#define NOID_CLMAD_MASK 0x1FF
+#endif
+NOID_HD uint64_t clmad32(uint32_t a, uint32_t b)
+{
+    uint64_t d;
+    asm("clmad.lo.u64 %0, %1, %2, %3;" : "=l"(d) : "l"((uint64_t)a), "l"((uint64_t)b), "l"(0ull));
+    return d;
+}
+#define kclmul_i(i, a, b) ((NOID_CLMAD_MASK >> (i) & 1) ? clmad32(a, b) : cl32(a, b))
+#endif
 NOID_HD uint64_t kclmul(NoidKOp a, NoidKOp b) { return cl32(a, b); }
 #else
 typedef KW NoidKOp;
@@ -31,6 +46,9 @@ NOID_HD uint64_t kclmul(NoidKOp a, NoidKOp b)
     cm32(a, b, e0, e1, o);
     return ((uint64_t)e1 << 32 | e0) ^ ((uint64_t)o << 16);
 }
+#endif
+#ifndef kclmul_i
+#define kclmul_i(i, a, b) kclmul(a, b)
 #endif
 
 // reduce a 64-bit product modulo y^32 + y^7 + y^3 + y^2 + 1
@@ -55,12 +73,14 @@ NOID_HD W4 gmulc(W4 a, W4 b)
     const NoidKOp a0 = kop1(a.w0), a1 = kop1(a.w1), a2 = kop1(a.w2), a3 = kop1(a.w3);
     const NoidKOp b0 = kop1(b.w0), b1 = kop1(b.w1), b2 = kop1(b.w2), b3 = kop1(b.w3);
     // Karatsuba over pairs of coefficients: (u0 + u1 z)(v0 + v1 z) = L + (M + L + H) z + H z^2
-    const uint64_t L0 = kclmul(a0, b0), L2 = kclmul(a1, b1), L1 = kclmul(kopx(a0, a1), kopx(b0, b1)) ^ L0 ^ L2;
-    const uint64_t H0 = kclmul(a2, b2), H2 = kclmul(a3, b3), H1 = kclmul(kopx(a2, a3), kopx(b2, b3)) ^ H0 ^ H2;
+    const uint64_t L0 = kclmul_i(0, a0, b0), L2 = kclmul_i(1, a1, b1);
+    const uint64_t L1 = kclmul_i(2, kopx(a0, a1), kopx(b0, b1)) ^ L0 ^ L2;
+    const uint64_t H0 = kclmul_i(3, a2, b2), H2 = kclmul_i(4, a3, b3);
+    const uint64_t H1 = kclmul_i(5, kopx(a2, a3), kopx(b2, b3)) ^ H0 ^ H2;
     const NoidKOp s0 = kopx(a0, a2), s1 = kopx(a1, a3), t0 = kopx(b0, b2), t1 = kopx(b1, b3);
-    const uint64_t m0 = kclmul(s0, t0), m2 = kclmul(s1, t1);
+    const uint64_t m0 = kclmul_i(6, s0, t0), m2 = kclmul_i(7, s1, t1);
     const uint64_t M0 = m0 ^ L0 ^ H0, M2 = m2 ^ L2 ^ H2;
-    const uint64_t M1 = kclmul(kopx(s0, s1), kopx(t0, t1)) ^ m0 ^ m2 ^ L1 ^ H1;
+    const uint64_t M1 = kclmul_i(8, kopx(s0, s1), kopx(t0, t1)) ^ m0 ^ m2 ^ L1 ^ H1;
     uint64_t c[7] = { L0, L1, L2 ^ M0, M1, H0 ^ M2, H1, H2 };
     return zfold(c);
 }

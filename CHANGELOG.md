@@ -2,6 +2,14 @@
 
 ## 0.2.0b (unreleased)
 
+- Parano1d (NOID) and TAPE on NVIDIA: a kernel with the GPU's carry-less multiply instruction (CLMAD, new in CUDA
+  13.3), for RTX 30 / 40 / 50. RTX 3060 at 99 W 9.8 -> 18.0 MH/s. It needs a driver that supports CUDA 13.3; with
+  an older driver the miner uses the previous kernel automatically.
+
+- Nexa: the GPU no longer tests whether R.y is a quadratic residue for every nonce (the test only picks k or n - k);
+  it checks the powHash of both candidate signatures and the CPU keeps the real one. RTX 3060 26.9 -> 28.5 MH/s
+  (+6%) at ~97 W.
+
 - A GPU that is out of memory at start (often a previous miner still exiting, after a quick restart) is retried
   five times, 5 s apart, instead of dropped.
 

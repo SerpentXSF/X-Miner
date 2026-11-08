@@ -39,6 +39,7 @@ class Engine {
   Engine(gpu::Device& dev, uint64_t seed);
   ~Engine();
   bool init(std::string& err);
+  bool clmad() const { return clmad_; }
   bool set_job(const Job& job, std::string& err);
   // Tests `batch` nonces (multiple of 256). Appends verified shares; returns the number of nonces tested (0 = error).
   double iterate(uint32_t batch, std::vector<Share>& shares, std::string& err);
@@ -55,6 +56,7 @@ class Engine {
   uint64_t cpu_rejects_ = 0;
   double share_work_ = 0;
   uint32_t tpb_ = 256;
+  bool clmad_ = false;  // the CLMAD kernel (kernels/noidcl) is loaded
   static constexpr uint32_t kMaxFound = 1024;
   static constexpr uint32_t kLanes = 1;  // nonces per GPU thread (XM_NOID_LANES in kernels/noid/noid.cu)
 };

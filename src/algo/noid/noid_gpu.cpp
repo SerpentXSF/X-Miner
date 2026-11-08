@@ -42,7 +42,12 @@ bool Engine::init(std::string& err) {
   // threads per compute unit. XM_NOID_TPB overrides (developer tuning).
   tpb_ = dev_.info().vendor == gpu::Vendor::Amd ? 512 : 256;
   if (const char* e = std::getenv("XM_NOID_TPB")) tpb_ = static_cast<uint32_t>(std::atoi(e));
-  if (!gpu::load_kernels(dev_, "noid", err)) return false;
+  // The CLMAD build (kernels/noidcl, CUDA 13.3+) first: the driver rejects it when it is too old, then the plain
+  // one. XM_NOID_CLMAD=0 skips it (developer A/B).
+  const char* cl = std::getenv("XM_NOID_CLMAD");
+  std::string why;
+  clmad_ = dev_.info().vendor == gpu::Vendor::Nvidia && !(cl && cl[0] == '0') && gpu::load_kernels(dev_, "noidcl", why);
+  if (!clmad_ && !gpu::load_kernels(dev_, "noid", err)) return false;
   std::vector<W4> rc(4 * 66);
   for (int l = 0; l < 4; ++l)
     for (int r = 0; r < 66; ++r)
