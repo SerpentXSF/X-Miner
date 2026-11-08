@@ -1,5 +1,5 @@
 // ProgPoW family CPU reference: Keccak, the Ethash light cache and dataset items, the ProgPoW program and hash, for
-// KawPow (Ravencoin), EvrProgPow (Evrmore), FiroPow (Firo), ProgPoW 0.9.2 (Epic Cash) and ProgPowZ (Zano). Used to re-check every GPU
+// KawPow (Ravencoin), EvrProgPow (Evrmore), MeowPow (Meowcoin), FiroPow (Firo), ProgPoW 0.9.2 (Epic Cash) and ProgPowZ (Zano). Used to re-check every GPU
 // share, by --selftest and by the unit tests.
 //
 // Ported from cpp-kawpow (https://github.com/RavenCommunity/cpp-kawpow @061d341, Copyright 2018-2019 Pawel Bylica,
@@ -39,8 +39,15 @@ struct Variant {
   const uint32_t* pad_init;   // 0.9.4: Keccak-f800 state words 10..24 of the first hash (15)
   const uint32_t* pad_final;  // 0.9.4: words 16..24 of the final hash (9)
   bool zano_math;          // ProgPowZ: random_math selector table rotated (sel 0 = clz, 2 = add, ...)
+  int regs = kRegs;        // mix registers per lane (MeowPow 16)
+  int size_x4_from = -1;   // MeowPow: from this epoch on, the DAG and light cache are sized for epoch * 4
 };
-extern const Variant kKawpow, kFiropow, kEvrprogpow, kProgpow092, kProgpowZ;
+extern const Variant kKawpow, kFiropow, kEvrprogpow, kMeowpow, kProgpow092, kProgpowZ;
+
+// The epoch whose light cache and DAG sizes a variant uses (the seed always uses the real epoch).
+inline int size_epoch(const Variant& v, int epoch) {
+  return v.size_x4_from >= 0 && epoch >= v.size_x4_from ? epoch * 4 : epoch;
+}
 
 // Kept for the KawPow-only callers.
 constexpr int kEpochLength = 7500;

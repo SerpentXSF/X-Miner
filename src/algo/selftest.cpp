@@ -173,6 +173,7 @@ bool progpow_check(gpu::Device& dev, std::string& detail, const kawpow::Variant&
 }
 bool kawpow_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kKawpow, 1234); }
 bool evrmore_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kEvrprogpow, 1234); }
+bool meowpow_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kMeowpow, 1234); }
 bool firopow_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kFiropow, 1234); }
 bool epic_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kProgpow092, 1234); }
 bool zano_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kProgpowZ, 1234); }
@@ -529,7 +530,7 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"evrprogpow", evrmore_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}, {"nexapow", nexa_check}, {"cuckaroo29", c29_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"evrprogpow", evrmore_check}, {"meowpow", meowpow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}, {"nexapow", nexa_check}, {"cuckaroo29", c29_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;

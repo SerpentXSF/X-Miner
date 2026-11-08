@@ -40,6 +40,12 @@ struct EvrmoreTag {  // EvrProgPow; pools send Ravencoin-style jobs
   using Pool = KawpowPool;
   static constexpr double kShareRateLimit = 0;
 };
+struct MeowcoinTag {  // MeowPow; pools send Ravencoin-style jobs
+  static constexpr const char* kName = "meowpow";
+  static const kawpow::Variant& variant() { return kawpow::kMeowpow; }
+  using Pool = KawpowPool;
+  static constexpr double kShareRateLimit = 0;
+};
 struct EpicTag {
   static constexpr const char* kName = "progpow-epic";
   static const kawpow::Variant& variant() { return kawpow::kProgpow092; }
@@ -102,6 +108,10 @@ int run_quai(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
 
 int run_evrmore(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   return run_mining<ProgpowTraits<EvrmoreTag>>(cfg, devs);
+}
+
+int run_meowcoin(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
+  return run_mining<ProgpowTraits<MeowcoinTag>>(cfg, devs);
 }
 
 int run_epic(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {

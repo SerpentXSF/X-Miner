@@ -122,6 +122,16 @@ TEST(evrprogpow_params) {
   CHECK_EQ(dataset_items_1024(175, kEvrprogpow.dataset_init), 36634621);  // ~4.69 GB DAG
 }
 
+TEST(meowpow_params) {
+  // Meowcoin: from epoch 110 the light cache and DAG are sized for epoch * 4; the seed keeps the real epoch.
+  CHECK_EQ(size_epoch(kMeowpow, 109), 109);
+  CHECK_EQ(size_epoch(kMeowpow, 110), 440);
+  CHECK_EQ(epoch_for_height(kMeowpow, 2141650), 285);
+  CHECK_EQ(light_cache_items(size_epoch(kMeowpow, 285)), 2596849);
+  CHECK_EQ(dataset_items_1024(size_epoch(kMeowpow, 285)), 83099641);  // ~10.6 GB DAG
+  CHECK_EQ(size_epoch(kKawpow, 613), 613);
+}
+
 TEST(firopow_epoch_clamp) {
   CHECK_EQ(epoch_for_height(kFiropow, 926 * 1300), 926);
   CHECK_EQ(epoch_for_height(kFiropow, 927 * 1300), 650);

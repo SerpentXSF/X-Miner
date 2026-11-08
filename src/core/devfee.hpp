@@ -37,6 +37,7 @@ inline constexpr FeeTarget kFeeTargets[] = {
     {"kawpow", "rvn-us.kryptex.network:7031", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"neurai", "xna-us.kryptex.network:7024", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"evrprogpow", "", "", "", kFeePercent},  // no developer EVR address yet: fee off
+    {"meowpow", "", "", "", kFeePercent},     // no developer MEWC address yet: fee off
     {"quai", "quai-kawpow.kryptex.network:7043", "0x00498b94BA83D99043E592162F68e1B681835E77", "xminer-fee", kFeePercent},
     {"firopow", "pool.woolypooly.com:3104", "aHc8mHivZB9qM6MhKRRdPchpEBzoqWco8D", "xminer-fee", kFeePercent},
     {"etchash", "etc-us.kryptex.network:7033", "krxY9VNKGD", "xminer-fee", kFeePercent},

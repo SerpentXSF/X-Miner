@@ -15,7 +15,7 @@ namespace xm::kawpow {
 namespace {
 
 // Shared by every generated module: types, KISS99, Keccak-f800 / f1600, the Ethash DAG generator.
-// One hash is worked by 16 consecutive threads ("lanes"), each holding 32 mix registers; thread k of a 16-thread
+// One hash is worked by 16 consecutive threads ("lanes"), each holding 32 mix registers (REGS; MeowPow 16); thread k of a 16-thread
 // group also owns nonce k (its Keccak seed and final hash), so the Keccak work is not repeated per lane.
 const char* kHead = R"KRN(
 typedef unsigned int u32;
@@ -168,12 +168,12 @@ INIT_PAD
   u32 digest[8];
 #pragma unroll 1
   for (u32 h = 0; h < 16; ++h) {
-    u32 mix[32];
+    u32 mix[REGS];
     {
       const u32 s0 = SHFL(SEED_LO, h), s1 = SHFL(SEED_HI, h);
       u32 z = fnv1a(FNV_OFFSET, s0), w = fnv1a(z, s1), jsr = fnv1a(w, lane), jcong = fnv1a(jsr, lane);
 #pragma unroll
-      for (int i = 0; i < 32; ++i) mix[i] = kiss(z, w, jsr, jcong);
+      for (int i = 0; i < REGS; ++i) mix[i] = kiss(z, w, jsr, jcong);
     }
 #pragma unroll 1
     for (u32 r = 0; r < 64; ++r) {
@@ -185,7 +185,7 @@ DAG_MERGE
     }
     u32 lh = FNV_OFFSET;
 #pragma unroll
-    for (int i = 0; i < 32; ++i) lh = fnv1a(lh, mix[i]);
+    for (int i = 0; i < REGS; ++i) lh = fnv1a(lh, mix[i]);
     u32 dg[8];
 #pragma unroll
     for (int i = 0; i < 8; ++i) dg[i] = FNV_OFFSET;
@@ -277,7 +277,7 @@ std::string kernel_source(const Variant& v, uint64_t period, uint32_t tpb) {
   body.replace(body.find("INIT_PAD"), 8, init.str());
   body.replace(body.find("FINAL_STATE"), 11, fin.str());
   std::ostringstream src;
-  src << "#define TPB " << tpb << "\n#define DAG_PARENTS " << v.parents << "u\n"
+  src << "#define TPB " << tpb << "\n#define DAG_PARENTS " << v.parents << "u\n#define REGS " << v.regs << "\n"
       << "#define SEED_LO " << (v.v092 ? "bswap32(state2[1])" : "state2[0]") << "\n"
       << "#define SEED_HI " << (v.v092 ? "bswap32(state2[0])" : "state2[1]") << "\n"
       << "// " << v.name << " period " << period << "\n" << kHead << body;
@@ -294,7 +294,8 @@ std::shared_ptr<const Light> shared_light(const Variant& v, int epoch) {
   for (auto i = cache.begin(); i != cache.end();)  // keep at most the previous epoch of each variant
     i = i->first.first == key.first && i->first.second < epoch - 1 ? cache.erase(i) : std::next(i);
   info("DAG", "building the epoch " + std::to_string(epoch) + " light cache");
-  auto l = make_light(epoch, v.parents, v.dataset_init);
+  const int se = size_epoch(v, epoch);
+  auto l = make_light_sized(epoch, v.parents, light_cache_items(se), dataset_items_1024(se, v.dataset_init), epoch);
   cache[key] = l;
   return l;
 }

@@ -17,6 +17,10 @@ const uint32_t kRavenFinal[9] = {0x72, 0x41, 0x56, 0x45, 0x4E, 0x43, 0x4F, 0x49,
 // src/crypto/ethash/lib/ethash/progpow.cpp:157-172).
 const uint32_t kEvrInit[15] = {0x45, 0x56, 0x52, 0x4D, 0x4F, 0x52, 0x45, 0x2D, 0x50, 0x52, 0x4F, 0x47, 0x50, 0x4F, 0x57};
 const uint32_t kEvrFinal[9] = {0x45, 0x56, 0x52, 0x4D, 0x4F, 0x52, 0x45, 0x2D, 0x50};
+// MeowPow (Meowcoin): "MEOWCOINMEOWPOW" (Meowcoin-Foundation/Meowcoin @3186f63
+// src/crypto/ethash/lib/ethash/meowpow.cpp:157-172).
+const uint32_t kMeowInit[15] = {0x4D, 0x45, 0x4F, 0x57, 0x43, 0x4F, 0x49, 0x4E, 0x4D, 0x45, 0x4F, 0x57, 0x50, 0x4F, 0x57};
+const uint32_t kMeowFinal[9] = {0x4D, 0x45, 0x4F, 0x57, 0x43, 0x4F, 0x49, 0x4E, 0x4D};
 const uint32_t kFiroInit[15] = {0x00000001, 0, 0, 0, 0, 0, 0, 0, 0x80008081, 0, 0, 0, 0, 0, 0};
 const uint32_t kFiroFinal[9] = {0, 0x00000001, 0, 0, 0, 0, 0, 0, 0x80008081};
 }  // namespace
@@ -27,6 +31,9 @@ const Variant kFiropow = {"firopow", 1300, 1, 11, 18, 512, (1ull << 30) + (1ull 
                           kFiroFinal, false};
 // EvrProgPow: KawPow with 12000-block epochs and a 3 GiB epoch-0 DAG (Evrmore ethash.h:29, ethash.cpp:25).
 const Variant kEvrprogpow = {"evrprogpow", 12000, 3, 11, 18, 512, 3ull << 30, -1, -1, false, kEvrInit, kEvrFinal, false};
+// MeowPow: 16 mix registers, period 6, 6 cache reads and 9 math ops per round (include/ethash/meowpow.hpp:20-24);
+// from epoch 110 the light cache and DAG are sized for epoch * 4 (lib/ethash/ethash.cpp:30, 139-147).
+const Variant kMeowpow = {"meowpow", 7500, 6, 6, 9, 512, 1ull << 30, -1, -1, false, kMeowInit, kMeowFinal, false, 16, 110};
 const Variant kProgpow092 = {"progpow", 30000, 50, 12, 20, 256, 1ull << 30, -1, -1, true, nullptr, nullptr, false};
 const Variant kProgpowZ = {"progpowz", 30000, 50, 12, 20, 256, 1ull << 30, -1, -1, true, nullptr, nullptr, true};
 
@@ -112,18 +119,19 @@ struct MixRng {
   Kiss99 rng{0, 0, 0, 0};
   int dst_seq[kRegs], src_seq[kRegs];
   int dst_n = 0, src_n = 0;
-  explicit MixRng(uint64_t period) {
+  int regs;
+  MixRng(uint64_t period, int nregs) : regs(nregs) {
     const uint32_t lo = static_cast<uint32_t>(period), hi = static_cast<uint32_t>(period >> 32);
     const uint32_t z = fnv1a(kFnvOffset, lo), w = fnv1a(z, hi), jsr = fnv1a(w, lo), jcong = fnv1a(jsr, hi);
     rng = Kiss99{z, w, jsr, jcong};
-    for (int i = 0; i < kRegs; ++i) dst_seq[i] = src_seq[i] = i;
-    for (int i = kRegs; i > 1; --i) {
+    for (int i = 0; i < regs; ++i) dst_seq[i] = src_seq[i] = i;
+    for (int i = regs; i > 1; --i) {
       std::swap(dst_seq[i - 1], dst_seq[rng() % i]);
       std::swap(src_seq[i - 1], src_seq[rng() % i]);
     }
   }
-  int next_dst() { return dst_seq[(dst_n++) % kRegs]; }
-  int next_src() { return src_seq[(src_n++) % kRegs]; }
+  int next_dst() { return dst_seq[(dst_n++) % regs]; }
+  int next_src() { return src_seq[(src_n++) % regs]; }
 };
 
 // Item `index` of the 2048-bit view of the dataset: four consecutive 512-bit items.
@@ -238,7 +246,7 @@ void dataset_item_512(const Light& light, uint64_t index, uint32_t out[16]) {
 }
 
 Program make_program(uint64_t period, const Variant& v) {
-  MixRng st(period);
+  MixRng st(period, v.regs);
   Program p;
   const int max_ops = v.cnt_cache > v.cnt_math ? v.cnt_cache : v.cnt_math;
   for (int i = 0; i < max_ops; ++i) {
@@ -253,9 +261,9 @@ Program make_program(uint64_t period, const Variant& v) {
     if (i < v.cnt_math) {
       Program::Op op{};
       op.cache = false;
-      const uint32_t src_rnd = st.rng() % (kRegs * (kRegs - 1));
-      op.m.src1 = int(src_rnd % kRegs);
-      op.m.src2 = int(src_rnd / kRegs);
+      const uint32_t src_rnd = st.rng() % uint32_t(v.regs * (v.regs - 1));
+      op.m.src1 = int(src_rnd % v.regs);
+      op.m.src2 = int(src_rnd / v.regs);
       if (op.m.src2 >= op.m.src1) ++op.m.src2;
       op.m.sel1 = st.rng();
       op.m.dst = st.next_dst();
@@ -325,7 +333,7 @@ Result hash(const Light& light, int height, const Hash256& header_hash, uint64_t
   for (uint32_t l = 0; l < uint32_t(kLanes); ++l) {
     const uint32_t jsr = fnv1a(w, l), jcong = fnv1a(jsr, l);
     Kiss99 rng{z, w, jsr, jcong};
-    for (int r = 0; r < kRegs; ++r) mix[l][r] = rng();
+    for (int r = 0; r < v.regs; ++r) mix[l][r] = rng();
   }
   const Program prog = make_program(uint64_t(height / v.period), v);
   const uint32_t num_items = uint32_t(light.dataset_items / 2);  // 2048-bit items
@@ -350,7 +358,7 @@ Result hash(const Light& light, int height, const Hash256& header_hash, uint64_t
   uint32_t lane_hash[kLanes];
   for (int l = 0; l < kLanes; ++l) {
     lane_hash[l] = kFnvOffset;
-    for (int r = 0; r < kRegs; ++r) lane_hash[l] = fnv1a(lane_hash[l], mix[l][r]);
+    for (int r = 0; r < v.regs; ++r) lane_hash[l] = fnv1a(lane_hash[l], mix[l][r]);
   }
   Result res;
   res.mix_hash.fill(kFnvOffset);
