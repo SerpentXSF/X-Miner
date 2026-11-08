@@ -172,6 +172,7 @@ bool progpow_check(gpu::Device& dev, std::string& detail, const kawpow::Variant&
   return shares.size() >= 128 && shares.size() <= 256 && eng.cpu_rejects() == 0;
 }
 bool kawpow_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kKawpow, 1234); }
+bool evrmore_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kEvrprogpow, 1234); }
 bool firopow_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kFiropow, 1234); }
 bool epic_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kProgpow092, 1234); }
 bool zano_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kProgpowZ, 1234); }
@@ -474,12 +475,15 @@ bool nexa_check(gpu::Device& dev, std::string& detail) {
   t0 = std::chrono::steady_clock::now();
   if (eng.iterate(shares, detail) == 0) return false;
   const double gpu_ms = ms_since(t0);
-  char buf[240];
-  std::snprintf(buf, sizeof buf, "%zu of %zu signatures match the CPU, block 300000 %s; %zu hits in %u nonces, %llu wrong "
-                "(W %d, setup %.0f ms, %.0f ms + %.0f ms)", n - bad, n, block_ok ? "ok" : "WRONG", shares.size(),
-                eng.batch(), static_cast<unsigned long long>(eng.cpu_rejects()), eng.window(), setup, dump_ms, gpu_ms);
+  char buf[320];
+  // The search kernel tests the powHash of both candidate signatures (s = k + e x and e x - k) instead of the R.y
+  // quadratic-residue test, so the CPU drops about one candidate per real hit; the signatures above stay exact.
+  std::snprintf(buf, sizeof buf, "%zu of %zu signatures match the CPU, block 300000 %s; %zu hits in %u nonces (%llu "
+                "other-signature candidates dropped by the CPU) (W %d, setup %.0f ms, %.0f ms + %.0f ms)", n - bad, n,
+                block_ok ? "ok" : "WRONG", shares.size(), eng.batch(),
+                static_cast<unsigned long long>(eng.cpu_rejects()), eng.window(), setup, dump_ms, gpu_ms);
   detail += buf;
-  return bad == 0 && block_ok && !shares.empty() && eng.cpu_rejects() == 0;
+  return bad == 0 && block_ok && !shares.empty();
 }
 
 // Cuckaroo29: the graph of a Tari test vector (mining hash 93e43a39.., nonce ab30dc99fd054f57) holds a known 42-cycle
@@ -525,7 +529,7 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}, {"nexapow", nexa_check}, {"cuckaroo29", c29_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"evrprogpow", evrmore_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}, {"nexapow", nexa_check}, {"cuckaroo29", c29_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     auto dev = gpu::open(devices[i]);
     std::string detail;

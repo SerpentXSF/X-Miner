@@ -115,6 +115,13 @@ TEST(progpow092_hash_vectors) {
   check_vectors(kProgpow092, kProgpow092Vectors, sizeof kProgpow092Vectors / sizeof kProgpow092Vectors[0]);
 }
 
+TEST(evrprogpow_params) {
+  // Evrmore: 12000-block epochs, 3 GiB epoch-0 DAG (largest prime <= 3 * 2^30 / 128 + epoch * 2^23 / 128 items).
+  CHECK_EQ(epoch_for_height(kEvrprogpow, 2101700), 175);
+  CHECK_EQ(dataset_items_1024(0, kEvrprogpow.dataset_init), 25165813);
+  CHECK_EQ(dataset_items_1024(175, kEvrprogpow.dataset_init), 36634621);  // ~4.69 GB DAG
+}
+
 TEST(firopow_epoch_clamp) {
   CHECK_EQ(epoch_for_height(kFiropow, 926 * 1300), 926);
   CHECK_EQ(epoch_for_height(kFiropow, 927 * 1300), 650);

@@ -2,6 +2,12 @@
 
 ## 0.2.0b (unreleased)
 
+- New coin: Evrmore (EVR), `--algorithm evrprogpow` (aliases `evr`, `evrmore`): EvrProgPow = KawPoW with 12000-block
+  epochs, a 3 GiB epoch-0 DAG and its own Keccak padding (EvrmoreOrg/Evrmore @0a7ba5a). GPU checked against the CPU
+  reference; RTX 3060 at 99 W 16.5 MH/s. No dev fee yet (no developer EVR address).
+
+- Selftest: Nexa no longer fails on the other-signature candidates the search kernel returns on purpose.
+
 - Parano1d (NOID) and TAPE on NVIDIA: a kernel with the GPU's carry-less multiply instruction (CLMAD, new in CUDA
   13.3), for RTX 30 / 40 / 50, working in a 64-bit tower basis of GF(2^128) so a multiply takes 6 full-width CLMADs.
   RTX 3060 at 99 W 9.8 -> 18.8 MH/s. It needs a driver that supports CUDA 13.3; with an older driver the miner uses

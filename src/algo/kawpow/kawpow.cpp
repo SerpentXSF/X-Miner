@@ -13,6 +13,10 @@ namespace {
 // (a 1 after the data, 0x80008081 at the end; firoorg/firo progpow.cpp).
 const uint32_t kRavenInit[15] = {0x72, 0x41, 0x56, 0x45, 0x4E, 0x43, 0x4F, 0x49, 0x4E, 0x4B, 0x41, 0x57, 0x50, 0x4F, 0x57};
 const uint32_t kRavenFinal[9] = {0x72, 0x41, 0x56, 0x45, 0x4E, 0x43, 0x4F, 0x49, 0x4E};
+// EvrProgPow (Evrmore): "EVRMORE-PROGPOW" in place of "RAVENCOINKAWPOW" (EvrmoreOrg/Evrmore @0a7ba5a
+// src/crypto/ethash/lib/ethash/progpow.cpp:157-172).
+const uint32_t kEvrInit[15] = {0x45, 0x56, 0x52, 0x4D, 0x4F, 0x52, 0x45, 0x2D, 0x50, 0x52, 0x4F, 0x47, 0x50, 0x4F, 0x57};
+const uint32_t kEvrFinal[9] = {0x45, 0x56, 0x52, 0x4D, 0x4F, 0x52, 0x45, 0x2D, 0x50};
 const uint32_t kFiroInit[15] = {0x00000001, 0, 0, 0, 0, 0, 0, 0, 0x80008081, 0, 0, 0, 0, 0, 0};
 const uint32_t kFiroFinal[9] = {0, 0x00000001, 0, 0, 0, 0, 0, 0, 0x80008081};
 }  // namespace
@@ -21,6 +25,8 @@ const uint32_t kFiroFinal[9] = {0, 0x00000001, 0, 0, 0, 0, 0, 0, 0x80008081};
 const Variant kKawpow = {"kawpow", 7500, 3, 11, 18, 512, 1ull << 30, -1, -1, false, kRavenInit, kRavenFinal, false};
 const Variant kFiropow = {"firopow", 1300, 1, 11, 18, 512, (1ull << 30) + (1ull << 29), 926, 650, false, kFiroInit,
                           kFiroFinal, false};
+// EvrProgPow: KawPow with 12000-block epochs and a 3 GiB epoch-0 DAG (Evrmore ethash.h:29, ethash.cpp:25).
+const Variant kEvrprogpow = {"evrprogpow", 12000, 3, 11, 18, 512, 3ull << 30, -1, -1, false, kEvrInit, kEvrFinal, false};
 const Variant kProgpow092 = {"progpow", 30000, 50, 12, 20, 256, 1ull << 30, -1, -1, true, nullptr, nullptr, false};
 const Variant kProgpowZ = {"progpowz", 30000, 50, 12, 20, 256, 1ull << 30, -1, -1, true, nullptr, nullptr, true};
 

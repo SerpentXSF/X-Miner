@@ -42,6 +42,7 @@ int run_kawpow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_firopow(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_neurai(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_quai(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_evrmore(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_epic(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_zano(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_etchash(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
@@ -344,7 +345,7 @@ int main(int argc, char** argv) {
   }
   {
     // ProgPoW family. Benchmark heights: late 2026 chains (Ravencoin epoch 613; Firo past the epoch-650 clamp;
-    // Neurai epoch 246; Quai on Ravencoin donor heights; Epic ~3.77 M; Zano ~3.3 M).
+    // Neurai epoch 246; Evrmore epoch 175; Quai on Ravencoin donor heights; Epic ~3.77 M; Zano ~3.3 M).
     struct Pp {
       const char* name;
       const kawpow::Variant* v;
@@ -355,6 +356,7 @@ int main(int argc, char** argv) {
                      {"firopow", &kawpow::kFiropow, 1250000, run_firopow},
                      {"neurai", &kawpow::kKawpow, 1845000, run_neurai},
                      {"quai", &kawpow::kKawpow, 4600000, run_quai},
+                     {"evrprogpow", &kawpow::kEvrprogpow, 2101700, run_evrmore},
                      {"progpow-epic", &kawpow::kProgpow092, 3770000, run_epic},
                      {"progpowz", &kawpow::kProgpowZ, 3300000, run_zano}};
     for (const auto& p : pp) {
