@@ -69,11 +69,13 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     const double expected = total * 65535.0 / 281474976710656.0 / job.difficulty;  // P = 0xFFFF 2^-48 / d
     char line[240];
-    std::snprintf(line, sizeof line, "%s average over %.0f s; %zu shares (expected %.0f), %llu GPU candidates failed the CPU check%s",
+    std::snprintf(line, sizeof line, "%s average over %.0f s; %zu shares (expected %.0f), %llu GPU candidates dropped by the CPU check%s",
                   format_hashrate(total / secs).c_str(), secs, shares, expected,
                   static_cast<unsigned long long>(eng.cpu_rejects()),
                   samples ? (", " + std::to_string(int(watts / samples)) + " W").c_str() : "");
-    const bool plausible = std::abs(double(shares) - expected) <= 4 * std::sqrt(expected) + 2 && eng.cpu_rejects() == 0;
+    // The kernel hashes both candidate signatures (k and n - k; kernels/nexa/nexa.cu nexa_stage2_sig), so about as
+    // many candidates as shares are dropped by the CPU check: only the share count decides.
+    const bool plausible = std::abs(double(shares) - expected) <= 4 * std::sqrt(expected) + 2;
     log_line(plausible ? Tone::Ok : Tone::Red, "DONE", line);
     if (!plausible) ++failures;
   }

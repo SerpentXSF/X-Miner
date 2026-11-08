@@ -357,6 +357,26 @@ __device__ __forceinline__ void sc_neg(u32 r[8], const u32 a[8]) {
   }
 }
 
+// r = (a - b) mod n for a, b < n
+__device__ __forceinline__ void sc_submod(u32 r[8], const u32 a[8], const u32 b[8]) {
+  long long c = 0;
+#pragma unroll
+  for (int i = 0; i < 8; ++i) {
+    c += (long long)a[i] - (long long)b[i];
+    r[i] = (u32)c;
+    c >>= 32;
+  }
+  if (c < 0) {
+    long long d = 0;
+#pragma unroll
+    for (int i = 0; i < 8; ++i) {
+      d += (long long)r[i] + (long long)FN[i];
+      r[i] = (u32)d;
+      d >>= 32;
+    }
+  }
+}
+
 // r = (a + b * c) mod n for a, b, c < n (once per nonce: plain loops).
 __device__ __forceinline__ void sc_muladd(u32 r[8], const u32 a[8], const u32 b[8], const u32 c[8]) {
   u32 t[17];
@@ -585,6 +605,11 @@ __device__ __forceinline__ void posdivsteps30(int& eta, int& jac, u32 ff, u32 gg
 // different iteration counts, and a warp runs the largest). A lane that reaches 30 steps idles; one that does fewer
 // (s) has its matrix scaled by 2^(30 - s), so the update still divides by 2^30. Invariant: f 2^s = u f0 + v g0,
 // g 2^s = q f0 + r g0. RTX 3060: kernel c -9% at QR_K 8 (7..10 within 2%).
+// NEXA_QR_GPU 1: the R.y quadratic-residue test on the GPU for every nonce; 0 (default): only in the debug dump
+// (selftest), otherwise both candidate signatures are hashed (nexa_stage2_sig).
+#ifndef NEXA_QR_GPU
+#define NEXA_QR_GPU 0
+#endif
 #ifndef QR_K
 #define QR_K 8
 #endif
@@ -977,7 +1002,8 @@ __device__ __forceinline__ void tree_down(u32 tid, u32 (*sh_t)[9], u32 iq[9]) {
 
 // Part 1: izp = 1 / PZ, izr = 1 / RZ, qr = R.y is a quadratic residue.
 __device__ __forceinline__ void nexa_stage2_inv(u32 tid, const u32 PZ[9], const u32 RZ[9], const u32 RY[9],
-                                                u32 (*sh_t)[9], u32 izp[9], u32 izr[9], bool& qr) {
+                                                u32 (*sh_t)[9], u32 izp[9], u32 izr[9], bool& qr,
+                                                bool doqr) {
   // ---- 1 / (PZ RZ) for the block ----
   u32 q[9];
   fe_mul(q, PZ, RZ);
@@ -995,7 +1021,7 @@ __device__ __forceinline__ void nexa_stage2_inv(u32 tid, const u32 PZ[9], const 
 #pragma unroll
       for (int i = 0; i < 9; ++i) sh_t[1][i] = r[i];
     }
-  } else {
+  } else if (doqr) {
     qr = ry_is_qr(RY, RZ);
   }
   __syncthreads();
@@ -1003,13 +1029,14 @@ __device__ __forceinline__ void nexa_stage2_inv(u32 tid, const u32 PZ[9], const 
   tree_down(tid, sh_t, iq);
   fe_mul(izp, iq, RZ);
   fe_mul(izr, iq, PZ);
-  if (tid < 32) qr = ry_is_qr(RY, RZ);  // after the last barrier: the block does not wait for it
+  if (doqr && tid < 32) qr = ry_is_qr(RY, RZ);  // after the last barrier: the block does not wait for it
 }
 
 // Part 2: the signature, powHash and the target check.
 __device__ __forceinline__ void nexa_stage2_sig(const Params& p, u32 tid, u32 x[8], u32 kk[8], const u32 h1[8],
                                                 bool valid, const u32 PX[9], const u32 PY[9], const u32 RX[9],
-                                                const u32 izp[9], const u32 izr[9], bool qr, u32* __restrict__ found,
+                                                const u32 izp[9], const u32 izr[9], bool qr, bool doqr,
+                                                u32* __restrict__ found,
                                                 u32 maxf, u32* __restrict__ dbg) {
   // ---- affine P.x, parity of P.y, R.x ----
   u32 zi2[9], t[9], px9[9], rx9[9];
@@ -1055,8 +1082,7 @@ __device__ __forceinline__ void nexa_stage2_sig(const Params& p, u32 tid, u32 x[
   limbs_to_be(sw, s);
 
   // ---- powHash = SHA256(R.x | s) ----
-  u32 ph[8];
-  {
+  auto pow_hash = [&](u32 ph[8], const u32 sw[8]) {
     u32 w[16];
 #pragma unroll
     for (int i = 0; i < 8; ++i) { w[i] = rxw[i]; w[8 + i] = sw[i]; }
@@ -1067,7 +1093,9 @@ __device__ __forceinline__ void nexa_stage2_sig(const Params& p, u32 tid, u32 x[
     for (int i = 1; i < 15; ++i) w[i] = 0u;
     w[15] = 512u;
     sha_blk(ph, w);
-  }
+  };
+  u32 ph[8];
+  pow_hash(ph, sw);
   if (p.dump) {
     u32* o = dbg + (size_t)(blockIdx.x * TPB + tid) * 24;
 #pragma unroll
@@ -1079,7 +1107,22 @@ __device__ __forceinline__ void nexa_stage2_sig(const Params& p, u32 tid, u32 x[
   const u32 h7 = ph[7], h6 = ph[6];
   const u64 top = (u64)((h7 >> 24) | ((h7 >> 8) & 0xff00u) | ((h7 << 8) & 0xff0000u) | (h7 << 24)) << 32 |
                   ((h6 >> 24) | ((h6 >> 8) & 0xff00u) | ((h6 << 8) & 0xff0000u) | (h6 << 24));
-  if (valid && top <= p.target_hi) {
+  bool hit = top <= p.target_hi;
+  if (!doqr) {
+    // The R.y quadratic-residue test only picks k or n - k: R.x and e are the same, s = k + e x or e x - k. With
+    // the test skipped (kk is k), the other signature's powHash is checked too; the CPU re-check of each candidate
+    // finds which one is real (about as many false candidates as real ones, all dropped there).
+    u32 s2[8], ph2[8];
+    sc_submod(s2, s, kk);
+    sc_submod(s2, s2, kk);
+    limbs_to_be(sw, s2);
+    pow_hash(ph2, sw);
+    const u32 g7 = ph2[7], g6 = ph2[6];
+    const u64 top2 = (u64)((g7 >> 24) | ((g7 >> 8) & 0xff00u) | ((g7 << 8) & 0xff0000u) | (g7 << 24)) << 32 |
+                     ((g6 >> 24) | ((g6 >> 8) & 0xff00u) | ((g6 << 8) & 0xff0000u) | (g6 << 24));
+    hit = hit || top2 <= p.target_hi;
+  }
+  if (valid && hit) {
     const u32 slot = atomicAdd(found, 1u);
     if (slot < maxf) found[1 + slot] = blockIdx.x * TPB + tid;
   }
@@ -1101,8 +1144,9 @@ extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const 
   comb_mul(RX, RY, RZ, kk, tab);
   u32 izp[9], izr[9];
   bool qr;
-  nexa_stage2_inv(tid, PZ, RZ, RY, sh_t, izp, izr, qr);
-  nexa_stage2_sig(p, tid, x, kk, h1, valid, PX, PY, RX, izp, izr, qr, found, maxf, dbg);
+  const bool doqr = NEXA_QR_GPU || p.dump;
+  nexa_stage2_inv(tid, PZ, RZ, RY, sh_t, izp, izr, qr, doqr);
+  nexa_stage2_sig(p, tid, x, kk, h1, valid, PX, PY, RX, izp, izr, qr, doqr, found, maxf, dbg);
 }
 #endif
 
@@ -1194,12 +1238,13 @@ extern "C" __global__ __launch_bounds__(TPB, MINB_C) void xm_nexa_c(Params p, co
   };
   u32 izp[9], izr[9];
   bool qr;
+  const bool doqr = NEXA_QR_GPU || p.dump;
   {
     u32 PZ[9], RY[9], RZ[9];
     load(PZ, 2);
     load(RY, 4);
     load(RZ, 5);
-    nexa_stage2_inv(tid, PZ, RZ, RY, sh_t, izp, izr, qr);
+    nexa_stage2_inv(tid, PZ, RZ, RY, sh_t, izp, izr, qr, doqr);
   }
   u32 x[8], kk[8], h1[8], PX[9], PY[9], RX[9];
 #pragma unroll
@@ -1208,7 +1253,7 @@ extern "C" __global__ __launch_bounds__(TPB, MINB_C) void xm_nexa_c(Params p, co
   load(PX, 0);
   load(PY, 1);
   load(RX, 3);
-  nexa_stage2_sig(p, tid, x, kk, h1, valid, PX, PY, RX, izp, izr, qr, found, maxf, dbg);
+  nexa_stage2_sig(p, tid, x, kk, h1, valid, PX, PY, RX, izp, izr, qr, doqr, found, maxf, dbg);
 }
 #endif
 #endif
