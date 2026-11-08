@@ -15,6 +15,7 @@ per 100 minutes of mining, shown in the console and API); none on BLAKE2b.
 | Qubitcoin (QTC) | `qhash` | Neurai (XNA) | `neurai` |
 | EthereumPoW (ETHW) | `ethash` | Quai (QUAI) | `quai` |
 | Nexa (NEXA) | `nexapow` | RETRO BOOMER (TAPE) | `tape` |
+| Evrmore (EVR) | `evrprogpow` | Meowcoin (MEWC) | `meowpow` |
 
 Every algorithm is checked against its coin's published test vectors where they exist (ProgPowZ and Octopus have
 none: GPU against the CPU reference), by a GPU-against-CPU `--selftest`, and with shares accepted on a live pool from
@@ -72,6 +73,8 @@ x-miner --algorithm firopow --pool pool.woolypooly.com:3104 --wallet FIRO_ADDRES
 x-miner --algorithm progpow-epic --pool epic.pool-pay.com:3333 --wallet ADDRESS@epicbox.epiccash.com --worker rig1
 x-miner --algorithm progpowz --pool us.zano.herominers.com:1110 --wallet ZANO_ADDRESS --worker rig1
 x-miner --algorithm xelishashv3 --pool xel-us.kryptex.network:7019 --wallet krxXXXXXXX --worker rig1
+x-miner --algorithm evrprogpow --pool evrprogpow.na.mine.zpool.ca:1330 --wallet BTC_ADDRESS --password c=BTC --worker rig1
+x-miner --algorithm meowpow --pool meowpow.na.mine.zpool.ca:1327 --wallet BTC_ADDRESS --password c=BTC --worker rig1
 x-miner --algorithm qhash --pool qtc-us-east.lproute.com:8610 --wallet QTC_ADDRESS --worker rig1
 x-miner --algorithm blake2b --pool us1.alphapool.tech:5555 --wallet ADDRESS --worker rig1
 ```
