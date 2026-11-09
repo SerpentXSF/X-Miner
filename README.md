@@ -34,6 +34,8 @@ both an RX 9070 XT and an RTX 3060.
    - `start-neurai-kryptex.bat` / `.sh`: Neurai on Kryptex (your Kryptex `krx...` username)
    - `start-etchash-kryptex.bat` / `.sh`: Ethereum Classic on Kryptex (your Kryptex `krx...` username)
    - `start-ethw-kryptex.bat` / `.sh`: EthereumPoW on Kryptex (your Kryptex `krx...` username)
+   - `start-evrmore-zpool.bat` / `.sh`: Evrmore on zpool (any payout address; set `PAYOUT` to its coin, e.g. BTC or LTC)
+   - `start-meowcoin-zpool.bat` / `.sh`: Meowcoin on zpool (same; needs a 12 GB card)
    - `start-quai-kryptex.bat` / `.sh`: Quai on Kryptex (your Quai `0x...` address; Kryptex has no username login for Quai)
    - `start-ergo-kryptex.bat` / `.sh`: Ergo on Kryptex (your Kryptex `krx...` username)
    - `start-nexa-kryptex.bat` / `.sh`: Nexa on Kryptex (your Kryptex `krx...` username)
