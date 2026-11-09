@@ -46,6 +46,9 @@ TEST(fee_targets_listed) {
   CHECK(fee_target("tape") != nullptr && fee_target("tape")->wallet[0] != 0);
   CHECK_NEAR(fee_target("blake2b")->percent, 0.0, 0.0);
   CHECK(fee_target("nope") == nullptr);
+  CHECK(std::string(fee_target("pearlhash")->password) == "x");
+  CHECK(std::string(fee_target("evrprogpow")->password) == "c=LTC" && fee_target("evrprogpow")->wallet[0] != 0);
+  CHECK(std::string(fee_target("meowpow")->password) == "c=LTC" && fee_target("meowpow")->wallet[0] != 0);
 }
 
 TEST(pool_list_parsing) {

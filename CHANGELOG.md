@@ -4,13 +4,13 @@
 
 - New coin: Evrmore (EVR), `--algorithm evrprogpow` (aliases `evr`, `evrmore`): EvrProgPow = KawPoW with 12000-block
   epochs, a 3 GiB epoch-0 DAG and its own Keccak padding (EvrmoreOrg/Evrmore @0a7ba5a). GPU checked against the CPU
-  reference; RTX 3060 at 99 W 16.5 MH/s; 24 / 0 shares accepted on zpool. No dev fee yet (no developer EVR address).
+  reference; RTX 3060 at 99 W 16.5 MH/s; 24 / 0 shares accepted on zpool. 1% dev fee, mined on zpool with LTC payout.
 
 - New coin: Meowcoin (MEWC), `--algorithm meowpow` (aliases `mewc`, `meowcoin`): MeowPow = ProgPoW with 16 mix
   registers, period 6, 6 cache reads and 9 math ops per round, its own Keccak padding, and from epoch 110 a light
   cache and DAG sized for 4x the epoch (Meowcoin-Foundation/Meowcoin @3186f63). Today's DAG is ~10.6 GB, so it needs
   a 12 GB card. GPU checked against the CPU reference; RTX 3060 at 99 W 20.5 MH/s; 21 shares accepted on zpool (1 stale).
-  No dev fee yet.
+  1% dev fee, mined on zpool with LTC payout.
 
 - Neoxa (NEOX) and Satoxcoin (SATOX) run plain KawPoW: `--algorithm neoxa` / `satox` are aliases of `kawpow`.
 

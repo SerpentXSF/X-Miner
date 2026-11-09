@@ -24,6 +24,7 @@ struct FeeTarget {
   const char* wallet;   // developer address
   const char* worker;
   double percent;       // per-algorithm override (blake2b is 0)
+  const char* password = "x";  // pool password (zpool: c=<payout coin>)
 };
 
 inline constexpr FeeTarget kFeeTargets[] = {
@@ -36,8 +37,8 @@ inline constexpr FeeTarget kFeeTargets[] = {
     {"cuckaroo29", "xtm-c29-us.kryptex.network:7040", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"kawpow", "rvn-us.kryptex.network:7031", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"neurai", "xna-us.kryptex.network:7024", "krxY9VNKGD", "xminer-fee", kFeePercent},
-    {"evrprogpow", "", "", "", kFeePercent},  // no developer EVR address yet: fee off
-    {"meowpow", "", "", "", kFeePercent},     // no developer MEWC address yet: fee off
+    {"evrprogpow", "evrprogpow.na.mine.zpool.ca:1330", "MLyBZc6YSKYcqGBw4BZtSZb8nRVfUZDFiM", "xminer-fee", kFeePercent, "c=LTC"},
+    {"meowpow", "meowpow.na.mine.zpool.ca:1327", "MLyBZc6YSKYcqGBw4BZtSZb8nRVfUZDFiM", "xminer-fee", kFeePercent, "c=LTC"},
     {"quai", "quai-kawpow.kryptex.network:7043", "0x00498b94BA83D99043E592162F68e1B681835E77", "xminer-fee", kFeePercent},
     {"firopow", "pool.woolypooly.com:3104", "aHc8mHivZB9qM6MhKRRdPchpEBzoqWco8D", "xminer-fee", kFeePercent},
     {"etchash", "etc-us.kryptex.network:7033", "krxY9VNKGD", "xminer-fee", kFeePercent},

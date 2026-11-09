@@ -29,6 +29,7 @@ struct FeePlan {
   bool enabled = false;
   std::vector<PoolEndpoint> pools;
   std::string login;  // wallet.worker
+  std::string password = "x";
   double percent = 0;
   double cycle_s = kCycleSeconds;
 };
@@ -71,6 +72,7 @@ inline FeePlan fee_plan(const std::string& algorithm) {
   }
   if (parse_pool_list(t->pool, p.pools) || p.pools.empty()) return p;
   p.login = join_login(wallet, t->worker);
+  if (t->password && t->password[0]) p.password = t->password;
   p.enabled = true;
   return p;
 }
@@ -124,7 +126,7 @@ class FeeRouter {
       bool window = mining ? sched_.advance(dt) : sched_.in_window();
       // Open the fee connection 20 s ahead so the first fee job is ready when the window starts.
       if (!fee_ && (window || sched_.seconds_to_window() < 20)) {
-        fee_ = std::make_unique<Pool>(plan_.pools, plan_.login, "x", on_fee_result_);
+        fee_ = std::make_unique<Pool>(plan_.pools, plan_.login, plan_.password, on_fee_result_);
         fee_->start();
       }
       bool want_fee = window && fee_ && fee_->job(j, v);
