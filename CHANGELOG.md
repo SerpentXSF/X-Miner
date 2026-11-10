@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.2.0c (unreleased)
+
 ## 0.2.0b (2026-11-09)
 
 - New coin: Evrmore (EVR), `--algorithm evrprogpow` (aliases `evr`, `evrmore`): EvrProgPow = KawPoW with 12000-block
