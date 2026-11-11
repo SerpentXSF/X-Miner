@@ -5,6 +5,8 @@
 - Nexa: the affine conversion's inverses come from a new kernel (Montgomery's trick over 32 nonces per thread, no
   block-wide barriers) and the points are stored coalesced. RX 9070 XT 54.7 -> 59.2 MH/s; RTX 3060 at 99 W 28.2 ->
   28.8 MH/s.
+- Nexa on AMD: the hashing kernel's SHA-256 rounds in groups of 32 (the compiler copied the state at every group of 16).
+  RX 9070 XT 59.0 -> 62.0 MH/s.
 
 ## 0.2.0b (2026-11-09)
 

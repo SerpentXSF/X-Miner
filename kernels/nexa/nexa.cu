@@ -29,22 +29,27 @@ __constant__ u32 K256[64] = {
 #define CH(e, f, g) ((g) ^ ((e) & ((f) ^ (g))))
 #define MAJ(a, b, c) (((a) & (b)) | ((c) & ((a) | (b))))
 
-// One block into st (w is consumed). Rounds in four unrolled groups of 16 (constant indices into w) to keep the
-// code size of the ~20 call sites down.
-__device__ __forceinline__ void sha_blk(u32 st[8], u32 w[16]) {
+// One block into st (w is consumed). Rounds in unrolled groups of G (constant indices into w) to keep the code size
+// of the ~20 call sites down. Stage 1 (kernel a: ~18 blocks per nonce) uses G = 32: with groups of 16 the AMD compiler
+// copies the state at each group's back edge (38% of kernel a's instructions were moves; RX 9070 XT a 3.6 -> 2.7 ms
+// per 1M nonces). Fully unrolled is barely faster and triples the run-time compile time.
+template <int G>
+__device__ __forceinline__ void sha_blk_g(u32 st[8], u32 w[16]) {
   u32 a = st[0], b = st[1], c = st[2], d = st[3], e = st[4], f = st[5], g = st[6], h = st[7];
 #pragma unroll 1
-  for (int r = 0; r < 64; r += 16) {
+  for (int r = 0; r < 64; r += G) {
 #pragma unroll
-    for (int j = 0; j < 16; ++j) {
-      if (r) w[j] += s1(w[(j + 14) & 15]) + w[(j + 9) & 15] + s0(w[(j + 1) & 15]);
-      const u32 t1 = h + S1(e) + CH(e, f, g) + K256[r + j] + w[j];
+    for (int j = 0; j < G; ++j) {
+      if (r || j >= 16) w[j & 15] += s1(w[(j + 14) & 15]) + w[(j + 9) & 15] + s0(w[(j + 1) & 15]);
+      const u32 t1 = h + S1(e) + CH(e, f, g) + K256[r + j] + w[j & 15];
       const u32 t2 = S0(a) + MAJ(a, b, c);
       h = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
     }
   }
   st[0] += a; st[1] += b; st[2] += c; st[3] += d; st[4] += e; st[5] += f; st[6] += g; st[7] += h;
 }
+__device__ __forceinline__ void sha_blk(u32 st[8], u32 w[16]) { sha_blk_g<16>(st, w); }
+__device__ __forceinline__ void sha_blk1(u32 st[8], u32 w[16]) { sha_blk_g<32>(st, w); }  // stage 1
 
 __device__ __forceinline__ void sha_iv(u32 st[8]) {
   st[0] = 0x6a09e667u; st[1] = 0xbb67ae85u; st[2] = 0x3c6ef372u; st[3] = 0xa54ff53au;
@@ -61,7 +66,7 @@ __device__ __forceinline__ void sha_32(u32 out[8], const u32 m[8]) {
   for (int i = 9; i < 15; ++i) w[i] = 0u;
   w[15] = 256u;
   sha_iv(out);
-  sha_blk(out, w);
+  sha_blk1(out, w);
 }
 
 // HMAC-SHA256 key states: inner / outer after the key's ipad / opad block (32-byte key).
@@ -70,11 +75,11 @@ __device__ __forceinline__ void hmac_keys(u32 is[8], u32 os[8], const u32 k[8]) 
 #pragma unroll
   for (int i = 0; i < 16; ++i) w[i] = (i < 8 ? k[i] : 0u) ^ 0x36363636u;
   sha_iv(is);
-  sha_blk(is, w);
+  sha_blk1(is, w);
 #pragma unroll
   for (int i = 0; i < 16; ++i) w[i] = (i < 8 ? k[i] : 0u) ^ 0x5c5c5c5cu;
   sha_iv(os);
-  sha_blk(os, w);
+  sha_blk1(os, w);
 }
 
 // Outer hash: out = SHA256 from os over the 32-byte inner digest (total length 96 bytes).
@@ -86,7 +91,7 @@ __device__ __forceinline__ void hmac_outer(u32 out[8], const u32 os[8], const u3
 #pragma unroll
   for (int i = 9; i < 15; ++i) w[i] = 0u;
   w[15] = 768u;
-  sha_blk(out, w);
+  sha_blk1(out, w);
 }
 
 // HMAC(key states, 32-byte message).
@@ -98,7 +103,7 @@ __device__ __forceinline__ void hmac_32(u32 out[8], const u32 is[8], const u32 o
 #pragma unroll
   for (int i = 9; i < 15; ++i) w[i] = 0u;
   w[15] = 768u;
-  sha_blk(in, w);
+  sha_blk1(in, w);
   hmac_outer(out, os, in);
 }
 
@@ -112,13 +117,13 @@ __device__ __forceinline__ void hmac_seed(u32 out[8], const u32 is[8], const u32
   w[8] = sep << 24 | sh[0];
 #pragma unroll
   for (int i = 9; i < 16; ++i) w[i] = sh[i - 8];
-  sha_blk(in, w);
+  sha_blk1(in, w);
 #pragma unroll
   for (int i = 0; i < 13; ++i) w[i] = sh[8 + i];  // sh[20] carries the 0x80 pad byte
 #pragma unroll
   for (int i = 13; i < 15; ++i) w[i] = 0u;
   w[15] = (64u + 113u) * 8u;
-  sha_blk(in, w);
+  sha_blk1(in, w);
   hmac_outer(out, os, in);
 }
 
@@ -895,8 +900,8 @@ __device__ __forceinline__ void nexa_stage1(const Params& p, u64 nonce, u32 x[8]
       const u32 t2 = S0(a) + MAJ(a, b, c);
       h = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
     }
-#pragma unroll 1
-    for (int r = 16; r < 64; r += 16) {
+#pragma unroll
+    for (int r = 16; r < 64; r += 16) {  // unrolled: one call site (see sha_blk_g)
 #pragma unroll
       for (int j = 0; j < 16; ++j) {
         w[j] += s1(w[(j + 14) & 15]) + w[(j + 9) & 15] + s0(w[(j + 1) & 15]);
