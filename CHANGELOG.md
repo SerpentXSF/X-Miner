@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0c (unreleased)
+## 0.2.0c (2026-11-11)
 
 - Nexa: the affine conversion's inverses come from a new kernel (Montgomery's trick over 32 nonces per thread, no
   block-wide barriers) and the points are stored coalesced. RX 9070 XT 54.7 -> 59.2 MH/s; RTX 3060 at 99 W 28.2 ->
