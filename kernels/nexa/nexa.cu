@@ -198,10 +198,22 @@ __device__ __forceinline__ void fe_mul(u32 r[9], const u32 a[9], const u32 b[9])
 }
 
 __device__ __forceinline__ void fe_sqr(u32 r[9], const u32 a[9]) {
-  // cross products a_i a_j (i < j) per column, doubled, plus the squares
+  // cross products a_i a_j (i < j) per column, doubled, plus the squares. AMD doubles one factor instead of the
+  // 64-bit columns (+0.5% on the RX 9070 XT, -0.5% on the RTX 3060); m2 input: a column then holds at most four
+  // cross products < 2^61.01 and one square, < 2^63.2.
   u64 c[17];
 #pragma unroll
   for (int k = 0; k < 17; ++k) c[k] = 0;
+#ifdef __HIPCC__
+  u32 d[9];
+#pragma unroll
+  for (int j = 0; j < 9; ++j) d[j] = a[j] << 1;
+#pragma unroll
+  for (int i = 0; i < 9; ++i) {
+#pragma unroll
+    for (int j = i + 1; j < 9; ++j) c[i + j] += (u64)a[i] * d[j];
+  }
+#else
 #pragma unroll
   for (int i = 0; i < 9; ++i) {
 #pragma unroll
@@ -209,6 +221,7 @@ __device__ __forceinline__ void fe_sqr(u32 r[9], const u32 a[9]) {
   }
 #pragma unroll
   for (int k = 0; k < 17; ++k) c[k] <<= 1;
+#endif
 #pragma unroll
   for (int i = 0; i < 9; ++i) c[2 * i] += (u64)a[i] * a[i];
   fe_red(r, c);
