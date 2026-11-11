@@ -7,6 +7,7 @@
   28.8 MH/s.
 - Nexa on AMD: the hashing kernel's SHA-256 rounds in groups of 32 (the compiler copied the state at every group of 16).
   RX 9070 XT 59.0 -> 62.0 MH/s.
+- Nexa on AMD: 128 threads per block (was 256). RX 9070 XT 62.0 -> 63.7 MH/s.
 
 ## 0.2.0b (2026-11-09)
 

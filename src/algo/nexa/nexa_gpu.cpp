@@ -79,6 +79,9 @@ Engine::~Engine() {
 
 bool Engine::init(std::string& err) {
   dev_.make_current();
+  // Threads per block: 128 on AMD (RX 9070 XT 62.0 -> 63.7 MH/s, from kernel c: its fitted register budget), 256 on
+  // NVIDIA (the generated kernel b is built for it).
+  tpb_ = dev_.info().vendor == gpu::Vendor::Amd ? 128 : 256;
   if (const char* e = std::getenv("XM_NEXA_TPB")) tpb_ = std::max(32u, uint32_t(std::atoi(e)));  // developer tuning
   // Comb window: 24 bits (11 point additions per scalar, a 5.9 GB table) on NVIDIA cards with 10 GB or more (RTX
   // 3060: compiled 25.7 -> 28.3 MH/s, generated 30.5 -> 33.3), else 22 (12 additions, 1.6 GB; best on the RX 9070
