@@ -155,9 +155,16 @@ bool Engine::init(std::string& err) {
     // (RTX 3060: its time -20% against 2 blocks of 256). Developer: XM_NEXA_MINB_C.
     int minb_c = std::clamp(std::max(minb, 1024 / int(tpb_)), 1, 8);
     if (const char* e = std::getenv("XM_NEXA_MINB_C")) minb_c = std::clamp(std::atoi(e), 1, 8);
+    // Kernel c's inverses from kernel s (Montgomery's trick over 32 nonces per thread) instead of a block-wide tree
+    // with one thread inverting, and P / R word-major unless the generated kernel b writes them (RX 9070 XT: 54.7 ->
+    // 59.2 MH/s, c 4.5 -> 2.2 ms per 1M nonces plus 0.55 for s; RTX 3060 at 99 W: 28.2 -> 28.8). Developer:
+    // XM_NEXA_SCAN=0.
+    scan_ = split_;
+    if (const char* e = std::getenv("XM_NEXA_SCAN")) scan_ = split_ && std::string(e) != "0";
     std::string src = "#define TPB " + std::to_string(tpb_) + "\n#define W " + std::to_string(w_) + "\n#define NW " +
                       std::to_string(nw) + "\n#define MINB " + std::to_string(minb) + "\n#define MINB_C " +
-                      std::to_string(minb_c) + "\n" + (split_ ? "#define XM_NEXA_SPLIT\n" : "") + kernel;
+                      std::to_string(minb_c) + "\n" + (split_ ? "#define XM_NEXA_SPLIT\n" : "") +
+                      (scan_ ? "#define NEXA_SCAN\n" : "") + (want_gen ? "" : "#define NEXA_WM\n") + kernel;
     std::vector<std::string> opts;
     if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
     if (!gpu::rtc_compile(dev_.info(), src, "nexa.cu", opts, module_)) {
@@ -214,11 +221,12 @@ bool Engine::launch(uint64_t base, uint32_t n, uint32_t dump, std::string& err) 
   }
   bool ok;
   if (split_) {
-    if (split_n_ < n) {  // per nonce: 27 words of stage-1 results, 68 for P and R (kernels/nexa/nexa.cu PR_ROW)
+    if (split_n_ < n) {  // per nonce: 27 words of stage-1 results; 68 for P and R (kernels/nexa/nexa.cu PR_ROW)
+                         // and 18 for kernel s
       dev_.free(d_st_);
       dev_.free(d_pr_);
       d_st_ = dev_.alloc(size_t(n) * 27 * 4);
-      d_pr_ = dev_.alloc(size_t(n) * 68 * 4);
+      d_pr_ = dev_.alloc(size_t(n) * 86 * 4);
       split_n_ = d_st_ && d_pr_ ? n : 0;
       if (!split_n_) {
         err = dev_.last_error();
@@ -228,21 +236,25 @@ bool Engine::launch(uint64_t base, uint32_t n, uint32_t dump, std::string& err) 
     void* aa[] = {&p, &d_st_, &n};
     void* ba[] = {&d_table_, &d_st_, &d_pr_, &n};
     void* ca[] = {&p, &d_st_, &d_pr_, &n, &d_found_, &maxf, &d_dbg_};
+    void* sa[] = {&d_pr_, &n};
+    const unsigned sblocks = std::max(1u, (n / 32 + tpb_ - 1) / tpb_);  // kernel s: n / NS_K threads
     static const bool prof = std::getenv("XM_NEXA_PROF") != nullptr;  // developer: per-kernel times
     if (prof) {
-      double t[3];
-      const char* names[3] = {"xm_nexa_a", "xm_nexa_b", "xm_nexa_c"};
-      void** args3[3] = {aa, ba, ca};
+      double t[4] = {};
+      const char* names[4] = {"xm_nexa_a", "xm_nexa_b", "xm_nexa_s", "xm_nexa_c"};
+      void** args4[4] = {aa, ba, sa, ca};
       ok = dev_.wait();
-      for (int i = 0; ok && i < 3; ++i) {
+      for (int i = 0; ok && i < 4; ++i) {
+        if (i == 2 && !scan_) continue;
         const auto t0 = std::chrono::steady_clock::now();
-        ok = dev_.launch(names[i], n / tpb_, 1, 1, tpb_, 1, 1, 0, args3[i]) && dev_.wait();
+        ok = dev_.launch(names[i], i == 2 ? sblocks : n / tpb_, 1, 1, tpb_, 1, 1, 0, args4[i]) && dev_.wait();
         t[i] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
       }
-      if (ok) std::fprintf(stderr, "nexa %u nonces: a %.2f  b %.2f  c %.2f ms\n", n, t[0], t[1], t[2]);
+      if (ok) std::fprintf(stderr, "nexa %u nonces: a %.2f  b %.2f  s %.2f  c %.2f ms\n", n, t[0], t[1], t[2], t[3]);
     } else {
       ok = dev_.launch("xm_nexa_a", n / tpb_, 1, 1, tpb_, 1, 1, 0, aa) &&
            dev_.launch("xm_nexa_b", n / tpb_, 1, 1, tpb_, 1, 1, 0, ba) &&
+           (!scan_ || dev_.launch("xm_nexa_s", sblocks, 1, 1, tpb_, 1, 1, 0, sa)) &&
            dev_.launch("xm_nexa_c", n / tpb_, 1, 1, tpb_, 1, 1, 0, ca);
     }
   } else {
@@ -273,7 +285,8 @@ bool Engine::dump(uint64_t base, uint32_t n, std::vector<uint32_t>& out, std::st
     }
   }
   if (!launch(base, n, 1, err)) return false;
-  if (const char* f = std::getenv("XM_NEXA_DUMP_PR"); f && split_) {  // developer: stage-1 words and P / R rows
+  if (const char* f = std::getenv("XM_NEXA_DUMP_PR"); f && split_) {  // developer: stage-1 words and P / R (rows with
+                                                                     // the generated kernel b, else word-major)
     std::vector<uint32_t> st(size_t(n) * 27), pr(size_t(n) * 68);
     if (dev_.download(st.data(), d_st_, st.size() * 4) && dev_.download(pr.data(), d_pr_, pr.size() * 4)) {
       if (FILE* fp = std::fopen(f, "wb")) {

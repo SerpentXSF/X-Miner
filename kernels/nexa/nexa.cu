@@ -1154,12 +1154,19 @@ extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa(Params p, const 
 #define PR_ROW 68
 // The same work as three kernels over buffers (n nonces per launch, thread t = blockIdx.x TPB + threadIdx.x):
 //   a: stage 1 -> st (27 words per nonce, word-major: st[w n + t]; 0..7 x, 8..15 k, 16..23 h1, 24 valid)
-//   b: P = x G, R = k G -> pr (PR_ROW words per nonce, thread-major: pr[PR_ROW t + w]; w 0..47: X, Y, Z of P then of
-//      R, each 8 x 32-bit little-endian words < 2^256; 48..65: the generated build's marker pins)
+//   b: P = x G, R = k G -> pr: words w 0..47 per nonce: X, Y, Z of P then of R, each 8 x 32-bit little-endian
+//      words < 2^256. Word-major (pr[w n + t], NEXA_WM) or, for the generated build, thread-major rows (pr[PR_ROW t +
+//      w]; 48..65: its marker pins)
+//   s: 1 / (PZ RZ) per nonce (NEXA_SCAN)
 //   c: stage 2.
 // The generated sm_86 build (tools/ngen) replaces b's comb multiplications with generated code: a large block of
 // it needs a kernel around it that keeps almost nothing live (ptxas moves code freely across a block it cannot see).
 // That cubin holds b only; the miner adds it next to the run-time compiled kernels.
+#ifdef NEXA_WM
+#define PRW(w, t) pr[(size_t)(w) * n + (t)]
+#else
+#define PRW(w, t) pr[PR_ROW * (size_t)(t) + (w)]
+#endif
 #ifndef XM_NEXA_GEN_SHELL
 extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa_a(Params p, u32* __restrict__ st, u32 n) {
   const u32 t = blockIdx.x * TPB + threadIdx.x;
@@ -1213,10 +1220,66 @@ extern "C" __global__ __launch_bounds__(TPB, MINB) void xm_nexa_b(const uint4* _
     fe_canon(a);
     fe_to32(w, a);
 #pragma unroll
-    for (int i = 0; i < 8; ++i) pr[PR_ROW * (size_t)t + 8 * c + i] = w[i];
+    for (int i = 0; i < 8; ++i) PRW(8 * c + i, t) = w[i];
   }
 #endif
 }
+
+#ifndef XM_NEXA_GEN_SHELL
+// Kernel s: 1 / (PZ RZ) of every nonce by Montgomery's trick, NS_K nonces per thread (j, j + G, ... for G = n / NS_K
+// threads): prefix products forward, one inversion, the inverses backward (~3 multiplies per nonce plus 1 / NS_K of an
+// inversion; no barriers, no idle lanes). Word-major regions after P and R: q = PZ RZ, then 1 / q, at
+// pr[68 n + w n + t] (9 x 29), the prefixes at pr[77 n + w n + t].
+#ifndef NS_K
+#define NS_K 32
+#endif
+extern "C" __global__ __launch_bounds__(TPB) void xm_nexa_s(u32* __restrict__ pr, u32 n) {
+  const u32 G = n / NS_K;
+  const u32 j = blockIdx.x * TPB + threadIdx.x;
+  if (j >= G) return;
+  u32* qb = pr + (size_t)68 * n + j;
+  u32* pb = pr + (size_t)77 * n + j;
+  u32 acc[9];
+#pragma unroll
+  for (int k = 0; k < 9; ++k) acc[k] = k ? 0u : 1u;
+#pragma unroll 1
+  for (int i = 0; i < NS_K; ++i) {
+    const size_t t = (size_t)i * G;
+    u32 a[9], b[9], q[9];
+    {
+      u32 w0[8], w1[8];  // PZ (words 16..23), RZ (40..47)
+#pragma unroll
+      for (int k = 0; k < 8; ++k) { w0[k] = PRW(16 + k, j + t); w1[k] = PRW(40 + k, j + t); }
+      fe_from32(a, w0);
+      fe_from32(b, w1);
+    }
+    fe_mul(q, a, b);
+    fe_mul(acc, acc, q);
+#pragma unroll
+    for (int k = 0; k < 9; ++k) { qb[(size_t)k * n + t] = q[k]; pb[(size_t)k * n + t] = acc[k]; }
+  }
+  u32 inv[9];
+  fe_inv_var(inv, acc);
+#pragma unroll 1
+  for (int i = NS_K - 1; i >= 0; --i) {
+    const size_t t = (size_t)i * G;
+    u32 q[9], iq[9];
+#pragma unroll
+    for (int k = 0; k < 9; ++k) q[k] = qb[(size_t)k * n + t];
+    if (i > 0) {
+      u32 pp[9];
+#pragma unroll
+      for (int k = 0; k < 9; ++k) pp[k] = pb[(size_t)k * n + t - G];
+      fe_mul(iq, inv, pp);
+    } else {
+      fe_copy(iq, inv);
+    }
+    fe_mul(inv, inv, q);
+#pragma unroll
+    for (int k = 0; k < 9; ++k) qb[(size_t)k * n + t] = iq[k];
+  }
+}
+#endif
 
 #ifndef XM_NEXA_GEN_SHELL
 #ifndef MINB_C
@@ -1229,11 +1292,11 @@ extern "C" __global__ __launch_bounds__(TPB, MINB_C) void xm_nexa_c(Params p, co
   __shared__ u32 sh_t[2 * TPB][9];
   const u32 tid = threadIdx.x;
   const u32 t = blockIdx.x * TPB + tid;
-  const uint4* q = reinterpret_cast<const uint4*>(pr + PR_ROW * (size_t)t);
-  // pr row words 8 c..8 c + 7: c = 0..5 for PX, PY, PZ, RX, RY, RZ
+  // words 8 c..8 c + 7: c = 0..5 for PX, PY, PZ, RX, RY, RZ
   auto load = [&](u32 r[9], int c) {
-    const uint4 a = q[2 * c], b = q[2 * c + 1];
-    const u32 w[8] = {a.x, a.y, a.z, a.w, b.x, b.y, b.z, b.w};
+    u32 w[8];
+#pragma unroll
+    for (int k = 0; k < 8; ++k) w[k] = PRW(8 * c + k, t);
     fe_from32(r, w);
   };
   u32 izp[9], izr[9];
@@ -1244,7 +1307,18 @@ extern "C" __global__ __launch_bounds__(TPB, MINB_C) void xm_nexa_c(Params p, co
     load(PZ, 2);
     load(RY, 4);
     load(RZ, 5);
+#ifdef NEXA_SCAN
+    {  // 1 / (PZ RZ) from kernel s
+      u32 iq[9];
+#pragma unroll
+      for (int k = 0; k < 9; ++k) iq[k] = pr[(size_t)68 * n + (size_t)k * n + t];
+      fe_mul(izp, iq, RZ);
+      fe_mul(izr, iq, PZ);
+      qr = doqr ? ry_is_qr(RY, RZ) : true;
+    }
+#else
     nexa_stage2_inv(tid, PZ, RZ, RY, sh_t, izp, izr, qr, doqr);
+#endif
   }
   u32 x[8], kk[8], h1[8], PX[9], PY[9], RX[9];
 #pragma unroll

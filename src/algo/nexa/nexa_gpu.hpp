@@ -61,6 +61,7 @@ class Engine {
   size_t dbg_bytes_ = 0;
   uint32_t split_n_ = 0;  // nonces d_st_ / d_pr_ hold
   bool split_ = false;    // three kernels (xm_nexa_a / _b / _c) instead of xm_nexa
+  bool scan_ = false;     // with split_: kernel s (1 / (PZ RZ) per nonce) between b and c, no block tree in c
   bool gen_ = false;      // the prebuilt sm_86 cubin with generated comb code
   gpu::RtcOutput module_;
   Job job_;

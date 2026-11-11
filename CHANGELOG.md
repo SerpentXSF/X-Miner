@@ -2,6 +2,10 @@
 
 ## 0.2.0c (unreleased)
 
+- Nexa: the affine conversion's inverses come from a new kernel (Montgomery's trick over 32 nonces per thread, no
+  block-wide barriers) and the points are stored coalesced. RX 9070 XT 54.7 -> 59.2 MH/s; RTX 3060 at 99 W 28.2 ->
+  28.8 MH/s.
+
 ## 0.2.0b (2026-11-09)
 
 - New coin: Evrmore (EVR), `--algorithm evrprogpow` (aliases `evr`, `evrmore`): EvrProgPow = KawPoW with 12000-block
