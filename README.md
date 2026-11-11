@@ -157,7 +157,7 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 
 | Algorithm | RX 9070 XT | RTX 3060 | Notes |
 |---|---|---|---|
-| Pearl | 101.1 TH/s (115.0 at stock power) | 44.4 TH/s | |
+| Pearl | 105.9 TH/s (121.4 at stock power) | 44.4 TH/s | |
 | Parano1d | 20.1 MH/s | 10.8 MH/s | |
 | Quantus | 179.6 MH/s (195.8 at stock power) | 149.7 MH/s | |
 | KawPow (Ravencoin) | 34.0 MH/s | 20.6 MH/s | WildRig 34.1 / T-Rex 20.85 on the same cards |
@@ -172,7 +172,7 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 | FishHash (Iron Fish) / KarlsenHashV2 | 23.5 MH/s (25.2 with `--gpu-mclock 2700`) | 27.5 MH/s @ 140 W | |
 | XelisHashV3 (Xelis) | 5.0 kH/s @ ~170 W | 4.49 kH/s @ 112 W | published: RTX 3060 5.5 kH/s, RTX 4090 15 kH/s |
 | QHash (Qubitcoin) | 2.51 GH/s | 0.96 GH/s @ 147 W | published: RTX 3060 0.70 GH/s, RTX 3070 1.14 GH/s |
-| NexaPow (Nexa) | 55.6 MH/s @ 339 W | 33.3 MH/s @ 168 W | lolMiner: ~95 / ~50; a 1.6 / 5.9 GB table is built on the GPU at start |
+| NexaPow (Nexa) | 64.3 MH/s @ 339 W | 33.3 MH/s @ 168 W | lolMiner: ~95 / ~50; a 1.6 / 5.9 GB table is built on the GPU at start |
 | BLAKE2b | 4.63 GH/s | 1.97 GH/s | |
 
 The console and dashboard also show a **pool-credited** hashrate: the work of your accepted shares (share

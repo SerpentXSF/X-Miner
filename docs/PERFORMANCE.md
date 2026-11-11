@@ -13,6 +13,8 @@ runtime before 2026-10-22). One Pearl pass (16384x32768x4096) on the 9070 XT is 
 |---|---|---|---|---|
 | RX 9070 XT (gfx1201) | -30% (~237 W) | 101.1 TH/s | SRBMiner 3.7.6: ~100.3 TH/s @ 244 W (2% fee) | per-lane hash tiles; Kryptex live: shares accepted |
 | RX 9070 XT (gfx1201) | stock (~340 W) | 115.0 TH/s | WildRig 0.51.3: 107.8 TH/s @ 311 W cap | 0.34 TH/s/W stock, 0.43 at -30% |
+| RX 9070 XT (gfx1201) | 70% (~237 W) | 105.9 TH/s (0.2.0c) | BzMiner v100.60: 141.6 TH/s @ 317 W stock (its release notes) | 128x256 blocks of 8 waves; Kryptex live: 7 / 0 in 10 min |
+| RX 9070 XT (gfx1201) | stock (~339 W) | 121.4 TH/s (0.2.0c) | | 2359 MHz |
 | RTX 3060 (sm_86) | stock (170 W) | 44.4 TH/s | SRBMiner 3.7.1: 49.8 TH/s @ 170 W / 1785 MHz | persistent blocks + copy warp; Kryptex live: shares accepted |
 | RTX 3060 (sm_86) | 127 W | 38.1 TH/s before the copy warp (42.3 as measured under WSL2, whose clock runs 10% slow - see below) | SRBMiner 3.7.1: 48.7 TH/s @ 127 W / 1755 MHz (re-measured 2026-10-22) | 128x256 blocks |
 
@@ -24,6 +26,15 @@ Verified by --selftest, the official verifier and live Kryptex shares.
 
 AMD pass breakdown before that (RX 9070 XT, 16384x16384x4096): noise for A 0.29 ms, GEMM + fused jackpot check 11.6 ms.
 The GEMM core alone is at parity with WildRig at the same power (pearl-rdna4 kernel).
+
+AMD block shape (0.2.0c, 2026-11-11): 128x256 output blocks of 8 waves (2 x 4 waves of 64x64, workgroup grouping 32)
+instead of 128x128 of 4. Each wave's operands are shared by more MACs, so global loads and LDS stores per MAC drop by
+a quarter and the power saved goes into clock: 70% power 103.2 -> 105.9 TH/s, stock 117.2 -> 121.4 TH/s (2359 MHz).
+Other shapes at 70%: 4x2 waves 104.3-105.3, 2x4 with grouping 16 / 8 / 4 105.6 / 104.7 / 102.7, 1x4 99.6, 4x4
+(256x256) 79.5. A register-only WMMA loop on Pearl-like random bytes reaches ~936 MAC/clk/CU (91% of peak) and
+153 TH/s at stock; with low-entropy operands it draws less power and runs 180 TH/s, so constant-data benchmarks
+overstate the ceiling. The per-chunk XOR fold costs ~13% per clock even in that loop (937 -> 814 MAC/clk); folding
+inside the k loop spilled registers and a fold through LDS was slower (107 TH/s at stock).
 
 NVIDIA findings (RTX 3060):
 - With the transcript fold removed (timing only), the same GEMM runs at ~54-57 TH/s and higher clocks, so the
@@ -658,6 +669,22 @@ took ~25 s on 24 cores and 5.9 GB of host memory per GPU. Compiled at run time w
 kernel added ~18 s to every start (and its compile overflowed the mining thread's 1 MB stack on Windows), hence the
 prebuilt module, loaded first and replaced by the run-time compiled one. Zero-digit slips get rarer with the window
 (2^-23 per window): 7 instead of 17 in the 262144-signature check.
+
+### RX 9070 XT, 0.2.0c (2026-11-10)
+
+| Change | MH/s |
+|---|---|
+| 0.2.0b | 54.7 |
+| inverses from a per-thread kernel (Montgomery's trick over 32 nonces, no block barriers), word-major points | 59.2 |
+| stage-1 SHA-256 in groups of 32 rounds (the compiler copied the state at every group of 16) | 62.0 |
+| 128 threads per block | 63.7 |
+| squaring doubles one factor instead of shifting the 64-bit product columns | 64.3 |
+
+The comb kernel (b) is ~70% of the time and bound by 64-bit multiply-adds. Measured on RDNA4 relative to a 24-bit
+multiply-add: v_dot4_u32_u8 1.0, 64-bit multiply-add 4.6, 64-bit add 2.8. Byte dot-product multiprecision only ties,
+and a carry-free 32-bit split reduction that was 5% faster in a latency-bound microbenchmark was 5% slower in kernel b,
+which is throughput-bound. The asm fence in the reduction is still required on ROCm 7.0.2 (without it no signature is
+correct). RTX 3060 at 99 W: 28.2 -> 28.8 MH/s.
 
 lolMiner's ~57 MH/s on an RTX 3060 (Kryptex user reports) is ~3.5k scheduler cycles per nonce, where our hashing
 alone takes ~1.65k. Affine additions with one batched inversion per window step were sized and rejected: an
