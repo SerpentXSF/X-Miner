@@ -9,6 +9,9 @@
   RX 9070 XT 59.0 -> 62.0 MH/s.
 - Nexa on AMD: 128 threads per block (was 256). RX 9070 XT 62.0 -> 63.7 MH/s.
 - Nexa on AMD: squaring doubles one factor instead of the 64-bit product columns. RX 9070 XT 63.8 -> 64.2 MH/s.
+- Pearl on AMD: 128x256 output blocks of 8 waves (was 128x128 of 4), so a quarter fewer global loads and LDS stores
+  per MAC; the saved power goes into clock. RX 9070 XT at a 70% power limit 103.2 -> 105.9 TH/s, at stock
+  117.2 -> 121.4 TH/s.
 
 ## 0.2.0b (2026-11-09)
 

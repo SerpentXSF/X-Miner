@@ -75,8 +75,8 @@ void Engine::fill_random(int8_t* p, size_t n) {
 }
 
 bool Engine::init(std::string& err) {
-  if (m_ % 128 || n_ % 128) {
-    err = "matrix dimensions must be multiples of 128";
+  if (m_ % 128 || n_ % 256) {
+    err = "matrix rows must be a multiple of 128 and columns of 256";
     return false;
   }
   dev_.make_current();
@@ -199,7 +199,7 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   gpu::DevPtr no_out = 0;  // fused jackpot check in the GEMM epilogue
   void* g[] = {&d_ap_, &d_bp_, &no_out, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_};
   std::vector<uint32_t> found(1 + kMaxFound * kRecWords);
-  // AMD: 128x128 blocks of 4 waves. NVIDIA: persistent, one block per SM (8 math warps + 1 copy warp) walking
+  // AMD: 128x256 blocks of 8 waves. NVIDIA: persistent, one block per SM (8 math warps + 1 copy warp) walking
   // 128x256 tiles, 96 KB of dynamic shared memory.
   const bool nv = dev_.info().vendor == gpu::Vendor::Nvidia;
   bool ok = dev_.memset(d_found_, 0, 4);
@@ -209,7 +209,9 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
     const unsigned shared = kNvStages * (kNvBm + kNvBn) * kNvBk;
     ok = ok && dev_.memset(d_wave_, 0, 4) && dev_.launch("xm_pearl_gemm", grid, 1, 1, threads, 1, 1, shared, g);
   } else {
-    ok = ok && dev_.launch("xm_pearl_gemm", n_ / 128, m_ / 128, 1, 128, 1, 1, 0, g);
+    unsigned wmw = 2, wnw = 4;  // waves per workgroup along M and N (64x64 each); must match kernels/pearl/pearl.hip
+    if (const char* e = std::getenv("XM_PEARL_AMD_WAVES")) std::sscanf(e, "%ux%u", &wmw, &wnw);  // developer A/B
+    ok = ok && dev_.launch("xm_pearl_gemm", n_ / (64 * wnw), m_ / (64 * wmw), 1, 32 * wmw * wnw, 1, 1, 0, g);
   }
   if (!ok) {
     err = dev_.last_error();

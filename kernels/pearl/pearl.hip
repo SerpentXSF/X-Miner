@@ -41,9 +41,11 @@ __device__ __forceinline__ void lds_barrier() {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Kernel. Structure follows AMD hipBLASLt's tuned gfx1201 int8 kernel (MT128x128x64, 4 waves):
-//  - 128x128 output block per workgroup, 4 waves in 2x2, each wave owns 64x64 (16 WMMA accumulators).
-//  - k advances 64 per stage. One LDS buffer holds the whole stage (A 8 KB + B 8 KB).
+// Kernel. Structure follows AMD hipBLASLt's tuned gfx1201 int8 kernel (MT128x128x64, 4 waves), widened:
+//  - 128x256 output block per workgroup, 8 waves in 2x4, each wave owns 64x64 (16 WMMA accumulators). The wider
+//    block cuts global loads and LDS stores per MAC by 25%; the power saved goes into clock (RX 9070 XT at 70% PL:
+//    103.2 -> 106.0 TH/s; 4x4 waves stall on barriers, 79.5).
+//  - k advances 64 per stage. One LDS buffer holds the whole stage (A 8 KB + B 16 KB).
 //  - Stage kt+1 global loads are issued at the top of stage kt and stored to LDS mid-stage.
 //  - Per stage: WMMA(k-pair 0) | barrier | store next stage | WMMA(k-pair 1) | barrier | load next fragments.
 //  - Unrolled by two stages (one Pearl fold per 128 k) with the last pair peeled: no branches in the hot loop.
@@ -52,43 +54,56 @@ __device__ __forceinline__ void lds_barrier() {
 // (h = 32, w = 4; the host's AMD mining configuration), i.e. exactly the 128 accumulators one lane owns.
 // Every 128 k each lane XORs its 128 running sums into x and folds t[c % 16] = rotl(t[c % 16], 13) ^ x.
 // Requirements: M % 128 == 0, N % 128 == 0, K % 2048 == 0.
+#ifndef XM_PEARL_WMW
+#define XM_PEARL_WMW 2  // waves along M (64 rows each)
+#endif
+#ifndef XM_PEARL_WNW
+#define XM_PEARL_WNW 4  // waves along N (64 columns each)
+#endif
+#ifndef XM_PEARL_WGM
+#define XM_PEARL_WGM 32  // row blocks per rasterization group
+#endif
 template <int WGM>
 __device__ __forceinline__ void pearl_gemm_rdna4_body(
     const int8_t* __restrict__ Ap, const int8_t* __restrict__ Bp, unsigned* __restrict__ out, int M, int N, int K,
     const Key8& a_seed, const U256w& bound, uint32_t* __restrict__ found, uint32_t max_found) {
-    constexpr int FM = 4, FN = 4, KP = 2, RB = 8;
-    constexpr int STAGE_V4 = RB * KP * 32;       // 16-byte vectors per operand per stage (8 KB)
-    __shared__ v4i lds[2 * STAGE_V4];            // [A stage | B stage]
+    constexpr int WMW = XM_PEARL_WMW, WNW = XM_PEARL_WNW, NW = WMW * WNW;
+    constexpr int FM = 4, FN = 4, KP = 2, RBA = 4 * WMW, RBB = 4 * WNW;
+    constexpr int STAGE_V4 = RBA * KP * 32;      // 16-byte vectors of the A stage (the B stage follows)
+    constexpr int CA = RBA * KP / NW, CB = RBB * KP / NW;  // 512-byte chunks per wave per stage
+    static_assert(CA >= 1 && CB >= 1 && CA * NW == RBA * KP && CB * NW == RBB * KP, "wave grid");
+    __shared__ v4i lds[(RBA + RBB) * KP * 32];   // [A stage | B stage]
 
     const int lane = threadIdx.x & 31;
     const int wave = __builtin_amdgcn_readfirstlane(threadIdx.x >> 5);
-    const int wm = wave >> 1, wn = wave & 1;
+    const int wm = wave / WNW, wn = wave % WNW;
     int bx, by;
     raster<WGM>(bx, by);
     const size_t rb_bytes = (size_t)K * 16;      // bytes per 16-row block in the packed layout
     const unsigned loff = lane * 16u;
-    const int8_t* gA = Ap + (size_t)(by * RB) * rb_bytes;
-    const int8_t* gB = Bp + (size_t)(bx * RB) * rb_bytes;
+    const int8_t* gA = Ap + (size_t)(by * RBA) * rb_bytes;
+    const int8_t* gB = Bp + (size_t)(bx * RBB) * rb_bytes;
 
-    // Global -> VGPR staging. Thread's vector q = tid + 128*i belongs to chunk c = wave + 4*i (wave-uniform):
-    // row-block c/2, k-pair c%2. RDNA4 has no direct global->LDS copy, so data passes through VGPRs.
-    v4i ga[4], gb[4];
+    // Global -> VGPR staging. Chunk c = wave + NW*i (wave-uniform): row-block c/2, k-pair c%2.
+    // RDNA4 has no direct global->LDS copy, so data passes through VGPRs.
+    v4i ga[CA], gb[CB];
     auto gload = [&](int kt) {
 #pragma unroll
-        for (int i = 0; i < 4; ++i) {
-            const int c = wave + 4 * i;
-            const size_t off = (size_t)(c >> 1) * rb_bytes + (size_t)(kt * KP + (c & 1)) * 512 + loff;
-            ga[i] = *(const v4i*)(gA + off);
-            gb[i] = *(const v4i*)(gB + off);
+        for (int i = 0; i < CA; ++i) {
+            const int c = wave + NW * i;
+            ga[i] = *(const v4i*)(gA + (size_t)(c >> 1) * rb_bytes + (size_t)(kt * KP + (c & 1)) * 512 + loff);
+        }
+#pragma unroll
+        for (int i = 0; i < CB; ++i) {
+            const int c = wave + NW * i;
+            gb[i] = *(const v4i*)(gB + (size_t)(c >> 1) * rb_bytes + (size_t)(kt * KP + (c & 1)) * 512 + loff);
         }
     };
     auto lstore = [&]() {
 #pragma unroll
-        for (int i = 0; i < 4; ++i) {
-            const int q = (wave + 4 * i) * 32 + lane;
-            lds[q] = ga[i];
-            lds[STAGE_V4 + q] = gb[i];
-        }
+        for (int i = 0; i < CA; ++i) lds[(wave + NW * i) * 32 + lane] = ga[i];
+#pragma unroll
+        for (int i = 0; i < CB; ++i) lds[STAGE_V4 + (wave + NW * i) * 32 + lane] = gb[i];
     };
     v4i fa[KP][FM], fb[KP][FN];                  // WMMA fragments of the current stage
     auto lload = [&]() {
@@ -165,10 +180,10 @@ __device__ __forceinline__ void pearl_gemm_rdna4_body(
     fold(nk / 2 - 1);
 
     // Epilogue: every lane hashes its own tile's transcript.
-    const uint32_t t_rows = (uint32_t)(by * 128 + wm * 64 + 8 * (lane >> 4));
-    const uint32_t t_cols = (uint32_t)(bx * 128 + wn * 64 + (lane & 15));
+    const uint32_t t_rows = (uint32_t)(by * 64 * WMW + wm * 64 + 8 * (lane >> 4));
+    const uint32_t t_cols = (uint32_t)(bx * 64 * WNW + wn * 64 + (lane & 15));
     if (out) {  // debug path: one 16-word transcript per lane tile, in launch order
-        const size_t idx = ((size_t)(blockIdx.y * gridDim.x + blockIdx.x) * 4 + wave) * 32 + lane;
+        const size_t idx = ((size_t)(blockIdx.y * gridDim.x + blockIdx.x) * NW + wave) * 32 + lane;
 #pragma unroll
         for (int w = 0; w < 16; ++w) out[idx * 16 + w] = R[w];
         return;
@@ -190,14 +205,14 @@ __device__ __forceinline__ void pearl_gemm_rdna4_body(
     }
 }
 
-// Entry point looked up by name from the host. Grid (N/128, M/128), block 128.
-// Requirements: M % 128 == 0, N % 128 == 0, K % 2048 == 0.
+// Entry point looked up by name from the host. Grid (N/(64 WNW), M/(64 WMW)), block 32 WMW WNW.
+// Requirements: M % (64 WMW) == 0, N % (64 WNW) == 0, K % 2048 == 0.
 // out != nullptr: write per-lane-tile transcripts (debug). Otherwise hash each tile in the epilogue and append tiles
 // whose jackpot hash is <= bound to found[] (count, then 18-word records: t_rows, t_cols, 16 transcript words).
-extern "C" __global__ __launch_bounds__(128) void xm_pearl_gemm(const int8_t* __restrict__ Ap,
+extern "C" __global__ __launch_bounds__(32 * XM_PEARL_WMW * XM_PEARL_WNW) void xm_pearl_gemm(const int8_t* __restrict__ Ap,
                                                                const int8_t* __restrict__ Bp,
                                                                unsigned* __restrict__ out, int M, int N, int K,
                                                                Key8 a_seed, U256w bound, uint32_t* __restrict__ found,
                                                                uint32_t max_found) {
-  pearl_gemm_rdna4_body<16>(Ap, Bp, out, M, N, K, a_seed, bound, found, max_found);
+  pearl_gemm_rdna4_body<XM_PEARL_WGM>(Ap, Bp, out, M, N, K, a_seed, bound, found, max_found);
 }
