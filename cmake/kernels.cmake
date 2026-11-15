@@ -12,8 +12,9 @@ foreach(blob ${XM_KERNEL_BLOBS})
   get_filename_component(fname ${blob} NAME)
   get_filename_component(stem ${blob} NAME_WE)
   get_filename_component(ext ${blob} EXT)
-  # <algo>_<arch>: the algorithm is everything before the first "_gfx", "_sm_" or "_compute_".
-  string(REGEX MATCH "^(.+)_(gfx[0-9a-f]+|sm_[0-9]+|compute_[0-9]+)$" _ ${stem})
+  # <algo>_<arch>: the algorithm is everything before the first "_gfx", "_sm_" or "_compute_". AMD archs include the
+  # family-generic targets (gfx10-1-generic, gfx10-3-generic, gfx11-generic, gfx12-generic).
+  string(REGEX MATCH "^(.+)_(gfx[0-9a-f]+|gfx[0-9]+(-[0-9]+)?-generic|sm_[0-9]+|compute_[0-9]+)$" _ ${stem})
   if(NOT CMAKE_MATCH_1)
     message(FATAL_ERROR "kernel blob ${fname} is not named <algo>_<arch>.<ext>")
   endif()

@@ -23,6 +23,7 @@
 #include <thread>
 #include <vector>
 
+#include "algo/registry.hpp"
 #include "api/api.hpp"
 #include "core/config.hpp"
 #include "core/console.hpp"
@@ -145,6 +146,9 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
         eng = T::make_engine(*dev, seed, cfg.intensity_for(i));
         err.clear();
       }
+      if (experimental_gpu(devs[i]))
+        warn("GPU", unit + " " + devs[i].name + " (" + devs[i].arch +
+                          "): experimental, not tested on this GPU model; run x-miner --selftest to check it");
       int errors = 0;  // consecutive
       auto gpu_error = [&](const std::string& e) {
         error("GPU", unit + ": " + e);

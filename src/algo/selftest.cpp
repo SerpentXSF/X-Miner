@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -513,6 +514,19 @@ bool c29_check(gpu::Device& dev, std::string& detail) {
   return known && !st.overflow && eng.cpu_rejects() == 0;
 }
 
+// The number of results that disagreed with the CPU in a check's detail line ("12 rejected", "3 wrong",
+// "5 mismatches"); 0 when the check failed for another reason (no kernel, out of memory, too few hits).
+long wrong_results(const std::string& detail) {
+  long n = 0;
+  for (const char* key : {" rejected", " wrong", " mismatch"})
+    for (size_t at = detail.find(key); at != std::string::npos; at = detail.find(key, at + 1)) {
+      size_t b = at;
+      while (b > 0 && std::isdigit(static_cast<unsigned char>(detail[b - 1]))) --b;
+      if (b < at) n += std::strtol(detail.c_str() + b, nullptr, 10);
+    }
+  return n;
+}
+
 void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int state, const std::string& detail) {
   static const char* kState[] = {"FAIL  ", "PASS  ", "SKIP  "};
   Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(i) + " ] "},
@@ -524,7 +538,7 @@ void report(size_t i, const gpu::DeviceInfo& d, const std::string& what, int sta
 
 }  // namespace
 
-int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
+int run_selftest(const std::vector<gpu::DeviceInfo>& devices, const std::vector<size_t>& ids) {
   int failures = 0;
   struct Check {
     const char* algo;
@@ -532,24 +546,36 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices) {
   };
   const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"evrprogpow", evrmore_check}, {"meowpow", meowpow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}, {"nexapow", nexa_check}, {"cuckaroo29", c29_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
+    const size_t id = i < ids.size() ? ids[i] : i;
     auto dev = gpu::open(devices[i]);
     std::string detail;
     bool ok = smoke(*dev, detail);
     failures += !ok;
-    report(i, devices[i], "pipeline", ok, detail);
+    report(id, devices[i], "pipeline", ok, detail);
+    int wrong = 0;  // kernels that ran but disagreed with the CPU
     const char* only = std::getenv("XM_SELFTEST_ALGO");  // developer: one algorithm
     for (const auto& c : checks) {
       if (only && std::string(only) != c.algo) continue;
       const AlgorithmInfo* a = find_algorithm(c.algo);
       if (!a || !supports(*a, devices[i])) {
-        report(i, devices[i], c.algo, 2, "no kernel for this GPU");
+        report(id, devices[i], c.algo, 2, "no kernel for this GPU");
         continue;
       }
       detail.clear();
       ok = c.fn(*dev, detail);
+      if (!ok && detail.find("not enough GPU memory") != std::string::npos) {
+        report(id, devices[i], c.algo, 2, detail);  // the algorithm needs a bigger GPU: not a fault
+        continue;
+      }
       failures += !ok;
-      report(i, devices[i], c.algo, ok, detail);
+      wrong += !ok && wrong_results(detail) > 0;
+      report(id, devices[i], c.algo, ok, detail);
     }
+    if (wrong)
+      Console::get().line({{Tone::Radar, "  [GPU " + std::to_string(id) + " ] "},
+                           {Tone::Gold, "wrong results: if they change from run to run, the GPU is unstable at its current "
+                                        "clocks (core offset / undervolt, memory timing tools such as the GDDR5X pill). "
+                                        "Re-run --selftest at stock clocks."}});
   }
   return failures;
 }

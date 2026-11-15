@@ -62,6 +62,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
         last = now;
       }
     }
+    if (total == 0) continue;  // nothing hashed: the error above says why
     double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     double expected = total / 1024.0;
     char line[240];

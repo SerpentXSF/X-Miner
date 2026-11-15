@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.3.0 (2026-11-15)
+
+- More GPUs (tested on the cards listed below; the other chips are experimental, run `--selftest` first): AMD RDNA1 (RX 5000, BC-160),
+  RDNA2 (RX 6000) and RDNA3 (RX 7000); NVIDIA Pascal, Volta and Turing (GTX 10 / 16, RTX 20, Titan V, P10x, CMP
+  30HX-50HX). Pearl, Parano1d, Quantus and BLAKE2b now ship code objects for gfx1010-1012, gfx1030-1032, gfx1034 and
+  gfx1100-1102 and a compute_61 PTX; the run-time compiled algorithms already covered these GPUs and were compiled
+  for them as a check.
+- Pearl on GPUs without int8 matrix units: a SIMT kernel with the same tiles and transcript (4-byte dot products:
+  `sdot4` on RDNA1/2 except the RX 5600/5700, `sudot4` on RDNA3, plain multiplies on gfx1010; `dp4a` on NVIDIA). Forced
+  on our cards it passes the self-test and mines without CPU re-verify failures: RX 9070 XT 24.0 TH/s (15.5 with plain
+  multiplies), RTX 3060 at 99 W 9.3 TH/s (the matrix kernels: 121.5 and 36.5).
+- Pearl on AMD RDNA3 (RX 7000): a WMMA kernel (RDNA3's 16-byte fragments; A rows are read in an order that keeps the
+  RDNA4 hash tiles). We have no RDNA3 GPU, so at start-up the miner compares it with the SIMT kernel on random data and
+  mines with the SIMT kernel if they differ (`XM_PEARL_CHECK=0` skips the check). The check itself was tested on an
+  RX 9070 XT with a deliberately broken WMMA kernel.
+- Pearl on NVIDIA Turing (RTX 20, CMP 40HX / 50HX): an int8 tensor-core kernel (mma m8n8k16) with the same tiles. Forced on
+  an RTX 3060 it passes the self-test and mines at 21.5 TH/s (dp4a kernel 9.3). It gets the same start-up check as RDNA3,
+  which also times both kernels and keeps the faster one when they agree (GTX 16 GPUs have no tensor cores).
+- AMD chips without their own code object (BC-250, Steam Deck, Radeon 680M / 780M / 890M and other APUs): the prebuilt
+  kernels also ship as LLVM family-generic code objects (gfx10-1, gfx10-3, gfx11 and gfx12-generic), loaded when no
+  exact one exists. Forced on an RX 9070 XT, the gfx12-generic ones pass the self-test and Pearl mines at the same
+  121.9 TH/s.
+- Parano1d (NOID) and TAPE on NVIDIA with the CLMAD kernel: RTX 3060 at 99 W 18.8 -> 20.9 MH/s (+11%). The
+  partial rounds' MDS layer is unrolled with compile-time constants (table bases as load offsets, no per-constant
+  branch or lane rotation, each product starting from the round's sum), the full layers likewise, the general
+  multiply adds P0 inside the carry-less multiply instead of on the ALU, and the S-box squarings are unrolled.
+  Self-test and 19/0 shares live on rplant.
+- Quantus on AMD before RDNA4: the 64-bit multiply-add instruction under its RDNA1-3 name.
+- NVIDIA: when several PTX versions fit a GPU, the newest one is loaded.
+- Tested on HiveOS rigs: RTX 3080 / 3070 / 3060 Ti and GTX 1080 Ti (driver 550, CUDA 12.4), RX 5700 XT, RX 6600 XT,
+  RX 6700 XT and RX 6800. Every algorithm passes `--selftest` on every one of them (cuckaroo29 needs more than 8 GB);
+  these chips (sm_61, gfx1010, gfx1030-1032) are no longer labelled experimental.
+- AMD on HiveOS and other Linux without ROCm's HIP (HiveOS ships only ROCm's OpenCL, so X-Miner found no AMD GPU there):
+  the Linux and HiveOS packages include AMD's ROCm 6.4.4 HIP runtime in `hip/` (unmodified, license texts in
+  `hip/licenses/`), used only when the system has no HIP. Needs an Ubuntu 22.04-based system (current HiveOS).
+- NVIDIA drivers older than CUDA 13.3 (e.g. 550 / CUDA 12.4): Parano1d no longer crashes the miner inside the driver
+  (the CLMAD kernels are only offered to CUDA 13.3+ drivers; the others use the previous kernel, RTX 3080 20.9 MH/s).
+- NVIDIA drivers older than CUDA 12.5: the prebuilt PTX (GTX 10 / 16, RTX 20, and newer GPUs without a cubin) was
+  rejected (CUDA error 222); it is now marked PTX ISA 7.1, which any driver since CUDA 11.1 compiles.
+- Cuckaroo29 on Pascal (GTX 10): no 64 KB shared-memory degree counters (Pascal allows 48 KB; CUDA error 1). GTX 1080 Ti
+  3.76 g/s.
+- Quantus on RDNA1 (RX 5600 / 5700): every share was wrong with the inline-assembly carry chains; RDNA1 builds plain
+  C++ ones instead.
+- Pearl on RDNA2 (RX 6000): the padded SIMT kernel is the default, ~24% faster (RX 6800 8.5 -> 10.6 TH/s).
+- `--selftest`: each GPU is checked in its own process (a GPU that faults no longer fails the ones after it), `-d`
+  selects GPUs (Ctrl+C stops all of them), an algorithm that needs more memory than the GPU has is SKIP rather than
+  FAIL, a GPU whose test process crashes is named, and wrong results get a
+  hint about unstable overclocks (a +150 MHz core offset made a GTX 1080 Ti fail the DAG algorithms at random).
+- `--benchmark`: a GPU whose DAG fits but whose working buffers do not (Conflux's 8.9 GB DAG on a 10 GB RTX 3080) gets
+  a clear error instead of a 0 H/s result.
+- AMD on Linux: `--gpu-plimit` outside the card's allowed range (RX 6800: 197-247 W) says so instead of "needs root".
+- Iron Fish: Kryptex delisted it on 2026-11-10 (its servers close every connection), so the Kryptex launcher is gone
+  and FishHash has no dev fee (there is no fee pool). FishHash itself still works with other Iron Fish pools and for
+  Karlsen.
+
 ## 0.2.0c (2026-11-11)
 
 - Nexa: the affine conversion's inverses come from a new kernel (Montgomery's trick over 32 nonces per thread, no

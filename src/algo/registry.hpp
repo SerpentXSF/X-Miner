@@ -21,4 +21,8 @@ const std::vector<AlgorithmInfo>& algorithms();
 const AlgorithmInfo* find_algorithm(const std::string& name);  // accepts aliases, case-insensitive
 bool supports(const AlgorithmInfo& algo, const gpu::DeviceInfo& dev);
 
+// GPUs whose kernels were built for them but never run on them by us (AMD before RDNA4 and NVIDIA before Ampere,
+// except the chips we tested).
+bool experimental_gpu(const gpu::DeviceInfo& dev);
+
 }  // namespace xm

@@ -140,11 +140,48 @@ NVIDIA findings (RTX 3060):
 | Card | X-Miner | Reference |
 |---|---|---|
 | RX 9070 XT | 20.1 MH/s @ ~236 W (-30% power) | SRBMiner: 0 H/s; closed AMD miner: 20.9 MH/s on RX 9070 |
-| RTX 3060 | 10.8 MH/s @ 154 W | closed miners: ~29.5 MH/s @ 90 W; SRBMiner 31.7 MH/s |
+| RTX 3060 | 20.9 MH/s @ 99 W (CLMAD, tower64; driver for CUDA 13.3+); 10.8 MH/s @ 154 W with an older driver | SRBMiner 3.7.9: 27.35 MH/s @ 99.9 W, 1650 MHz (31.7 @ 170 W); closed miners: ~29.5 MH/s @ 90 W |
+
+The NVIDIA rate depends on the installed driver: the miner tries the CLMAD kernels first (tower64, then composite
+basis) and uses the integer-product kernel with drivers older than CUDA 13.3 (driver 550 crashes loading the CLMAD
+modules instead of rejecting them, so the miner checks the driver version first). `x-miner -a noid --benchmark`
+names the kernel it ran ("CLMAD, tower64", "CLMAD", or neither).
 
 History: generic Karatsuba constant multiply 11.1 / 5.32 MH/s; shared-memory/LDS nibble tables (NoidMiner) 16.6 /
 8.72 MH/s; AMD block size 512 17.7 MH/s; IMAD.WIDE products on NVIDIA; composite basis (below) 20.1 / 9.8 MH/s
-(same session, same settings: 17.7 -> 20.1 and 8.61 -> 9.81 MH/s, 3060 power 169 -> 148 W).
+(same session, same settings: 17.7 -> 20.1 and 8.61 -> 9.81 MH/s, 3060 power 169 -> 148 W); NVIDIA CLMAD (CUDA 13.3)
+with 8 of 9 products 18.0, tower64 basis (6 CLMADs per multiply) 18.8 MH/s at 99 W (0.2.0c), unrolled MDS layers
+20.9 MH/s (0.3.0, below).
+
+Tower64 pipe budget on the RTX 3060 (2026-11-12, Nsight Compute, per nonce): 540 general multiplies x 6 CLMAD = 3240
+CLMAD on the FP64 pipe (2 per SM per clock: 1620 SM cycles), 804 constant multiplies x 32 LDS.64 = 1608 shared-memory
+wavefronts (one per SM cycle), and ~126k integer ALU instructions (64 per SM per clock: ~1975 SM cycles). The ALU
+is the limit (91% busy), CLMAD and shared memory sit at ~74%. SRBMiner's 27.35 MH/s at 1650 MHz is 1689 SM cycles
+per nonce, 96% of the CLMAD bound (31.7 at 1920 MHz is 95%), so it most likely runs the same kind of kernel with all
+three pipes nearly full; matching it needs the ALU work down to ~100k per nonce. ALU split of the 0.3.0 kernel:
+constant-multiply lookups ~60k (one PRMT + one LOP3 per nibble, near the floor for 128-byte tables), 64-bit
+reductions ~26k (2160 x ~12), squaring spreads ~19k, multiply/square glue ~13k. A kernel without any constant
+multiplies (timing build) runs at 26.8 MH/s.
+
+0.3.0 A/B (RTX 3060 at 99 W, 30-60 s each, the benchmark CPU-verifies every share; 18.82 before): partial rounds
+unrolled with compile-time constants (no lane rotation, no per-constant branch) 19.19; plus table bases as LDS
+immediates and each product starting from the round's sum S 19.42; without CLMAD for d0+1 19.64; plus gmult's
+w P1 as (w a1) b1 with P0 as the CLMAD addend 20.06; full MDS layers unrolled too 20.46-20.55; h on CLMAD 20.61;
+the S-box squarings unrolled 20.86.
+Slower: shifts on the multiply pipe (IMAD.HI) in the reductions (18.24-18.39), the spreads (18.74) or the table
+masks (18.81); a 40-register cap (no change), 32 (spills, 17.99); g and h on CLMAD 20.09; d0+1 on CLMAD with the
+unrolled layers 19.42; the S-box multiplies unrolled too (no change).
+
+Constant-multiply alternatives (2026-11-12): byte-indexed tables (256 x 64-bit per byte position, 8 lookups per
+coefficient instead of 16, built in static shared memory) halve the lookups' ALU work but cost ~5.8 shared-memory
+cycles per lookup instead of 2 (random entries, bank conflicts: Nsight 1.4 G conflicts per launch) and 16 KB per
+constant, which cuts occupancy (62% -> 49% with one constant): one constant on byte tables +0.5%, two -3 to -4%.
+Squaring on CLMAD (a * a instead of bit spreading) for one or both coefficients of x^4: -6% / -15% (the CLMAD pipe is
+fuller than its ~75% busy figure suggests). The partial-round lanes 1-3 are linear, but rewriting them in the basis
+of the characteristic polynomial of (e1, e2, e3) needs 5 constant multiplies per round instead of 4 unless
+e1 + e2 + e3 = 0, which these constants (spec tower 8193, 513, 2049) do not satisfy. The constants are powers of two
+in the spec's binary tower basis, where multiplying by them is cheap, but that basis is not the CLMAD-friendly one
+and a basis change costs more than a table multiply.
 
 NVIDIA general multiply: 32x32 -> 64 carry-less products from IMAD.WIDE on operands split in 4 bit classes
 (16 multiplies per 32x32, 9 of them per 128-bit product) instead of NoidMiner's 16-bit XMAD path, which costs a full
@@ -204,8 +241,9 @@ reach ~1.5 times on the multiplies; that is a research project for a coin worth 
 
 Where the time went on the RTX 3060 with the flat basis (timing-only builds): without the S-boxes 18.0 MH/s; without
 the table constant multiplies 13.2 MH/s. RX 9070 XT, same builds: 17.5 MH/s full, 24.9 without the table multiplies,
-31.5 without the S-boxes. The closed NVIDIA miners are ~3x faster still, so they must have a much cheaper 128-bit
-multiply than 9 class-split integer products; that is the open item. With NOID at ~$0.54 (~1.1 NOID/day for a
+31.5 without the S-boxes. The closed NVIDIA miners were ~3x faster still, so they must have a much cheaper 128-bit
+multiply than 9 class-split integer products. (Since 0.2.0c the CLMAD kernels supply it: 18.8 MH/s, 20.9 in 0.3.0,
+~1.31x behind SRBMiner at the same 100 W, and the kernel is now ALU-bound.) With NOID at ~$0.54 (~1.1 NOID/day for a
 9070 XT at 17.5 MH/s on a 656 GH/s network, 2026-10-22) this stays behind Pearl work.
 
 ## Quantus (quantus)
@@ -835,3 +873,26 @@ split 34 -> 54 ms (6.67 -> 6.30 g/s); the Infinity Cache already merges the scat
 only adds barriers. `XM_C29_DIRECT=0/1` overrides.
 
 Live on Kryptex: RX 9070 XT, 5 accepted / 0 rejected in 15 minutes at difficulty 20 (6.62 g/s shown).
+
+## Rig tests, 2026-11-14/15 (HiveOS)
+
+Two HiveOS rigs: 3x RTX 3080, 3x RTX 3070, RTX 3060 Ti, GTX 1080 Ti (driver 550.142, CUDA 12.4) and 4x RX 5700 XT,
+RX 6600 XT, RX 6700 XT, RX 6800 (amdgpu 6.8, X-Miner's bundled ROCm 6.4.4 HIP runtime). `--selftest` at stock clocks:
+NVIDIA 156 PASS / 4 SKIP, AMD 135 PASS / 5 SKIP, no FAIL (the SKIPs: Cuckaroo29 on 8 GB cards). Hashrates: README.
+
+Found and fixed on these rigs:
+
+| Problem | Cause | Fix |
+|---|---|---|
+| Parano1d crashed the miner (segfault in libcuda 550) | CUDA 13.3 CLMAD cubins offered to a CUDA 12.4 driver | CLMAD kernels only for drivers >= 13.3 |
+| GTX 1080 Ti: no prebuilt kernel loaded (CUDA error 222) | PTX tagged ISA 8.5 (CUDA 12.5 nvcc), the driver knows 8.4 | PTX retagged 7.1; the build checks it with ptxas |
+| GTX 1080 Ti: Cuckaroo29 CUDA error 1 | 64 KB dynamic shared memory; Pascal allows 48 KB | no nibble counters before sm_70 (3.76 g/s) |
+| GTX 1080 Ti: DAG algorithms wrong at random | +150 MHz core offset (HiveOS overclock) | none needed: stock / +100 pass; `--selftest` now hints at it |
+| RX 5700 XT: every Quantus share wrong | the inline-assembly carry chains misbehave on gfx101x | plain C++ helpers on RDNA1 (identical results, 57 MH/s) |
+| Pearl on RDNA2 slower than it could be | LDS bank conflicts in the SIMT kernel | padded LDS chunks by default: RX 6800 10.6 vs 8.5 TH/s (capped clocks) |
+| HiveOS AMD: "no supported GPU" | HiveOS installs ROCm's OpenCL only, no HIP | the HIP runtime ships in the Linux / HiveOS packages |
+| One faulting GPU failed every later GPU in `--selftest` | one process for all GPUs | one process per GPU |
+
+Benchmarks of 20 s report fewer DAG-algorithm shares than expected (start-up effect); over 120 s an RTX 3080 found
+78 / 77 expected (KawPow) and 69 / 78 (ProgPowZ), so no shares are lost.
+

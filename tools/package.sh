@@ -22,6 +22,14 @@ cp "$build"/x-miner LICENSE NOTICE THIRD_PARTY.md README.md "$stage/"
 # NVRTC for KawPow on NVIDIA (the driver does not include it): NVRTC_DIR=<cuda>/lib64. AMD uses ROCm's libhiprtc.
 nvrtc() { [ -n "$NVRTC_DIR" ] && cp -L "$NVRTC_DIR"/libnvrtc.so.1[0-9] "$NVRTC_DIR"/libnvrtc-builtins.so.1[0-9].[0-9]* "$1/"; }
 nvrtc "$stage" || echo "warning: NVRTC_DIR not set: KawPow will not run on NVIDIA from this package"
+# ROCm HIP runtime for AMD where the system has none (HiveOS ships only ROCm's OpenCL): HIP_RUNTIME_DIR=<dir> from
+# tools/fetch_hip_runtime.sh. The miner prefers a system HIP and falls back to hip/.
+hip() {
+  [ -n "$HIP_RUNTIME_DIR" ] || return 1
+  if [ ! -f "$HIP_RUNTIME_DIR/libamdhip64.so.6" ]; then echo "error: no libamdhip64.so.6 in $HIP_RUNTIME_DIR" >&2; exit 1; fi
+  mkdir -p "$1/hip" && cp -R "$HIP_RUNTIME_DIR"/. "$1/hip/"
+}
+hip "$stage" || echo "warning: HIP_RUNTIME_DIR not set: AMD needs a ROCm install (none on HiveOS) with this package"
 for f in launchers/linux/*.sh; do
   tr -d '\r' < "$f" > "$stage/$(basename "$f")"
   chmod +x "$stage/$(basename "$f")"
@@ -38,12 +46,14 @@ cat "dist/$name.tar.gz.sha256"
 hive="dist/hiveos/x-miner"
 rm -rf dist/hiveos
 mkdir -p "$hive"
-cp "$build"/x-miner LICENSE NOTICE "$hive/"
+cp "$build"/x-miner LICENSE NOTICE THIRD_PARTY.md "$hive/"
 nvrtc "$hive" || true
+hip "$hive" || true
 for f in launchers/hiveos/*; do tr -d '\r' < "$f" > "$hive/$(basename "$f")"; done
 sed -i "s/^CUSTOM_VERSION=.*/CUSTOM_VERSION=$version/" "$hive/h-manifest.conf"
-chmod 644 "$hive"/*
+chmod 644 "$hive"/* 2>/dev/null || true
 chmod 755 "$hive"/*.so* 2>/dev/null || true
+[ -d "$hive/hip" ] && chmod 755 "$hive/hip" "$hive/hip/licenses" && chmod 644 "$hive"/hip/licenses/* && chmod 755 "$hive"/hip/*.so*
 chmod +x "$hive"/*.sh "$hive/x-miner"
 tar -C dist/hiveos -czf "dist/x-miner-$version-hiveos.tar.gz" x-miner
 (cd dist && sha256sum "x-miner-$version-hiveos.tar.gz" > "x-miner-$version-hiveos.tar.gz.sha256")

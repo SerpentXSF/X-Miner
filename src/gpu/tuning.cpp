@@ -625,7 +625,14 @@ bool Tuner::apply(size_t index, const TuneRequest& req) {
     } else {
       double base = std::atof((def.empty() ? cur : def).c_str());
       double uw = req.power_w ? *req.power_w * 1e6 : base * *req.power_pct / 100.0;
-      if (write_text(cap, std::to_string(static_cast<long long>(uw)))) {
+      // The driver rejects a cap outside power1_cap_min..max (RX 6800: 197-247 W) with EINVAL, not a permission error.
+      const std::string mn = read_line(hw + "/power1_cap_min"), mx = read_line(hw + "/power1_cap_max");
+      const double lo = mn.empty() ? 0 : std::atof(mn.c_str()), hi = mx.empty() ? 0 : std::atof(mx.c_str());
+      if ((lo > 0 && uw < lo) || (hi > 0 && uw > hi)) {
+        char buf[128];
+        std::snprintf(buf, sizeof buf, "%.0f W is outside this GPU's range %.0f-%.0f W", uw / 1e6, lo / 1e6, hi / 1e6);
+        fail("power limit", buf);
+      } else if (write_text(cap, std::to_string(static_cast<long long>(uw)))) {
         char buf[96];
         std::snprintf(buf, sizeof buf, "power limit %.0f W (was %.0f W)", uw / 1e6, std::atof(cur.c_str()) / 1e6);
         ok(buf);

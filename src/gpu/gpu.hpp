@@ -69,6 +69,7 @@ std::vector<DeviceInfo> nvidia_devices();
 std::vector<DeviceInfo> all_devices();
 std::string amd_runtime_name();     // "amdhip64_7.dll" or "" if missing
 std::string nvidia_runtime_name();  // "nvcuda.dll (driver 12.8)" or ""
+int nvidia_driver_version();         // CUDA version the driver supports, e.g. 12040 for 12.4; 0 without a driver
 
 std::unique_ptr<Device> open(const DeviceInfo& info);
 

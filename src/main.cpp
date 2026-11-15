@@ -3,10 +3,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
+#ifndef _WIN32
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <random>
@@ -131,6 +136,8 @@ int list_devices() {
                             std::to_string(d.compute_units) +
                             (d.vendor == gpu::Vendor::Nvidia ? " SM  " : (d.arch >= "gfx10" ? " WGP  " : " CU  "))},
             {algos.empty() ? Tone::Dim : Tone::Ok, algos.empty() ? "no kernel yet" : algos}});
+    if (!algos.empty() && experimental_gpu(d))
+      c.line({{Tone::Radar, id}, {Tone::Gold, "experimental: built for " + d.arch + " but not tested on it; run --selftest first"}});
   }
   gpu::Sensors sensors(devs);
   for (size_t i = 0; i < devs.size(); ++i) {
@@ -149,7 +156,7 @@ int list_algorithms() {
   for (const auto& a : algorithms()) {
     std::string archs;
     for (const auto& s : gpu::kernel_archs(a.kernel)) archs += (archs.empty() ? "" : " ") + s;
-    if (std::string(a.kernel) == "@rtc") archs = "compiled at run time (NVRTC / hipRTC) for RDNA4 and RTX 30+";
+    if (std::string(a.kernel) == "@rtc") archs = "compiled at run time (NVRTC / hipRTC) for AMD RDNA1-4 and NVIDIA GTX 10 and newer";
     c.line({{Tone::Radar, "  " + std::string(a.name)},
             {Tone::Dim, "  " + std::string(a.coin) + "  "},
             {a.implemented ? Tone::Ok : Tone::Gold, a.implemented ? "ready: " + archs : "in development"}});
@@ -250,19 +257,84 @@ int main(int argc, char** argv) {
     std::printf("%s %s (%s)\n", XM_NAME, XM_VERSION, XM_VENDOR);
     return 0;
   }
-  print_banner(cfg.algorithm);
+  const char* st_child = std::getenv("XM_SELFTEST_CHILD");  // set for the per-GPU --selftest child processes
+  if (!st_child) print_banner(cfg.algorithm);
   if (cfg.list_devices) return list_devices();
   if (cfg.list_algorithms) return list_algorithms();
   if (cfg.ui_demo) return ui_demo(cfg);
   if (!cfg.pearl_share_test.empty()) return pearl::share_test(cfg.pearl_share_test);
   if (cfg.selftest) {
-    print_section("SELF TEST");
-    auto devs = gpu::all_devices();
+    if (!st_child) print_section("SELF TEST");
+    const auto all = gpu::all_devices();
+    std::vector<gpu::DeviceInfo> devs;
+    std::vector<size_t> ids;  // --list-devices numbers
+    for (size_t i = 0; i < all.size(); ++i)
+      if (cfg.gpu_ids.empty() || std::find(cfg.gpu_ids.begin(), cfg.gpu_ids.end(), int(i)) != cfg.gpu_ids.end()) {
+        if (st_child && std::to_string(i) != st_child) continue;
+        devs.push_back(all[i]);
+        ids.push_back(i);
+      }
     if (devs.empty()) {
       error("GPU", "no supported GPU found");
       return 1;
     }
-    int failed = run_selftest(devs);
+    // Several GPUs: each one is checked in its own process, so a GPU that faults (an unstable overclock, a driver that
+    // crashes on a kernel) cannot fail the GPUs checked after it.
+    if (!st_child && (devs.size() > 1 || std::getenv("XM_SELFTEST_ISOLATE"))) {  // the env: developer test of this path
+      int failed = 0;
+      for (size_t k = 0; k < devs.size(); ++k) {
+        const std::string id = std::to_string(ids[k]);
+        const std::string crashed = "GPU " + id + " " + devs[k].name +
+                                    ": the self-test process crashed (driver or unstable clocks)";
+        std::fflush(stdout);
+        // The child is started directly (no shell), so paths with spaces, quotes or % need no quoting, and Ctrl+C
+        // reaches parent and child alike.
+#ifdef _WIN32
+        std::wstring exe(32768, L'\0');
+        exe.resize(GetModuleFileNameW(nullptr, exe.data(), DWORD(exe.size())));
+        std::wstring cmd = L"\"" + exe + L"\" --selftest" + (cfg.color ? L"" : L" --no-color");
+        SetEnvironmentVariableA("XM_SELFTEST_CHILD", id.c_str());
+        STARTUPINFOW si{};
+        si.cb = sizeof si;
+        PROCESS_INFORMATION pi{};
+        DWORD code = 2;
+        if (!exe.empty() && CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+          WaitForSingleObject(pi.hProcess, INFINITE);
+          GetExitCodeProcess(pi.hProcess, &code);
+          CloseHandle(pi.hThread);
+          CloseHandle(pi.hProcess);
+        }
+        SetEnvironmentVariableA("XM_SELFTEST_CHILD", nullptr);
+        if (code != 0) ++failed;
+        if (code != 0 && code != 1) error("GPU", crashed);  // e.g. 0xC0000005, an access violation
+#else
+        char exe[4096] = {};
+        const ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+        if (n <= 0) {  // cannot find ourselves: check the rest in this process
+          std::vector<gpu::DeviceInfo> rest(devs.begin() + long(k), devs.end());
+          std::vector<size_t> rest_ids(ids.begin() + long(k), ids.end());
+          failed += run_selftest(rest, rest_ids);
+          break;
+        }
+        exe[n] = 0;
+        const pid_t pid = fork();
+        if (pid == 0) {
+          setenv("XM_SELFTEST_CHILD", id.c_str(), 1);
+          char a0[] = "x-miner", a1[] = "--selftest", a2[] = "--no-color";
+          char* argv[] = {a0, a1, cfg.color ? nullptr : a2, nullptr};
+          execv(exe, argv);
+          _exit(127);
+        }
+        int st = 0;
+        if (pid < 0 || waitpid(pid, &st, 0) < 0) st = 127 << 8;
+        if (WIFSIGNALED(st) && (WTERMSIG(st) == SIGINT || WTERMSIG(st) == SIGQUIT)) return 1;  // Ctrl+C
+        if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) ++failed;
+        if (WIFSIGNALED(st) || (WIFEXITED(st) && WEXITSTATUS(st) > 1)) error("GPU", crashed);
+#endif
+      }
+      return failed ? 1 : 0;
+    }
+    int failed = run_selftest(devs, ids);
     return failed ? 1 : 0;
   }
 

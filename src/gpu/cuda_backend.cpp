@@ -232,6 +232,8 @@ class CudaDevice : public Device {
 
 }  // namespace
 
+int nvidia_driver_version() { return cuda().ready ? cuda().driver_version : 0; }
+
 std::string nvidia_runtime_name() {
   if (!cuda().ready) return {};
   int v = cuda().driver_version;

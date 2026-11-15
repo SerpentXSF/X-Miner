@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "core/console.hpp"
 #include "gpu/kernels.hpp"
 
 namespace xm::pearl {
@@ -34,6 +35,14 @@ Key8 key8(const Hash& h) {
 unsigned blocks(size_t threads, unsigned bs) { return static_cast<unsigned>((threads + bs - 1) / bs); }
 
 }  // namespace
+
+// NVIDIA GPUs before Ampere (no int8 m16n8k32 mma) get the SIMT kernel of kernels/pearl/pearl.cu. XM_PEARL_SIMT=1
+// selects its launch on newer GPUs too (developer check, together with an XM_KERNEL_FILE built with -DXM_PEARL_SIMT).
+bool Engine::nv_simt() const {
+  static const bool force = std::getenv("XM_PEARL_SIMT") != nullptr;
+  const std::string& a = dev_.info().arch;
+  return force || (a.rfind("sm_", 0) == 0 && std::atoi(a.c_str() + 3) < 80);
+}
 
 Engine::Engine(gpu::Device& dev, uint32_t m, uint32_t n, uint64_t seed) : dev_(dev), m_(m), n_(n), rng_(seed) {
   // K 8192 halves the per-tile epilogue (fold, hash, store) per MAC: +1.1% on the RTX 3060, +1.2% on the RX 9070 XT,
@@ -105,9 +114,113 @@ bool Engine::init(std::string& err) {
     err = dev_.last_error();
     return false;
   }
-  return true;
+  return check_gemm(err);
 }
 
+// Launches `kernel` with the GEMM's geometry for this GPU (AMD: workgroups of 2x4 waves; NVIDIA before Ampere: one
+// 128x256 tile per block of 8 warps).
+bool Engine::launch_gemm(const char* kernel, void** args, int M, int N) {
+  if (dev_.info().vendor == gpu::Vendor::Nvidia)
+    return dev_.launch(kernel, N / 256, M / 128, 1, 256, 1, 1, 0, args);
+  return dev_.launch(kernel, N / (64 * amd_wnw_), M / (64 * amd_wmw_), 1, 32 * amd_wmw_ * amd_wnw_, 1, 1, 0, args);
+}
+
+// GEMM kernels we could not run on their GPUs ourselves come with xm_pearl_gemm_simt (verified by forcing it on our
+// cards): AMD RDNA3 WMMA and NVIDIA Turing m8n8k16 (which GTX 16 GPUs, without tensor cores, may run slowly). Here
+// both run on random data; if they differ the miner uses the SIMT kernel, if they agree the faster one.
+// XM_PEARL_CHECK=1 runs this on any GPU whose module has both kernels, 0 skips it. Only a launch or memory error fails.
+bool Engine::check_gemm(std::string& err) {
+  const bool nv = dev_.info().vendor == gpu::Vendor::Nvidia;
+  if (const char* e = std::getenv("XM_PEARL_AMD_WAVES")) std::sscanf(e, "%ux%u", &amd_wmw_, &amd_wnw_);
+  if (nv && !nv_simt()) return true;  // the Ampere+ kernel has no alternative
+  const char* env = std::getenv("XM_PEARL_CHECK");
+  const std::string& arch = dev_.info().arch;
+  const bool untested = nv ? arch == "sm_75" : arch.rfind("gfx11", 0) == 0;
+  if (env ? std::atoi(env) == 0 : !untested) return true;
+  const std::string who = dev_.info().name + " (" + arch + ")";
+
+  // 1. Correctness: two blocks each way (covers the rasterization), K 2048 = 16 folds, full-range random int8.
+  int M = nv ? 256 : static_cast<int>(128 * amd_wmw_), N = nv ? 512 : static_cast<int>(128 * amd_wnw_), K = 2048;
+  // Debug transcripts: AMD one per lane in launch order; NVIDIA at a sparse index over M N / 64 slots (pearl.cu).
+  const size_t sa = size_t(M) * K, sb = size_t(N) * K, words = size_t(M) * N / (nv ? 64 : 128) * 16;
+  gpu::DevPtr da = dev_.alloc(sa), db = dev_.alloc(sb), o1 = dev_.alloc(words * 4), o2 = dev_.alloc(words * 4);
+  auto release = [&] {
+    for (gpu::DevPtr p : {da, db, o1, o2}) dev_.free(p);
+  };
+  std::vector<int8_t> h(std::max(sa, sb));
+  auto upload_random = [&](gpu::DevPtr p, size_t n) {
+    for (size_t i = 0; i < n; ++i) h[i] = static_cast<int8_t>(rng_());
+    return dev_.upload(p, h.data(), n);
+  };
+  if (!da || !db || !o1 || !o2 || !upload_random(da, sa) || !upload_random(db, sb) || !dev_.memset(o1, 0, words * 4) ||
+      !dev_.memset(o2, 0, words * 4)) {
+    err = "Pearl kernel check: " + dev_.last_error();
+    release();
+    return false;
+  }
+  Key8 seed{};
+  U256w bw{};
+  uint32_t maxf = 0;
+  void* g1[] = {&da, &db, &o1, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_};
+  void* g2[] = {&da, &db, &o2, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_};
+  if (!launch_gemm(gemm_, g1, M, N) || !dev_.sync()) {
+    err = "Pearl kernel check: " + dev_.last_error();
+    release();
+    return false;
+  }
+  if (!launch_gemm("xm_pearl_gemm_simt", g2, M, N) || !dev_.sync()) {
+    release();  // a module without the SIMT entry point: nothing to compare with
+    return true;
+  }
+  std::vector<uint32_t> w1(words), w2(words);
+  const bool got = dev_.download(w1.data(), o1, words * 4) && dev_.download(w2.data(), o2, words * 4);
+  release();
+  if (!got) {
+    err = "Pearl kernel check: " + dev_.last_error();
+    return false;
+  }
+  size_t bad = 0;
+  for (size_t i = 0; i < words; ++i) bad += w1[i] != w2[i];
+  const char* fast = nv ? "tensor-core" : "WMMA";
+  if (bad) {
+    warn("PEARL", who + ": the " + fast + " kernel disagrees with the SIMT kernel (" + std::to_string(bad) + " of " +
+                      std::to_string(words) + " words); mining with the SIMT kernel. Please report this.");
+    gemm_ = "xm_pearl_gemm_simt";
+    return true;
+  }
+
+  // 2. Speed: a slice of the mining matrices (16 folds of 128 x 256 tiles), best of three runs each, no hits.
+  int Mt = static_cast<int>(std::min<uint32_t>(m_, 4096)), Nt = static_cast<int>(std::min<uint32_t>(n_, 8192)),
+      Kt = static_cast<int>(cfg_.k);
+  gpu::DevPtr no_out = 0;
+  void* t1[] = {&d_ap_, &d_bp_, &no_out, &Mt, &Nt, &Kt, &seed, &bw, &d_found_, &maxf, &d_wave_};
+  auto best_ms = [&](const char* kernel) {
+    double best = 1e30;
+    for (int r = 0; r < 3; ++r) {
+      const auto t0 = std::chrono::steady_clock::now();
+      if (!launch_gemm(kernel, t1, Mt, Nt) || !dev_.sync()) return -1.0;
+      best = std::min(best, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    }
+    return best;
+  };
+  const double t_fast = best_ms(gemm_), t_simt = best_ms("xm_pearl_gemm_simt");
+  if (t_fast < 0 || t_simt < 0) {
+    err = "Pearl kernel check: " + dev_.last_error();
+    return false;
+  }
+  char buf[160];
+  if (t_simt < 0.9 * t_fast) {
+    std::snprintf(buf, sizeof buf, ": the SIMT kernel is faster than the %s kernel (%.1f vs %.1f ms); using it", fast,
+                  t_simt, t_fast);
+    info("PEARL", who + buf);
+    gemm_ = "xm_pearl_gemm_simt";
+  } else {
+    std::snprintf(buf, sizeof buf, ": %s kernel matches the SIMT kernel and is faster (%.1f vs %.1f ms)", fast,
+                  t_fast, t_simt);
+    info("PEARL", who + buf);
+  }
+  return true;
+}
 bool Engine::chunk_tree(gpu::DevPtr data, size_t len, MerkleTree& out, std::string& err) {
   uint32_t chunks = static_cast<uint32_t>(len / 1024);
   Key8 key = key8(job_key_);
@@ -203,15 +316,14 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   // 128x256 tiles, 96 KB of dynamic shared memory.
   const bool nv = dev_.info().vendor == gpu::Vendor::Nvidia;
   bool ok = dev_.memset(d_found_, 0, 4);
-  if (nv) {
+  if (!nv || nv_simt()) {
+    // AMD, and NVIDIA Pascal / Volta / Turing (dp4a or m8n8k16, one 128x256 tile per block of 8 warps).
+    ok = ok && launch_gemm(gemm_, g, M, N);
+  } else {
     const unsigned tiles = (m_ / kNvBm) * (n_ / kNvBn), sms = static_cast<unsigned>(dev_.info().compute_units);
     const unsigned grid = std::min(tiles, sms > 0 ? sms : 1u), threads = (kNvBm / kNvWm) * (kNvBn / 64) * 32 + 32;
     const unsigned shared = kNvStages * (kNvBm + kNvBn) * kNvBk;
     ok = ok && dev_.memset(d_wave_, 0, 4) && dev_.launch("xm_pearl_gemm", grid, 1, 1, threads, 1, 1, shared, g);
-  } else {
-    unsigned wmw = 2, wnw = 4;  // waves per workgroup along M and N (64x64 each); must match kernels/pearl/pearl.hip
-    if (const char* e = std::getenv("XM_PEARL_AMD_WAVES")) std::sscanf(e, "%ux%u", &wmw, &wnw);  // developer A/B
-    ok = ok && dev_.launch("xm_pearl_gemm", n_ / (64 * wnw), m_ / (64 * wmw), 1, 32 * wmw * wnw, 1, 1, 0, g);
   }
   if (!ok) {
     err = dev_.last_error();

@@ -73,6 +73,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
         last = now;
       }
     }
+    if (graphs == 0) continue;  // nothing solved: the error above says why
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     char line[320];
     std::snprintf(line, sizeof line,

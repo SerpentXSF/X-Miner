@@ -42,6 +42,56 @@ __device__ __forceinline__ Acc acc(u64 x) { return {(u32)x, (u32)(x >> 32), 0u};
 
 #if defined(__HIP__)
 
+// RDNA4 renamed v_mad_u64_u32 (RDNA1-3) to v_mad_co_u64_u32; same encoding and operands.
+#if defined(__GFX12__)
+#define QTC_MAD64 "v_mad_co_u64_u32 "
+#else
+#define QTC_MAD64 "v_mad_u64_u32 "
+#endif
+
+// RDNA1 (gfx101x) computes wrong results with the inline-assembly carry chains below (every share rejected on an RX
+// 5700 XT with all of them, while RDNA2-4 are correct), so it builds these plain C++ versions instead.
+#if !defined(XM_QTC_PORTABLE) && (defined(__gfx1010__) || defined(__gfx1011__) || defined(__gfx1012__) ||                                   defined(__gfx1013__) || defined(__gfx10_1_generic__))
+#define XM_QTC_PORTABLE 1
+#endif
+#if defined(XM_QTC_PORTABLE)
+
+// Plain C++ versions of the AMD helpers below, with the same carry handling (borrows marked "not corrected" are
+// dropped the same way).
+__device__ __forceinline__ Acc acc_sum(const Acc& a, u64 x) {
+  const u64 lo = ((u64)a.l1 << 32) | a.l0, s = lo + x;
+  return {(u32)s, (u32)(s >> 32), a.h + (u32)(s < lo)};
+}
+__device__ __forceinline__ Acc acc_sum(const Acc& a, const Acc& x) {
+  const u64 lo = ((u64)a.l1 << 32) | a.l0, s = lo + (((u64)x.l1 << 32) | x.l0);
+  return {(u32)s, (u32)(s >> 32), a.h + x.h + (u32)(s < lo)};
+}
+__device__ __forceinline__ u64 fold(u32 r0, u32 r1, u32 r2, u32 r3) {
+  u32 o0 = r0 - r2, o1 = r1 - (u32)(r0 < r2);
+  const u32 b = o0 < r3;
+  o0 -= r3;
+  o1 -= b;
+  const u32 t = o1 + r2, c = t < o1;
+  o1 = t + c;
+  o0 -= c;
+  return ((u64)o1 << 32) | o0;
+}
+__device__ __forceinline__ u64 fold96(const Acc& a) {
+  u32 o0 = a.l0 - a.h, o1 = a.l1 - (u32)(a.l0 < a.h);
+  const u32 t = o1 + a.h, c = t < o1;
+  o1 = t + c;
+  o0 -= c;
+  return ((u64)o1 << 32) | o0;
+}
+__device__ __forceinline__ u64 gadd(u64 a, u64 b) {
+  const u64 s = a + b;
+  const u32 c = s < a;
+  return ((u64)((u32)(s >> 32) + c) << 32) | (u32)((u32)s - c);
+}
+#define XM_QTC_AFOLD 0
+
+#else  // inline-assembly versions
+
 // dst = a + x (96-bit + 64-bit), three-address so no copies are needed.
 __device__ __forceinline__ Acc acc_sum(const Acc& a, u64 x) {
   Acc r;
@@ -110,6 +160,8 @@ __device__ __forceinline__ u64 gadd(u64 a, u64 b) {
   return ((u64)o1 << 32) | o0;
 }
 
+#endif  // XM_QTC_PORTABLE
+
 // a * b + w (w < 2^96) as four words: four 32x32 -> 64 multiply-adds, the addend riding in their accumulators.
 // Needs b < 2^64 - 2^36 or a small w so nothing overflows (true for the diagonal and for the w = 0 callers).
 __device__ __forceinline__ void mul_wide(u64 a, u64 b, const Acc& w, u32& r0, u32& r1, u32& r2, u32& r3) {
@@ -140,7 +192,7 @@ __device__ __forceinline__ void mul_wide(u64 a, u64 b, const Acc& w, u32& r0, u3
 __device__ __forceinline__ u64 fold_mad(u32 r0, u32 r1, u32 r2, u32 r3) {
   u64 t;
   u32 c, o0, o1;
-  asm("v_mad_co_u64_u32 %0, %1, %2, %3, %4" : "=&v"(t), "=&s"(c) : "v"(r2), "s"(0xffffffffu), "v"(((u64)r1 << 32) | r0));
+  asm(QTC_MAD64 "%0, %1, %2, %3, %4" : "=&v"(t), "=&s"(c) : "v"(r2), "s"(0xffffffffu), "v"(((u64)r1 << 32) | r0));
   asm("v_sub_co_u32 %0, vcc_lo, %2, %4\n\t"
       "v_sub_co_ci_u32_e64 %1, null, %3, 0, vcc_lo\n\t"
       "v_add_co_ci_u32_e64 %1, null, %1, 0, %5\n\t"
@@ -155,7 +207,7 @@ __device__ __forceinline__ u64 fold_mad(u32 r0, u32 r1, u32 r2, u32 r3) {
 __device__ __forceinline__ u64 fold96_mad(const Acc& a) {
   u64 t;
   u32 c, o0, o1;
-  asm("v_mad_co_u64_u32 %0, %1, %2, %3, %4" : "=&v"(t), "=&s"(c) : "v"(a.h), "s"(0xffffffffu), "v"(((u64)a.l1 << 32) | a.l0));
+  asm(QTC_MAD64 "%0, %1, %2, %3, %4" : "=&v"(t), "=&s"(c) : "v"(a.h), "s"(0xffffffffu), "v"(((u64)a.l1 << 32) | a.l0));
   asm("v_add_co_ci_u32_e64 %1, null, %3, 0, %4\n\t"
       "v_sub_co_ci_u32_e64 %0, null, %2, 0, %4"
       : "=&v"(o0), "=&v"(o1)

@@ -51,8 +51,9 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < cfg.benchmark_seconds && !stop_requested()) {
       std::vector<Share> found;
       double n = eng.iterate(batch, found, err);
-      if (n == 0) {
-        error("GPU", err);
+      if (n == 0) {  // e.g. the DAG fits but its working buffers do not (an 8.9 GB DAG on a 10 GB GPU)
+        error("GPU", "GPU " + std::to_string(d) + " " + devs[d].name + ": " + err +
+                         (err.find("out of memory") != std::string::npos ? " (not enough GPU memory beside the DAG)" : ""));
         ++failures;
         break;
       }
@@ -74,6 +75,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
         last = now;
       }
     }
+    if (total == 0) continue;  // nothing hashed: the error above says why
     double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     double expected = total / 67108864.0;  // 2^26 nonces per share at this target
     char line[220];

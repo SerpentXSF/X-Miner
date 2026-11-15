@@ -53,6 +53,13 @@ class Engine {
   uint64_t cpu_rejects() const { return cpu_rejects_; }  // GPU hits that failed CPU re-verification (should be 0)
 
  private:
+  bool nv_simt() const;  // NVIDIA without int8 m16n8k32 mma (before sm_80): SIMT GEMM launch
+  // AMD RDNA3 / NVIDIA Turing (or XM_PEARL_CHECK=1): compares the GEMM with xm_pearl_gemm_simt on random data, then
+  // mines with the SIMT one if they differ or if it is faster. Only a launch or memory error fails it.
+  bool check_gemm(std::string& err);
+  bool launch_gemm(const char* kernel, void** args, int M, int N);  // AMD, or NVIDIA before Ampere
+  const char* gemm_ = "xm_pearl_gemm";  // GEMM entry point (AMD, NVIDIA before Ampere)
+  unsigned amd_wmw_ = 2, amd_wnw_ = 4;  // AMD waves per workgroup along M and N; must match kernels/pearl/pearl.hip
   bool launch_noise(bool side_b, const Hash& seed, gpu::DevPtr sig, gpu::DevPtr packed, uint32_t rows, std::string& err);
   bool chunk_tree(gpu::DevPtr data, size_t len, MerkleTree& out, std::string& err);
   void fill_random(int8_t* p, size_t n);

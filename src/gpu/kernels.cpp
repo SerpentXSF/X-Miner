@@ -1,5 +1,6 @@
 #include "gpu/kernels.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -24,16 +25,29 @@ bool load_kernels(Device& dev, const std::string& algorithm, std::string& why) {
       return false;
     }
   }
-  // Exact matches (AMD code object, NVIDIA cubin) first, then PTX. XM_FORCE_PTX=1 skips the cubins (the driver
+  // Exact matches (AMD code object, NVIDIA cubin) first, then the AMD family-generic code object, then PTX. XM_FORCE_PTX=1 skips the cubins (the driver
   // JIT-compiles the PTX with its own, possibly newer, compiler).
+  // PTX: the newest version the GPU can run first (e.g. compute_80 before compute_61 on an A100: the older one is a
+  // different kernel design for GPUs without the newer instructions).
   const bool force_ptx = std::getenv("XM_FORCE_PTX") != nullptr;
+  const std::string generic = info.vendor == Vendor::Amd ? amd_generic_arch(info.arch) : "";
   for (int pass = force_ptx ? 1 : 0; pass < 2; ++pass) {
+    std::vector<const KernelBlob*> cand;
     for (const auto& b : kernel_blobs()) {
       if (algorithm != b.algorithm || b.vendor != info.vendor) continue;
       bool ptx = std::string(b.arch).rfind("compute_", 0) == 0;
       if ((pass == 0) == ptx) continue;
-      if (dev.load_module(b)) return true;
+      if (info.vendor == Vendor::Amd && b.arch != info.arch && b.arch != generic) continue;
+      cand.push_back(&b);
     }
+    if (pass == 0)  // the exact code object before the generic one
+      std::stable_partition(cand.begin(), cand.end(), [&](const KernelBlob* b) { return b->arch == info.arch; });
+    if (pass == 1)
+      std::stable_sort(cand.begin(), cand.end(), [](const KernelBlob* x, const KernelBlob* y) {
+        return std::atoi(x->arch + 8) > std::atoi(y->arch + 8);
+      });
+    for (const KernelBlob* b : cand)
+      if (dev.load_module(*b)) return true;
   }
   why = "no " + algorithm + " kernel for " + info.arch;
   if (!dev.last_error().empty()) why += " (" + dev.last_error() + ")";
@@ -54,10 +68,25 @@ bool add_kernels(Device& dev, const std::string& algorithm, std::string& why) {
       return false;
     }
   }
-  for (const auto& b : kernel_blobs())
-    if (algorithm == b.algorithm && b.vendor == info.vendor && info.arch == b.arch && dev.add_module(b)) return true;
+  const std::string generic = info.vendor == Vendor::Amd ? amd_generic_arch(info.arch) : "";
+  for (const std::string& arch : {info.arch, generic})
+    for (const auto& b : kernel_blobs())
+      if (!arch.empty() && algorithm == b.algorithm && b.vendor == info.vendor && arch == b.arch && dev.add_module(b))
+        return true;
   why = "no " + algorithm + " kernel for " + info.arch;
   return false;
+}
+
+std::string amd_generic_arch(const std::string& arch) {
+  // "gfx" + 4 digits; the family generic targets of LLVM's AMDGPU backend (see AMDGPUUsage, "Generic Processors")
+  if (arch.size() != 7 || arch.rfind("gfx1", 0) != 0) return "";
+  const std::string fam = arch.substr(0, 6);  // gfx101, gfx103, gfx110, gfx115, gfx120
+  const char last = arch[6];
+  if (fam == "gfx101" && last >= '0' && last <= '3') return "gfx10-1-generic";
+  if (fam == "gfx103" && last >= '0' && last <= '6') return "gfx10-3-generic";
+  if ((fam == "gfx110" || fam == "gfx115") && last >= '0' && last <= '3') return "gfx11-generic";
+  if (fam == "gfx120" && last >= '0' && last <= '1') return "gfx12-generic";
+  return "";
 }
 
 std::vector<std::string> kernel_archs(const std::string& algorithm) {

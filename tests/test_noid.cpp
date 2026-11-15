@@ -198,9 +198,12 @@ TEST(noid_t64_permutation_matches_reference) {
       ref[i] = u(seed * 0x9e3779b97f4a7c15ull + i, ~seed ^ (i * 0x1111ull));
       s[i] = to_w4(flat_to_t64(ref[i]));
     }
+    W4 s2[4] = {s[0], s[1], s[2], s[3]};
     permute_flat(ref);
     permute(s, mul, rc);
+    permute_t64(s2, mul, rc);  // the kernel's unrolled form
     for (int i = 0; i < 4; ++i) CHECK(t64_to_flat(from_w4(s[i])) == ref[i]);
+    for (int i = 0; i < 4; ++i) CHECK(t64_to_flat(from_w4(s2[i])) == ref[i]);
   }
 }
 

@@ -6,6 +6,7 @@
 
 #include "algo/noid/noid_consts.hpp"
 #include "algo/noid/noid_gpu_consts.hpp"
+#include "gpu/gpu.hpp"
 #include "gpu/kernels.hpp"
 
 namespace xm::noid {
@@ -42,12 +43,14 @@ bool Engine::init(std::string& err) {
   // threads per compute unit. XM_NOID_TPB overrides (developer tuning).
   tpb_ = dev_.info().vendor == gpu::Vendor::Amd ? 512 : 256;
   if (const char* e = std::getenv("XM_NOID_TPB")) tpb_ = static_cast<uint32_t>(std::atoi(e));
-  // The CLMAD builds (CUDA 13.3+) first, the driver rejects them when it is too old: kernels/noidt (tower64 basis,
-  // 64-bit CLMAD), then kernels/noidcl (composite basis), then the plain one. XM_NOID_CLMAD=0 skips both CLMAD
-  // builds, XM_NOID_T64=0 only the tower64 one (developer A/B).
+  // The CLMAD builds (CUDA 13.3+) first: kernels/noidt (tower64 basis, 64-bit CLMAD), then kernels/noidcl
+  // (composite basis), then the plain one. They are only offered to a driver that supports CUDA 13.3: an older one
+  // does not reject them cleanly (driver 550 / CUDA 12.4 crashes inside libcuda while loading the module).
+  // XM_NOID_CLMAD=0 skips both CLMAD builds, XM_NOID_T64=0 only the tower64 one (developer A/B).
   const char* cl = std::getenv("XM_NOID_CLMAD");
   const char* t64 = std::getenv("XM_NOID_T64");
-  const bool nv = dev_.info().vendor == gpu::Vendor::Nvidia && !(cl && cl[0] == '0');
+  const bool nv = dev_.info().vendor == gpu::Vendor::Nvidia && !(cl && cl[0] == '0') &&
+                  gpu::nvidia_driver_version() >= 13030;
   std::string why;
   t64_ = nv && !(t64 && t64[0] == '0') && gpu::load_kernels(dev_, "noidt", why);
   clmad_ = t64_ || (nv && gpu::load_kernels(dev_, "noidcl", why));

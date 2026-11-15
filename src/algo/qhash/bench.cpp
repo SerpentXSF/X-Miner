@@ -76,6 +76,7 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
         last = now;
       }
     }
+    if (total == 0) continue;  // nothing hashed: the error above says why
     double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     // P(share) = 0xFFFF * 2^-48 / difficulty for a valid hash; ~95.2% of hashes pass the zero-byte rule.
     double expected = total * 65535.0 / 281474976710656.0 / job.difficulty * 0.952;

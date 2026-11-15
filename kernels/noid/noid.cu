@@ -14,9 +14,13 @@
 #include "noid/noid_t64.h"
 typedef CMulNib64 NoidCMul;
 #define NOID_SMEM_WORDS NOID_T64_TBL_WORDS
+#define NOID_PERMUTE(s, mul, rcg) permute_t64(s, mul, rcg)  // unrolled MDS layers (noid_t64.h)
 #else
 typedef CMulByte NoidCMul;
 #define NOID_SMEM_WORDS NOID_CTBL_WORDS
+#endif
+#ifndef NOID_PERMUTE
+#define NOID_PERMUTE(s, mul, rcg) permute(s, mul, rcg)  // noid_perm.h
 #endif
 
 struct NoidJob {      // all W4 values in the kernel's basis (composite, or tower64 with NOID_T64)
@@ -63,19 +67,19 @@ extern "C" __global__ void xm_noid_search(NoidJob job, const W4* __restrict__ rc
     s[n][2] = job.mid[2];
     s[n][3] = job.mid[3];
   }
-  permute(s[0], mul, rcg);
+  NOID_PERMUTE(s[0], mul, rcg);
 #pragma unroll
   for (int n = 0; n < L; ++n) {
     s[n][0] = w4x(s[n][0], job.f[1]);
     s[n][1] = w4x(s[n][1], job.f[2]);
   }
-  permute(s[0], mul, rcg);
+  NOID_PERMUTE(s[0], mul, rcg);
 #pragma unroll
   for (int n = 0; n < L; ++n) {
     s[n][0] = w4x(s[n][0], job.f[3]);
     s[n][1] = w4x(s[n][1], job.f[4]);
   }
-  permute(s[0], mul, rcg);
+  NOID_PERMUTE(s[0], mul, rcg);
 
 #pragma unroll
   for (int n = 0; n < L; ++n) {

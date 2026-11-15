@@ -113,7 +113,8 @@ struct Hiprtc {
       return;
 #else
     if (!open_first(lib, {"libhiprtc.so.7", "libhiprtc.so.6", "libhiprtc.so", "/opt/rocm/lib/libhiprtc.so.7",
-                          "/opt/rocm/lib/libhiprtc.so.6", "/opt/rocm/lib/libhiprtc.so"}))
+                          "/opt/rocm/lib/libhiprtc.so.6", "/opt/rocm/lib/libhiprtc.so"}) &&
+        !open_bundled_rocm(lib, "libhiprtc.so.6"))  // the packages' hip/ folder
       return;
 #endif
     ready = lib.sym("hiprtcCreateProgram", create) && lib.sym("hiprtcCompileProgram", compile) &&

@@ -48,8 +48,10 @@ bool Engine::init(std::string& err) {
   if (const char* e = std::getenv("XM_C29_DIRECT")) direct_ = std::atoi(e) != 0;
   gen_tpb_ = direct_ ? 512 : 256;
   // Degree counting of the big rounds: 4-bit counters (64 KB of dynamic shared memory, one atomic per edge with no
-  // result to wait for) on NVIDIA; AMD's 64 KB per workgroup has no room for them. Developer: XM_C29_NIBBLE=0/1.
-  nibble_ = dev_.info().vendor == gpu::Vendor::Nvidia;
+  // result to wait for) on NVIDIA Volta and newer; AMD's 64 KB per workgroup has no room for them, and Pascal allows
+  // only 48 KB per block (CUDA error 1; GTX 1080 Ti without them: 3.76 g/s). Developer: XM_C29_NIBBLE=0/1.
+  const std::string& arch = dev_.info().arch;
+  nibble_ = dev_.info().vendor == gpu::Vendor::Nvidia && arch.rfind("sm_", 0) == 0 && std::atoi(arch.c_str() + 3) >= 70;
   if (const char* e = std::getenv("XM_C29_NIBBLE")) nibble_ = std::atoi(e) != 0;
   round_shared_ = nibble_ ? (1u << (29 - kNbBits)) / 2 : 0;  // 4 bits per node
   // Rounds whose survivors are staged and written as runs (NVIDIA): only where buckets are full enough to pay for the

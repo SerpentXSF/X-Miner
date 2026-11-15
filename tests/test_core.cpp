@@ -4,6 +4,7 @@
 #include "core/config.hpp"
 #include "core/devfee.hpp"
 #include "core/stats.hpp"
+#include "gpu/kernels.hpp"
 #include "test.hpp"
 
 using namespace xm;
@@ -179,4 +180,23 @@ TEST(config_fan_and_thermal_pause) {
   const char* bad[] = {"x-miner", "--gpu-fan", "101"};
   xm::Config d;
   CHECK(xm::parse_args(3, const_cast<char**>(bad), d).has_value());
+}
+
+TEST(amd_chips_without_own_code_object_use_the_family_generic_one) {
+  CHECK(gpu::amd_generic_arch("gfx1013") == "gfx10-1-generic");  // BC-250
+  CHECK(gpu::amd_generic_arch("gfx1010") == "gfx10-1-generic");
+  CHECK(gpu::amd_generic_arch("gfx1035") == "gfx10-3-generic");  // Radeon 680M
+  CHECK(gpu::amd_generic_arch("gfx1103") == "gfx11-generic");    // Radeon 780M
+  CHECK(gpu::amd_generic_arch("gfx1151") == "gfx11-generic");    // Strix Halo
+  CHECK(gpu::amd_generic_arch("gfx1201") == "gfx12-generic");
+  CHECK(gpu::amd_generic_arch("gfx1037").empty());
+  CHECK(gpu::amd_generic_arch("gfx1250").empty());
+  CHECK(gpu::amd_generic_arch("gfx906").empty());
+  CHECK(gpu::amd_generic_arch("sm_86").empty());
+  gpu::DeviceInfo apu{gpu::Vendor::Amd, 0, "APU", "gfx1103"};
+  for (const char* name : {"pearlhash", "noid", "blake2b", "quantus"}) {
+    const AlgorithmInfo* a = find_algorithm(name);
+    CHECK(a != nullptr);
+    if (a) CHECK(supports(*a, apu));
+  }
 }

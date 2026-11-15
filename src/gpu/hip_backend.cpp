@@ -60,6 +60,11 @@ struct Hip {
 #endif
     for (const char* n : names)
       if (lib.open(n)) break;
+#ifndef _WIN32
+    // The packages' hip/ folder: when no system HIP opens, or the system's is older than HIP 6 (no R0600 API).
+    if (lib.ok() && !lib.sym("hipGetDevicePropertiesR0600", hipGetDevicePropertiesR0600)) lib = DynLib{};
+    if (!lib.ok()) open_bundled_rocm(lib, "libamdhip64.so.6");
+#endif
     if (!lib.ok()) return;
     bool all = lib.sym("hipInit", hipInit) && lib.sym("hipGetDeviceCount", hipGetDeviceCount) &&
                lib.sym("hipGetDevicePropertiesR0600", hipGetDevicePropertiesR0600) &&

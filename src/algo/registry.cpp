@@ -63,14 +63,26 @@ bool supports(const AlgorithmInfo& algo, const gpu::DeviceInfo& dev) {
   if (std::string(algo.kernel) == "@rtc")
     return !gpu::rtc_library(dev.vendor).empty() &&
            (dev.vendor == gpu::Vendor::Nvidia ? std::stoi(dev.arch.substr(3)) >= 61 : dev.arch.rfind("gfx1", 0) == 0);
-  // Embedded kernels decide: an exact AMD code object or NVIDIA cubin, or NVIDIA PTX for an equal/older arch.
+  // Embedded kernels decide: an exact (or family-generic) AMD code object or NVIDIA cubin, or NVIDIA PTX for an
+  // equal/older arch.
+  const std::string generic = dev.vendor == gpu::Vendor::Amd ? gpu::amd_generic_arch(dev.arch) : "";
   for (const auto& a : gpu::kernel_archs(algo.kernel)) {
-    if (a == dev.arch) return true;
+    if (a == dev.arch || (!generic.empty() && a == generic)) return true;
     if (dev.vendor == gpu::Vendor::Nvidia && a.rfind("compute_", 0) == 0 && dev.arch.rfind("sm_", 0) == 0 &&
         std::stoi(a.substr(8)) <= std::stoi(dev.arch.substr(3)))
       return true;
   }
   return false;
+}
+
+bool experimental_gpu(const gpu::DeviceInfo& dev) {
+  // Tested on our rigs (--selftest, benchmarks, 2026-11): GTX 1080 Ti (sm_61), RTX 30 (sm_86), RX 5700 XT (gfx1010),
+  // RX 6800 / 6700 XT / 6600 XT (gfx1030-1032), RX 9070 XT (gfx1201).
+  if (dev.vendor == gpu::Vendor::Nvidia)
+    return dev.arch.rfind("sm_", 0) == 0 && std::stoi(dev.arch.substr(3)) < 80 && dev.arch != "sm_61";
+  for (const char* a : {"gfx1010", "gfx1030", "gfx1031", "gfx1032"})
+    if (dev.arch == a) return false;
+  return dev.arch.rfind("gfx12", 0) != 0;
 }
 
 }  // namespace xm

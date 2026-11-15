@@ -16,6 +16,22 @@
 #define XM_PEARL_ROWMAJOR 1
 #include "pearl/pearl_common.h"
 
+// Pascal, Volta and Turing (sm_61-75) have no m16n8k32 int8 mma, cp.async or mbarriers: they run the grid-of-tiles
+// kernel at the end of this file, with dp4a (SIMT) or, on Turing, int8 mma.m8n8k16. XM_PEARL_SIMT=1 forces the dp4a
+// variant and XM_PEARL_TURING=1 the m8n8k16 one on newer GPUs (developer checks through --selftest; the host must
+// launch them the same way, see src/algo/pearl/pearl_gpu.cpp).
+#if defined(XM_PEARL_SIMT) || defined(XM_PEARL_TURING) || (defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 800)
+#define XM_PEARL_USE_SIMT 1
+#else
+#define XM_PEARL_USE_SIMT 0
+#endif
+#if !defined(XM_PEARL_SIMT) && (defined(XM_PEARL_TURING) || (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 750))
+#define XM_PEARL_LEGACY_TC 1
+#else
+#define XM_PEARL_LEGACY_TC 0
+#endif
+
+#if !XM_PEARL_USE_SIMT
 namespace {
 
 constexpr int BM = 128, BN = 256, BK = 128;    // tile; k bytes per stage (one Pearl chunk)
@@ -297,3 +313,164 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(
     }
   }
 }
+
+#else  // XM_PEARL_USE_SIMT
+
+// SIMT GEMM for GPUs without int8 tensor cores (Pascal sm_61 and newer, dp4a). Same tiled input layout, 128x256
+// tiles of 8 warps in 2x4 and the same hash tiles as the tensor-core kernel: a lane owns rows (lane / 4) + 8 i
+// (i < 8) and columns 2 (lane % 4) + {0, 1} + 8 j (j < 8) of its warp's 64x64 block, so the host's NVIDIA pattern and
+// the debug index are unchanged. One block per tile (no persistence): grid (N / 256, M / 128), 256 threads, static
+// shared memory. Stages of 64 k are staged through registers into one shared buffer; rows are padded to 80 bytes so
+// the 32-bit reads of 8 rows (A) or of 4 rows 2 apart (B) hit distinct banks.
+namespace {
+constexpr int S_BM = 128, S_BN = 256, S_BK = 64, S_LD = S_BK + 16, S_ROWS = S_BM + S_BN;
+constexpr int S_V16 = S_ROWS * S_BK / 16 / 256;  // 16-byte global loads per thread per stage
+}  // namespace
+
+// Turing int8 tensor op: an 8x8 block of C += A (8x16, row) * B (16x8, col). Lane l supplies 4 k-bytes 4 (l % 4).. of
+// A row l / 4 and of B column l / 4, and holds C[l / 4][2 (l % 4) + {0, 1}]: the same ownership as the dp4a variant.
+__device__ __forceinline__ void mma_m8n8k16(int& c0, int& c1, unsigned a, unsigned b) {
+  asm("mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {%0,%1}, {%2}, {%3}, {%0,%1};\n" : "+r"(c0), "+r"(c1) : "r"(a), "r"(b));
+}
+
+template <bool TC>
+__device__ __forceinline__ void pearl_legacy_body(
+    const int8_t* __restrict__ A, const int8_t* __restrict__ B, unsigned* __restrict__ out, int M, int N, int K,
+    const Key8& a_seed, const U256w& bound, uint32_t* __restrict__ found, uint32_t max_found) {
+  __shared__ __align__(16) int8_t sm[S_ROWS * S_LD];  // rows 0..127: A, 128..383: B
+  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5, wm = warp >> 2, wn = warp & 3;
+  const int bx = blockIdx.x, by = blockIdx.y;
+  const size_t SLAB = 16384, RB = (size_t)(K / 128) * SLAB;  // bytes per 128-row block (tiled layout)
+  const int8_t* gA = A + (size_t)by * RB;
+  const int8_t* gB = B + (size_t)(2 * bx) * RB;
+
+  uint4 st[S_V16];
+  // Stage s = k [64 s, 64 s + 64): bytes (s & 1) * 64.. of slab s / 2 in each row. Load q = tid + 256 i covers row
+  // q / 4, 16-byte part q % 4; i < 2 are A rows, the rest B rows (two 128-row blocks).
+  auto gload = [&](int s) {
+    const size_t so = (size_t)(s >> 1) * SLAB + (s & 1) * 64;
+#pragma unroll
+    for (int i = 0; i < S_V16; ++i) {
+      const int q = tid + 256 * i, row = q >> 2, part = q & 3;
+      const int8_t* src = row < S_BM ? gA + so + row * 128 + part * 16
+                                     : gB + (size_t)((row - S_BM) >> 7) * RB + so + ((row - S_BM) & 127) * 128 + part * 16;
+      st[i] = *reinterpret_cast<const uint4*>(src);
+    }
+  };
+  auto sstore = [&]() {
+#pragma unroll
+    for (int i = 0; i < S_V16; ++i) {
+      const int q = tid + 256 * i;
+      *reinterpret_cast<uint4*>(sm + (q >> 2) * S_LD + (q & 3) * 16) = st[i];
+    }
+  };
+
+  int acc[8][16];
+#pragma unroll
+  for (int i = 0; i < 8; ++i)
+#pragma unroll
+    for (int j = 0; j < 16; ++j) acc[i][j] = 0;
+  unsigned R[16];
+#pragma unroll
+  for (int w = 0; w < 16; ++w) R[w] = 0;
+
+  const int8_t* pa = sm + (wm * 64 + (lane >> 2)) * S_LD;
+
+  const int ns = K / S_BK;
+  gload(0);
+  sstore();
+  __syncthreads();
+  for (int s = 0; s < ns; ++s) {
+    if (s + 1 < ns) gload(s + 1);
+    if constexpr (TC) {
+      const int8_t* pat = pa + 4 * (lane & 3);                                           // A rows lane / 4 + 8 i
+      const int8_t* pbt = sm + (S_BM + wn * 64 + (lane >> 2)) * S_LD + 4 * (lane & 3);  // B rows lane / 4 + 8 j
+#pragma unroll
+      for (int ks = 0; ks < S_BK; ks += 16) {
+        unsigned a[8], b[8];
+#pragma unroll
+        for (int i = 0; i < 8; ++i) a[i] = *reinterpret_cast<const unsigned*>(pat + 8 * i * S_LD + ks);
+#pragma unroll
+        for (int j = 0; j < 8; ++j) b[j] = *reinterpret_cast<const unsigned*>(pbt + 8 * j * S_LD + ks);
+#pragma unroll
+        for (int i = 0; i < 8; ++i)
+#pragma unroll
+          for (int j = 0; j < 8; ++j) mma_m8n8k16(acc[i][2 * j], acc[i][2 * j + 1], a[i], b[j]);
+      }
+    } else {
+      const int8_t* pb = sm + (S_BM + wn * 64 + 2 * (lane & 3)) * S_LD;  // B rows 2 (lane % 4) + {0, 1} + 8 j
+#pragma unroll 2
+      for (int w = 0; w < S_BK; w += 4) {
+        int a[8], b[16];
+#pragma unroll
+        for (int i = 0; i < 8; ++i) a[i] = *reinterpret_cast<const int*>(pa + 8 * i * S_LD + w);
+#pragma unroll
+        for (int j = 0; j < 8; ++j) {
+          b[2 * j] = *reinterpret_cast<const int*>(pb + 8 * j * S_LD + w);
+          b[2 * j + 1] = *reinterpret_cast<const int*>(pb + (8 * j + 1) * S_LD + w);
+        }
+#pragma unroll
+        for (int i = 0; i < 8; ++i)
+#pragma unroll
+          for (int j = 0; j < 16; ++j) acc[i][j] = __dp4a(a[i], b[j], acc[i][j]);
+      }
+    }
+    __syncthreads();
+    if (s + 1 < ns) {
+      sstore();
+      __syncthreads();
+    }
+    if (s & 1) {  // end of a 128-k Pearl chunk: fold
+      unsigned x = 0;
+#pragma unroll
+      for (int i = 0; i < 8; ++i)
+#pragma unroll
+        for (int j = 0; j < 16; ++j) x ^= (unsigned)acc[i][j];
+      const int c = (s >> 1) & 15;
+      const unsigned r = R[c];
+      R[c] = ((r << 13) | (r >> 19)) ^ x;
+    }
+  }
+
+  const uint32_t t_rows = (uint32_t)(by * S_BM + wm * 64 + (lane >> 2));
+  const uint32_t t_cols = (uint32_t)(bx * S_BN + wn * 64 + 2 * (lane & 3));
+  if (out) {
+    const size_t idx = ((size_t)(t_rows / 64) * 8 + t_rows % 8) * (size_t)(N / 8) + (t_cols / 64) * 4 + (t_cols % 8) / 2;
+#pragma unroll
+    for (int w = 0; w < 16; ++w) out[idx * 16 + w] = R[w];
+    return;
+  }
+  uint32_t words[16];
+#pragma unroll
+  for (int w = 0; w < 16; ++w) words[w] = R[w];
+  uint32_t h[8];
+  b3_keyed64(a_seed, words, h);
+  if (u256_le(h, bound)) {
+    uint32_t slot = atomicAdd(&found[0], 1u);
+    if (slot < max_found) {
+      uint32_t* rec = found + 1 + slot * 18;
+      rec[0] = t_rows;
+      rec[1] = t_cols;
+#pragma unroll
+      for (int w = 0; w < 16; ++w) rec[2 + w] = words[w];
+    }
+  }
+}
+
+extern "C" __global__ void __launch_bounds__(256) xm_pearl_gemm(
+    const int8_t* __restrict__ A, const int8_t* __restrict__ B, unsigned* __restrict__ out, int M, int N, int K,
+    Key8 a_seed, U256w bound, uint32_t* __restrict__ found, uint32_t max_found, unsigned* __restrict__ wave_ctr) {
+  pearl_legacy_body<XM_PEARL_LEGACY_TC>(A, B, out, M, N, K, a_seed, bound, found, max_found);
+}
+
+#if XM_PEARL_LEGACY_TC
+// The dp4a variant next to the m8n8k16 one: the host compares the two at start-up and mines with the faster one if
+// they agree (GTX 16 Turing GPUs have no tensor cores), or with this one if they differ.
+extern "C" __global__ void __launch_bounds__(256) xm_pearl_gemm_simt(
+    const int8_t* __restrict__ A, const int8_t* __restrict__ B, unsigned* __restrict__ out, int M, int N, int K,
+    Key8 a_seed, U256w bound, uint32_t* __restrict__ found, uint32_t max_found, unsigned* __restrict__ wave_ctr) {
+  pearl_legacy_body<false>(A, B, out, M, N, K, a_seed, bound, found, max_found);
+}
+#endif
+
+#endif  // XM_PEARL_USE_SIMT
