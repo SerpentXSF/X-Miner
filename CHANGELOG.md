@@ -6,7 +6,8 @@
   RTX 3060 (36.3 -> 38.0 at 100 W, 44.4 -> 46.6 at 170 W): the matrices are now filled with 63 or 64 instead of
   [-8, 7], so every value the GPU multiplies (matrix + noise) is positive. Matrix-unit power depends on how many bits flip between operands, and without sign changes the GPU runs
   a higher clock at the same power. The work and the shares are the same (Kryptex accepted 11 of 11 in a 15-minute
-  test), and share proofs compress better.
+  test), and share proofs compress better. Credit to Iedoc, the developer of BzMiner (https://bzminer.com/), whose
+  miner showed this choice of matrix values.
 - A GPU that stops responding (a hung kernel, or a card that fell off the bus) no longer stops the whole rig. Before,
   the watchdog exited so the launcher could restart X-Miner, but the process could not finish exiting while a thread
   was stuck in the GPU driver, so every GPU sat idle until a reboot (seen with a GTX 1080 Ti, Xid 79, on HiveOS).
