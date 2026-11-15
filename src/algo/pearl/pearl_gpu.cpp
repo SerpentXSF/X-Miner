@@ -74,12 +74,16 @@ Engine::~Engine() {
 }
 
 void Engine::fill_random(int8_t* p, size_t n) {
-  // Signal values in [-8, 7], 16 per 64-bit draw. Consensus allows [-64, 64] and the work is the same (the GEMM
-  // runs on A + noise, noise in [-63, 63]), but 4-bit rows make share proofs compress ~2x for gzip pools.
+  // Signal values 63 or 64 (one random bit each). Consensus allows [-64, 64] and the work is the same (the GEMM runs on
+  // A + noise, noise in [-63, 63]), but with this signal every GEMM operand is in [0, 127]: no sign bits flip between
+  // operands, and matrix-unit power depends on bit toggling, so the clock rises at a power limit. 2026-11-15, 60 s
+  // benchmarks against the earlier signal in [-8, 7]: RX 9070 XT stock 121.6 -> 128.1 TH/s (339 W); RTX 3060 at
+  // 100 W 36.3 -> 37.8. A signal of 0 gains nothing, -64/-63 a little less than this; a constant 64 outside the
+  // per-nonce chunk is no faster. One bit per byte also makes share proofs compress ~8x for gzip pools.
   size_t i = 0;
   while (i < n) {
     uint64_t r = rng_();
-    for (int j = 0; j < 16 && i < n; ++j, ++i) p[i] = static_cast<int8_t>(static_cast<int>((r >> (4 * j)) & 15) - 8);
+    for (int j = 0; j < 64 && i < n; ++j, ++i) p[i] = static_cast<int8_t>(63 + int((r >> j) & 1));
   }
 }
 

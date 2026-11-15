@@ -53,7 +53,7 @@ The web dashboard is at <http://127.0.0.1:21550/> while the miner runs (`--api-h
 
 **HiveOS** (custom miner; tested on NVIDIA and AMD HiveOS rigs, AMD with the HIP runtime the package brings): put the release's
 `x-miner-<version>-hiveos.tar.gz` link in the flight sheet's Installation URL and `x-miner-<version>` (e.g.
-`x-miner-0.3.0`) as the Miner name, which HiveOS requires to match the file name; `README.txt` inside the package has
+`x-miner-0.3.0b`) as the Miner name, which HiveOS requires to match the file name; `README.txt` inside the package has
 the other flight sheet fields.
 
 Command line (all options: `x-miner --help`):
@@ -172,7 +172,7 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 
 | Algorithm | RX 9070 XT | RTX 3060 | Notes |
 |---|---|---|---|
-| Pearl | 105.9 TH/s (121.4 at stock power) | 44.4 TH/s | |
+| Pearl | 112.0 TH/s (128.7 at stock power) | 46.6 TH/s (38.0 at 100 W) | 0.3.0b, 2026-11-15 |
 | Parano1d | 20.1 MH/s | 20.9 MH/s at 99 W | RTX 30-50: carry-less multiply (CLMAD) kernel, needs a driver for CUDA 13.3+; with an older driver 10.8 MH/s |
 | Quantus | 179.6 MH/s (195.8 at stock power) | 149.7 MH/s | |
 | KawPow (Ravencoin) | 34.0 MH/s | 20.6 MH/s | WildRig 34.1 / T-Rex 20.85 on the same cards |
@@ -191,8 +191,9 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 | BLAKE2b | 4.63 GH/s | 1.97 GH/s | |
 
 On other GPUs at stock clocks and power (HiveOS rigs; NVIDIA driver 550 / CUDA 12.4, so Parano1d uses its
-non-CLMAD kernel; 20 s benchmarks, every share CPU-checked, 2026-11-15). "-": the DAG, dataset or graph does not fit
-in the GPU's memory (MeowPow 10.1 GB, Conflux 8.9 GB, Cuckaroo29 8.7 GB).
+non-CLMAD kernel; 20 s benchmarks, every share CPU-checked, 2026-11-15, X-Miner 0.3.0: Pearl is 4-6% faster since
+0.3.0b). "-": the DAG, dataset or graph does not fit in the GPU's memory (MeowPow 10.1 GB, Conflux 8.9 GB,
+Cuckaroo29 8.7 GB).
 
 | Algorithm | RTX 3080 | RTX 3070 | RTX 3060 Ti | GTX 1080 Ti | RX 6800 | RX 6700 XT | RX 6600 XT | RX 5700 XT |
 |---|---|---|---|---|---|---|---|---|

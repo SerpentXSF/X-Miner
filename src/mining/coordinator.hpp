@@ -17,6 +17,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -35,6 +36,16 @@
 #include "mining/fee_router.hpp"
 
 namespace xm {
+
+// quick_exit (main's handler restores GPU tuning) with a 20 s limit: restoring a GPU that fell off the bus can block
+// in the driver, and a miner that never exits keeps the launcher from restarting it.
+[[noreturn]] inline void quick_exit_by_deadline(int code) {
+  std::thread([code] {
+    std::this_thread::sleep_for(std::chrono::seconds(20));
+    std::_Exit(code);
+  }).detach();
+  std::quick_exit(code);
+}
 
 template <class T>
 int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
@@ -94,8 +105,11 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     }
   }
 
-  // Watchdog: exit (so the launcher's restart loop recovers the GPU) after kMaxGpuErrors consecutive GPU errors, when
-  // a GPU makes no progress for kStallSeconds while there is work, or when no GPU could be started.
+  // Watchdog: exit (so the launcher's restart loop recovers the GPU) after kMaxGpuErrors consecutive GPU errors, or
+  // when no GPU could be started. A GPU that makes no progress for kStallSeconds while there is work is stuck inside
+  // the driver (a hung kernel, or a card that fell off the bus): its thread cannot be stopped or joined, and the
+  // process cannot finish exiting while that thread is stuck, so a restart would hang too and leave every GPU idle.
+  // That GPU is retired instead and the others keep mining; only when no GPU is left does the miner exit.
   constexpr int kMaxGpuErrors = 10;
   constexpr int kInitRetries = 5;  // start-up retries on out of GPU memory, 5 s apart
   constexpr int kStallSeconds = 120;
@@ -105,6 +119,8 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
   };
   std::vector<std::atomic<double>> last_progress(devs.size());  // steady seconds; 0 = not started / waiting
   for (auto& t : last_progress) t = 0;
+  std::vector<std::atomic<bool>> retired(devs.size()), started(devs.size());
+  for (size_t i = 0; i < devs.size(); ++i) retired[i] = started[i] = false;
   auto give_up = [&](int code, const std::string& why) {
     error("WDOG", why + "; exiting so the launcher can restart X-Miner");
     exit_code = code;
@@ -149,6 +165,7 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       if (experimental_gpu(devs[i]))
         warn("GPU", unit + " " + devs[i].name + " (" + devs[i].arch +
                           "): experimental, not tested on this GPU model; run x-miner --selftest to check it");
+      started[i] = true;
       int errors = 0;  // consecutive
       auto gpu_error = [&](const std::string& e) {
         error("GPU", unit + ": " + e);
@@ -158,7 +175,7 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       uint64_t have = 0, rejects_seen = 0, wd_passes = 0;
       bool job_fee = false;
       double rate = 0;
-      while (!stop) {
+      while (!stop && !retired[i]) {
         if (hot[i]) {
           last_progress[i] = 0;  // paused, not stalled
           rates[i] = rate = 0;
@@ -187,16 +204,20 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
           }
           have = ver;
           job_fee = fee;
+          last_progress[i] = steady_s();  // a long job setup (DAG or table build) is progress, not a stall
         }
         std::vector<Share> shares;
         auto t0 = std::chrono::steady_clock::now();
         double h = T::iterate(*eng, shares, err);
-        static const char* wd_test = std::getenv("XM_WDOG_TEST");  // developer: "errors" or "stall" after 3 passes
+        // Developer: XM_WDOG_TEST = "errors" or "stall" (every GPU) or "stall:N" (unit N only), after 3 passes.
+        static const char* wd_test = std::getenv("XM_WDOG_TEST");
         if (wd_test && ++wd_passes > 3) {
           if (wd_test[0] == 'e') h = 0, err = "simulated GPU error (XM_WDOG_TEST)";
-          if (wd_test[0] == 's') std::this_thread::sleep_for(std::chrono::hours(1));
+          if (wd_test[0] == 's' && (!std::strchr(wd_test, ':') || std::atoi(std::strchr(wd_test, ':') + 1) == int(i)))
+            std::this_thread::sleep_for(std::chrono::hours(1));
         }
         double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        if (retired[i]) return;  // came back after the watchdog gave up on this GPU: leave it alone
         if (h == 0) {
           gpu_error(err);
           continue;
@@ -230,6 +251,7 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     last_tick = now;
     double total = 0;
     for (size_t i = 0; i < devs.size(); ++i) {
+      if (retired[i]) continue;  // a lost GPU: its sensors may block in the driver, and its rate is gone
       auto r = sensors.read(i);
       stats.sensors(static_cast<int>(i), r.power_w, r.temp_c, r.fan_pct, r.core_mhz);
       total += rates[i];
@@ -250,12 +272,24 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     if (init_failed == static_cast<int>(devs.size())) give_up(4, "no GPU could be started");
     for (size_t i = 0; i < devs.size(); ++i) {
       double t = last_progress[i];
-      if (t > 0 && steady_s() - t > kStallSeconds) {
-        // A kernel that never returns cannot be joined: restore GPU tuning (main's quick-exit handler) and exit now.
-        error("WDOG", "unit " + std::to_string(i) + ": no GPU progress for " + std::to_string(kStallSeconds) +
+      if (retired[i] || t <= 0 || steady_s() - t <= kStallSeconds) continue;
+      retired[i] = true;
+      rates[i] = 0;
+      last_progress[i] = 0;
+      size_t live = 0;
+      for (size_t j = 0; j < devs.size(); ++j) live += started[j] && !retired[j];
+      const std::string unit = "unit " + std::to_string(i);
+      if (live == 0) {
+        // Nothing left to mine with: restore GPU tuning (main's quick-exit handler) and exit now, without joining.
+        error("WDOG", unit + ": no GPU progress for " + std::to_string(kStallSeconds) +
                           " s; exiting so the launcher can restart X-Miner");
-        std::quick_exit(3);
+        quick_exit_by_deadline(3);
       }
+      error("WDOG", unit + " " + devs[i].name + ": no GPU progress for " + std::to_string(kStallSeconds) +
+                        " s (hung, or fell off the bus); mining on with the other " + std::to_string(live) +
+                        " GPU(s). Reboot to get it back, and check its riser, power cable and overclock");
+      record_event("WDOG", unit + " stopped responding: retired until restart");
+      workers[i].detach();  // stuck in the driver: it can never be joined
     }
     {
       std::lock_guard<std::mutex> lk(rs_mu);
@@ -272,9 +306,16 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     }
   }
   info("STOP", "shutting down");
-  for (auto& w : workers) w.join();
+  bool lost_gpu = false;
+  for (auto& w : workers) {
+    if (w.joinable()) w.join();
+    else lost_gpu = true;
+  }
   pool.stop();
   if (api) api->stop();
+  // A retired GPU's thread may still be stuck in the driver and uses this function's state if it ever returns: do not
+  // unwind past it. main's quick-exit handler restores GPU tuning.
+  if (lost_gpu) quick_exit_by_deadline(exit_code);
   return exit_code;
 }
 
