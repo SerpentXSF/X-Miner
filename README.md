@@ -52,8 +52,9 @@ both an RX 9070 XT and an RTX 3060.
 The web dashboard is at <http://127.0.0.1:21550/> while the miner runs (`--api-host 0.0.0.0` for LAN access).
 
 **HiveOS** (custom miner; tested on NVIDIA and AMD HiveOS rigs, AMD with the HIP runtime the package brings): put the release's
-`x-miner-<version>-hiveos.tar.gz` link in the flight sheet's Installation URL; `README.txt` inside the package has
-the flight sheet fields.
+`x-miner-<version>-hiveos.tar.gz` link in the flight sheet's Installation URL and `x-miner-<version>` (e.g.
+`x-miner-0.3.0`) as the Miner name, which HiveOS requires to match the file name; `README.txt` inside the package has
+the other flight sheet fields.
 
 Command line (all options: `x-miner --help`):
 

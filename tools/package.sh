@@ -42,19 +42,21 @@ tar -C dist -czf "dist/$name.tar.gz" "$name"
 echo "packed dist/$name.tar.gz"
 cat "dist/$name.tar.gz.sha256"
 
-# HiveOS custom-miner package: x-miner-<version>-hiveos.tar.gz with the folder x-miner/.
-hive="dist/hiveos/x-miner"
+# HiveOS custom-miner package: x-miner-<version>-hiveos.tar.gz with the folder x-miner-<version>/. HiveOS takes the
+# text after the last "-" as the version and the rest as the miner name, which must be the folder and the flight
+# sheet's miner name: x-miner-<version>.
+hive="dist/hiveos/x-miner-$version"
 rm -rf dist/hiveos
 mkdir -p "$hive"
 cp "$build"/x-miner LICENSE NOTICE THIRD_PARTY.md "$hive/"
 nvrtc "$hive" || true
 hip "$hive" || true
 for f in launchers/hiveos/*; do tr -d '\r' < "$f" > "$hive/$(basename "$f")"; done
-sed -i "s/^CUSTOM_VERSION=.*/CUSTOM_VERSION=$version/" "$hive/h-manifest.conf"
+sed -i "s/^CUSTOM_VERSION=.*/CUSTOM_VERSION=$version/; s/^CUSTOM_NAME=.*/CUSTOM_NAME=x-miner-$version/" "$hive/h-manifest.conf"
 chmod 644 "$hive"/* 2>/dev/null || true
 chmod 755 "$hive"/*.so* 2>/dev/null || true
 [ -d "$hive/hip" ] && chmod 755 "$hive/hip" "$hive/hip/licenses" && chmod 644 "$hive"/hip/licenses/* && chmod 755 "$hive"/hip/*.so*
 chmod +x "$hive"/*.sh "$hive/x-miner"
-tar -C dist/hiveos -czf "dist/x-miner-$version-hiveos.tar.gz" x-miner
+tar -C dist/hiveos -czf "dist/x-miner-$version-hiveos.tar.gz" "x-miner-$version"
 (cd dist && sha256sum "x-miner-$version-hiveos.tar.gz" > "x-miner-$version-hiveos.tar.gz.sha256")
 echo "packed dist/x-miner-$version-hiveos.tar.gz"

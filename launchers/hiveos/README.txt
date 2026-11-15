@@ -4,6 +4,7 @@ Flight sheet:
   Coin: PRL (or the coin you mine)   Wallet: your Kryptex krx... username, or your address for the coin's pool
   Pool: Configure in miner
   Miner: Custom
+    Miner name:       x-miner-<version>, e.g. x-miner-0.3.0 (HiveOS derives it from the file name and refuses others)
     Installation URL: the x-miner-<version>-hiveos.tar.gz release link
     Hash algorithm:   pearlhash (or noid, tape, quantus, blake2b, kawpow, neurai, evrprogpow, meowpow, firopow,
                       progpow-epic, progpowz, etchash, ethash, quai, autolykos2, octopus, fishhash, karlsenhashv2,

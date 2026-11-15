@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # HiveOS stats: reads the X-Miner API (/api/summary) and sets $khs and $stats for the agent.
 # Sourced by the agent, so only variables are set; no exit.
-. /hive/miners/custom/x-miner/h-manifest.conf
+. "$(dirname "${BASH_SOURCE[0]}")/h-manifest.conf"
 
 summary=$(curl -s --max-time 3 "http://127.0.0.1:${WEB_PORT}/api/summary")
 if [[ -z $summary ]] || ! echo "$summary" | jq -e .x >/dev/null 2>&1; then
