@@ -60,6 +60,12 @@ inline std::string bundle_dir() {
 inline bool open_bundled_rocm(DynLib& lib, const char* soname) {
   static const std::vector<DynLib> deps = [] {
     std::vector<DynLib> v;
+    // System libraries the runtime needs, also shipped because minimal installs lack them (libnuma above all):
+    // the system's copy first, else ours.
+    for (const char* d : {"libnuma.so.1", "libelf.so.1", "libdrm.so.2", "libdrm_amdgpu.so.1"}) {
+      DynLib l;
+      if (l.open(d) || l.open((bundle_dir() + d).c_str())) v.push_back(l);
+    }
     for (const char* d : {"librocprofiler-register.so.0", "libhsa-runtime64.so.1", "libamd_comgr.so.3",
                           "libhiprtc-builtins.so.6"}) {
       DynLib l;
@@ -72,8 +78,14 @@ inline bool open_bundled_rocm(DynLib& lib, const char* soname) {
   // Shipped but not loadable (usually a missing system library: libnuma, libelf, libdrm_amdgpu): say why.
   if (FILE* f = std::fopen(path.c_str(), "rb")) {
     std::fclose(f);
-    if (!dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL))
-      std::fprintf(stderr, "  bundled HIP runtime %s did not load: %s\n", soname, dlerror());
+    if (!dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL)) {
+      const std::string why = dlerror();
+      if (why.find("GLIBC") != std::string::npos)  // e.g. Ubuntu 20.04: glibc 2.31, libstdc++ without GLIBCXX_3.4.29
+        std::fprintf(stderr, "  the bundled AMD HIP runtime needs a newer system (glibc 2.35+: Ubuntu 22.04, Debian 12, "
+                             "Fedora 36 or newer); on this one install ROCm 6.x for AMD GPUs\n");
+      else
+        std::fprintf(stderr, "  bundled HIP runtime %s did not load: %s\n", soname, why.c_str());
+    }
   }
   return false;
 }

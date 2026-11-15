@@ -34,7 +34,9 @@
   these chips (sm_61, gfx1010, gfx1030-1032) are no longer labelled experimental.
 - AMD on HiveOS and other Linux without ROCm's HIP (HiveOS ships only ROCm's OpenCL, so X-Miner found no AMD GPU there):
   the Linux and HiveOS packages include AMD's ROCm 6.4.4 HIP runtime in `hip/` (unmodified, license texts in
-  `hip/licenses/`), used only when the system has no HIP. Needs an Ubuntu 22.04-based system (current HiveOS).
+  `hip/licenses/`), used only when the system has no HIP, together with the libnuma, libelf and libdrm libraries it
+  needs (used when the system lacks them). Checked on bare Ubuntu 22.04 / 24.04, Debian 12 and Fedora 40 installs and
+  on HiveOS; needs glibc 2.35+ (on Ubuntu 20.04 the miner says to install ROCm for AMD).
 - NVIDIA drivers older than CUDA 13.3 (e.g. 550 / CUDA 12.4): Parano1d no longer crashes the miner inside the driver
   (the CLMAD kernels are only offered to CUDA 13.3+ drivers; the others use the previous kernel, RTX 3080 20.9 MH/s).
 - NVIDIA drivers older than CUDA 12.5: the prebuilt PTX (GTX 10 / 16, RTX 20, and newer GPUs without a cubin) was

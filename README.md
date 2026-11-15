@@ -142,7 +142,7 @@ non-zero code; the launchers restart it.
 
 | Vendor | Pearl, Parano1d, Quantus, BLAKE2b (prebuilt kernels) | Run-time compiled algorithms (all others) | Requirement |
 |---|---|---|---|
-| AMD RDNA4 (RX 9070 / 9070 XT, gfx1201) | yes | yes | Windows: Adrenalin driver (provides the HIP runtime); Linux / HiveOS: the HIP runtime ships in the package (`hip/`; Ubuntu 22.04-based systems with libnuma, libelf and libdrm-amdgpu, as on HiveOS), or a system ROCm 6.x |
+| AMD RDNA4 (RX 9070 / 9070 XT, gfx1201) | yes | yes | Windows: Adrenalin driver (provides the HIP runtime); Linux / HiveOS: the HIP runtime ships in the package (`hip/`, with the system libraries it needs; glibc 2.35+: Ubuntu 22.04+, Debian 12+, Fedora 36+, current HiveOS), or a system ROCm 6.x |
 | AMD RDNA4 (RX 9060 / 9060 XT, gfx1200) | built, untested | untested | same |
 | NVIDIA RTX 30xx (sm_86) | yes (RTX 3060 / 3060 Ti / 3070 / 3080) | yes | driver 525+ (CUDA 12.0; tested with 550 and with a CUDA 13.3 driver); Parano1d's fastest kernel needs CUDA 13.3 |
 | NVIDIA RTX 40xx (sm_89) | native build, untested | untested | driver 525+ |
