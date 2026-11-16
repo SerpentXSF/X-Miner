@@ -59,6 +59,9 @@ class Engine {
   bool check_gemm(std::string& err);
   bool launch_gemm(const char* kernel, void** args, int M, int N);  // AMD, or NVIDIA before Ampere
   const char* gemm_ = "xm_pearl_gemm";  // GEMM entry point (AMD, NVIDIA before Ampere)
+  const char* nv_gemm_ = "xm_pearl_gemm";  // NVIDIA Ampere+: 128-k stages, or xm_pearl_gemm_bk64 (choose_nv_stages)
+  bool launch_nv(const char* kernel, void** args, int M, int N, unsigned max_grid = 0);  // max_grid 0: one per SM
+  bool choose_nv_stages(std::string& err);
   unsigned amd_wmw_ = 2, amd_wnw_ = 4;  // AMD waves per workgroup along M and N; must match kernels/pearl/pearl.hip
   bool launch_noise(bool side_b, const Hash& seed, gpu::DevPtr sig, gpu::DevPtr packed, uint32_t rows, std::string& err);
   bool chunk_tree(gpu::DevPtr data, size_t len, MerkleTree& out, std::string& err);

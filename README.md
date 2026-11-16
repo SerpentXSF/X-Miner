@@ -53,7 +53,7 @@ The web dashboard is at <http://127.0.0.1:21550/> while the miner runs (`--api-h
 
 **HiveOS** (custom miner; tested on NVIDIA and AMD HiveOS rigs, AMD with the HIP runtime the package brings): put the release's
 `x-miner-<version>-hiveos.tar.gz` link in the flight sheet's Installation URL and `x-miner-<version>` (e.g.
-`x-miner-0.3.0b`) as the Miner name, which HiveOS requires to match the file name; `README.txt` inside the package has
+`x-miner-0.3.0c`) as the Miner name, which HiveOS requires to match the file name; `README.txt` inside the package has
 the other flight sheet fields.
 
 Command line (all options: `x-miner --help`):
@@ -128,15 +128,23 @@ Measured settings (60 s benchmarks, 2026-10-27; every card and sample differs, s
 | Card | Pearl | Quantus | Parano1d | BLAKE2b |
 |---|---|---|---|---|
 | RX 9070 XT at `--gpu-plimit 70%` | `--gpu-voffset -50`: no gain while mining | `--gpu-voffset -50`: +4.5% | `--gpu-voffset -50`: +3.8% | `--gpu-voffset -50`: +3.5% |
-| RTX 3060 (170 W) | do not lock memory: `--gpu-mclock` 7301 costs 8%, 5001 costs 28%; `--gpu-cclock 1500` for the best TH/W | `--gpu-mclock 810`: +1% | `--gpu-mclock 810`: same speed, 15 W less | `--gpu-mclock 810`: same speed, 15 W less |
+| RTX 3060 (170 W) | memory at stock is fastest (do not lock it at 810); with memory locked lower X-Miner switches to a GEMM that reads further ahead; `--gpu-cclock 1500` for the best TH/W | `--gpu-mclock 810`: +0.4%, 3 W less | `--gpu-mclock 810`: +1% | `--gpu-mclock 810`: same speed, 15 W less |
+| RTX 3060 at `--gpu-plimit 100` (2026-11-15) | memory at stock: 38.0 TH/s; locked at 5001: 36.1 | `--gpu-mclock 810`: +4.3% (150.9 -> 157.3 MH/s) | `--gpu-mclock 810`: +5.3% (20.6 -> 21.7 MH/s) | `--gpu-mclock 810`: +4.6% (1.73 -> 1.81 GH/s) |
+
+On NVIDIA, algorithms that barely use video memory (Quantus, Parano1d / TAPE, BLAKE2b) run better with the memory
+clock locked low: `--gpu-mclock 810` (GeForce RTX 30 / 40) gives the core more of the power limit (about +5% at a
+power limit) or saves power (up to ~10% at the same speed). Do not lock memory low for Pearl, the ProgPoW family,
+Etchash / Ethash, Autolykos2, Octopus, FishHash / KarlsenHashV2, NexaPow or Cuckaroo29: they need memory speed.
 
 `--gpu-tune-info` lists what each GPU allows and its current values. NVIDIA tuning and AMD Linux tuning need
 administrator / root rights (HiveOS runs miners as root).
 
 ## Watchdog
 
-If a GPU returns 10 errors in a row, makes no progress for 2 minutes, or no GPU can be started, X-Miner exits with a
-non-zero code; the launchers restart it.
+If a GPU returns 10 errors in a row, or no GPU can be started, X-Miner exits with a non-zero code; the launchers
+restart it. A GPU that makes no progress for 2 minutes (a hung kernel, or a card that fell off the bus) is dropped
+instead and the other GPUs keep mining; the log names it, and it needs a reboot to come back. If no GPU is left,
+X-Miner exits.
 
 ## Supported hardware
 

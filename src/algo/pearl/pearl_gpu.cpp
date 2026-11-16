@@ -92,6 +92,10 @@ bool Engine::init(std::string& err) {
     err = "matrix rows must be a multiple of 128 and columns of 256";
     return false;
   }
+  if (cfg_.k < 2048 || cfg_.k % 2048) {  // the kernels' chunk and transcript loops (XM_PEARL_K is a developer setting)
+    err = "Pearl k must be a multiple of 2048";
+    return false;
+  }
   dev_.make_current();
   if (!gpu::load_kernels(dev_, "pearl", err)) return false;
   const uint32_t k = cfg_.k, r = cfg_.rank;
@@ -129,6 +133,122 @@ bool Engine::launch_gemm(const char* kernel, void** args, int M, int N) {
   return dev_.launch(kernel, N / (64 * amd_wnw_), M / (64 * amd_wmw_), 1, 32 * amd_wmw_ * amd_wnw_, 1, 1, 0, args);
 }
 
+// NVIDIA Ampere and newer: the persistent GEMM, one block per SM (8 math warps + 1 copy warp), 96 KB of shared memory.
+bool Engine::launch_nv(const char* kernel, void** args, int M, int N, unsigned max_grid) {
+  const unsigned tiles = (unsigned(M) / kNvBm) * (unsigned(N) / kNvBn), sms = static_cast<unsigned>(dev_.info().compute_units);
+  unsigned grid = std::min(tiles, sms > 0 ? sms : 1u);
+  if (max_grid) grid = std::min(grid, max_grid);
+  const unsigned threads = (kNvBm / kNvWm) * (kNvBn / 64) * 32 + 32;
+  const unsigned shared = kNvStages * (kNvBm + kNvBn) * kNvBk;
+  return dev_.memset(d_wave_, 0, 4) && dev_.launch(kernel, grid, 1, 1, threads, 1, 1, shared, args);
+}
+
+// NVIDIA Ampere and newer have two GEMMs (kernels/pearl/pearl.cu): 2 stages of 128 k, or 4 of 64 k that read further
+// ahead and keep their speed with a locked low memory clock (RTX 3060 at 100 W: 37.9 / 35.9 TH/s with memory at
+// stock, 31.1 / 35.9 locked at 5001 MHz). Both run on random data on 2 blocks (several tiles each: the cross-tile
+// pipeline and wave sync are exercised) and must agree; then both are timed, interleaved, on a slice of the committed
+// matrices with the clocks as set, and the 64-k one is used if it wins every round by 2%. XM_PEARL_NV_BK=64 / 128
+// forces one.
+bool Engine::choose_nv_stages(std::string& err) {
+  const char* force = std::getenv("XM_PEARL_NV_BK");
+  if (force && std::atoi(force) == 128) return true;
+  const std::string who = dev_.info().name + " (" + dev_.info().arch + ")";
+  int M = 256, N = 512, K = 2048;
+  const size_t sa = size_t(M) * K, sb = size_t(N) * K, words = size_t(M) * N / 64 * 16;
+  gpu::DevPtr da = dev_.alloc(sa), db = dev_.alloc(sb), o1 = dev_.alloc(words * 4), o2 = dev_.alloc(words * 4);
+  auto release = [&] {
+    for (gpu::DevPtr p : {da, db, o1, o2}) dev_.free(p);
+  };
+  std::vector<int8_t> h(std::max(sa, sb));
+  auto upload_random = [&](gpu::DevPtr p, size_t n) {
+    for (size_t i = 0; i < n; ++i) h[i] = static_cast<int8_t>(rng_());
+    return dev_.upload(p, h.data(), n);
+  };
+  if (!da || !db || !o1 || !o2 || !upload_random(da, sa) || !upload_random(db, sb) || !dev_.memset(o1, 0, words * 4) ||
+      !dev_.memset(o2, 0, words * 4)) {
+    err = "Pearl kernel check: " + dev_.last_error();
+    release();
+    return false;
+  }
+  Key8 seed{};
+  U256w bw{};
+  uint32_t maxf = 0;
+  void* g1[] = {&da, &db, &o1, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_};
+  void* g2[] = {&da, &db, &o2, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_};
+  if (!launch_nv("xm_pearl_gemm", g1, M, N, 2) || !dev_.sync()) {
+    err = "Pearl kernel check: " + dev_.last_error();
+    release();
+    return false;
+  }
+  if (!launch_nv("xm_pearl_gemm_bk64", g2, M, N, 2)) {
+    release();  // a module without the 64-k kernel (an older build for this GPU): keep the 128-k one
+    return true;
+  }
+  if (!dev_.sync()) {  // the 64-k kernel ran and failed: a real fault, not a missing kernel
+    err = "Pearl kernel check (64-k GEMM): " + dev_.last_error();
+    release();
+    return false;
+  }
+  std::vector<uint32_t> w1(words), w2(words);
+  const bool got = dev_.download(w1.data(), o1, words * 4) && dev_.download(w2.data(), o2, words * 4);
+  release();
+  if (!got) {
+    err = "Pearl kernel check: " + dev_.last_error();
+    return false;
+  }
+  size_t bad = 0;
+  for (size_t i = 0; i < words; ++i) bad += w1[i] != w2[i];
+  if (bad) {
+    warn("PEARL", who + ": the 64-k GEMM disagrees with the 128-k one (" + std::to_string(bad) + " of " +
+                      std::to_string(words) + " words); using the 128-k one. Please report this.");
+    return true;
+  }
+  if (force && std::atoi(force) == 64) {
+    nv_gemm_ = "xm_pearl_gemm_bk64";
+    return true;
+  }
+  // Speed on a slice of the committed matrices (signal values only, so a little less power than mining on matrix +
+  // noise; what decides here is memory latency, which both see the same). Warm-up, then 4 interleaved rounds of
+  // ~150 ms per kernel; the 64-k kernel must win every round.
+  int Mt = static_cast<int>(std::min<uint32_t>(m_, 4096)), Nt = static_cast<int>(std::min<uint32_t>(n_, 16384)),
+      Kt = static_cast<int>(cfg_.k);
+  gpu::DevPtr no_out = 0;
+  void* t[] = {&d_a_, &d_bt_, &no_out, &Mt, &Nt, &Kt, &seed, &bw, &d_found_, &maxf, &d_wave_};
+  auto run_ms = [&](const char* kernel, int reps) {
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int r = 0; r < reps; ++r)
+      if (!launch_nv(kernel, t, Mt, Nt)) return -1.0;
+    if (!dev_.sync()) return -1.0;
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / reps;
+  };
+  const double warm = std::max(run_ms("xm_pearl_gemm", 1), run_ms("xm_pearl_gemm_bk64", 1));
+  if (warm < 0) {
+    err = "Pearl kernel check: " + dev_.last_error();
+    return false;
+  }
+  const int reps = std::clamp(static_cast<int>(150.0 / std::max(warm, 0.01)), 1, 200);
+  double t128 = 0, t64 = 0;
+  bool wins = true;
+  for (int round = 0; round < 4; ++round) {
+    const double a = run_ms("xm_pearl_gemm", reps), b = run_ms("xm_pearl_gemm_bk64", reps);
+    if (a < 0 || b < 0) {
+      err = "Pearl kernel check: " + dev_.last_error();
+      return false;
+    }
+    t128 += a, t64 += b;
+    wins = wins && b < 0.98 * a;
+  }
+  t128 /= 4, t64 /= 4;
+  if (wins) {
+    nv_gemm_ = "xm_pearl_gemm_bk64";
+    char buf[160];
+    std::snprintf(buf, sizeof buf, ": the 64-k GEMM is faster with this memory clock (%.1f vs %.1f ms); using it", t64,
+                  t128);
+    info("PEARL", who + buf);
+  }
+  return true;
+}
+
 // GEMM kernels we could not run on their GPUs ourselves come with xm_pearl_gemm_simt (verified by forcing it on our
 // cards): AMD RDNA3 WMMA and NVIDIA Turing m8n8k16 (which GTX 16 GPUs, without tensor cores, may run slowly). Here
 // both run on random data; if they differ the miner uses the SIMT kernel, if they agree the faster one.
@@ -136,7 +256,7 @@ bool Engine::launch_gemm(const char* kernel, void** args, int M, int N) {
 bool Engine::check_gemm(std::string& err) {
   const bool nv = dev_.info().vendor == gpu::Vendor::Nvidia;
   if (const char* e = std::getenv("XM_PEARL_AMD_WAVES")) std::sscanf(e, "%ux%u", &amd_wmw_, &amd_wnw_);
-  if (nv && !nv_simt()) return true;  // the Ampere+ kernel has no alternative
+  if (nv && !nv_simt()) return choose_nv_stages(err);
   const char* env = std::getenv("XM_PEARL_CHECK");
   const std::string& arch = dev_.info().arch;
   const bool untested = nv ? arch == "sm_75" : arch.rfind("gfx11", 0) == 0;
@@ -324,10 +444,7 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
     // AMD, and NVIDIA Pascal / Volta / Turing (dp4a or m8n8k16, one 128x256 tile per block of 8 warps).
     ok = ok && launch_gemm(gemm_, g, M, N);
   } else {
-    const unsigned tiles = (m_ / kNvBm) * (n_ / kNvBn), sms = static_cast<unsigned>(dev_.info().compute_units);
-    const unsigned grid = std::min(tiles, sms > 0 ? sms : 1u), threads = (kNvBm / kNvWm) * (kNvBn / 64) * 32 + 32;
-    const unsigned shared = kNvStages * (kNvBm + kNvBn) * kNvBk;
-    ok = ok && dev_.memset(d_wave_, 0, 4) && dev_.launch("xm_pearl_gemm", grid, 1, 1, threads, 1, 1, shared, g);
+    ok = ok && launch_nv(nv_gemm_, g, M, N);
   }
   if (!ok) {
     err = dev_.last_error();

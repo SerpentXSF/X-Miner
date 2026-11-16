@@ -34,19 +34,18 @@
 #if !XM_PEARL_USE_SIMT
 namespace {
 
-constexpr int BM = 128, BN = 256, BK = 128;    // tile; k bytes per stage (one Pearl chunk)
-constexpr int CH = BK / 16;                    // 16-byte chunks per stage row
-constexpr int KS = BK / 32;                    // mma k32 steps per stage
+// Two stage sizes, one entry point each (the host times both at start-up and mines with the faster one):
+//  - xm_pearl_gemm: 2 stages of 128 k (one Pearl chunk each); the copy warp runs one chunk ahead.
+//  - xm_pearl_gemm_bk64: 4 stages of 64 k (half a chunk each) in the same 96 KB; the copy warp runs 1.5 chunks
+//    ahead, which hides the longer DRAM latency of a locked low memory clock. RTX 3060 at 100 W: memory at stock
+//    37.9 vs 35.9 TH/s, memory locked at 5001 MHz 31.1 vs 35.9.
+constexpr int BM = 128, BN = 256;              // tile
 constexpr int WM = 64, WN = 64;                // warp tile
 constexpr int CWARPS = (BM / WM) * (BN / WN);  // math warps
 constexpr int CTHREADS = CWARPS * 32;
 constexpr int THREADS = CTHREADS + 32;  // + the copy warp; 9 warps cap registers at 168 (3 warps on one SMSP)
 constexpr int MT = WM / 16;             // m16 fragments per warp
-constexpr int STAGE_A = BM * BK, STAGE_B = BN * BK, STAGE_BYTES = STAGE_A + STAGE_B;  // 48 KB per stage
-#ifndef XM_PEARL_STAGES
-#define XM_PEARL_STAGES 2
-#endif
-constexpr int STAGES = XM_PEARL_STAGES;  // STAGES x STAGE_BYTES of dynamic shared memory
+constexpr int SMEM_BYTES = 2 * 128 * (BM + BN);  // 96 KB of dynamic shared memory, either stage size
 #ifndef XM_PEARL_XCH
 #define XM_PEARL_XCH 4  // independent XOR chains in the fold
 #endif
@@ -91,7 +90,12 @@ constexpr int STAGES = XM_PEARL_STAGES;  // STAGES x STAGE_BYTES of dynamic shar
 
 // Byte offset of (row, 16-byte chunk) inside a 128-byte-row stage, with an XOR swizzle so the 8 row addresses of
 // an ldmatrix hit 32 distinct banks.
-__device__ __forceinline__ unsigned swz(int row, int chunk) { return row * BK + ((chunk ^ (row & 7)) << 4); }
+// 64-byte rows (BK 64): two rows per 128-byte line, so the swizzle uses (row / 2) % 4 and the 8 rows of an ldmatrix
+// still land in 8 distinct 16-byte bank groups.
+template <int BK>
+__device__ __forceinline__ unsigned swz(int row, int chunk) {
+  return BK == 128 ? row * BK + ((chunk ^ (row & 7)) << 4) : row * BK + ((chunk ^ ((row >> 1) & 3)) << 4);
+}
 
 __device__ __forceinline__ void cp_async16(unsigned smem, const void* gmem) {
   asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" ::"r"(smem), "l"(gmem));
@@ -148,14 +152,22 @@ __device__ __forceinline__ void mma_s8_oop(int* d, const int* c, const unsigned*
 
 }  // namespace
 
-// Grid: any number of blocks (one per SM is best), 288 threads, STAGES x 48 KB = 96 KB of dynamic shared memory.
+// Grid: any number of blocks (one per SM is best), 288 threads, 96 KB of dynamic shared memory.
 // Block b walks tiles t = b + w * gridDim.x (wave w). Requirements: M % 128 == 0, N % 256 == 0, K % 128 == 0.
 // wave_ctr: a zeroed word (copy warps start each wave together), or nullptr.
 // out != nullptr: debug path writing 16 transcript words per lane tile instead of the check, at index
 //   ((t_rows / 64) * 8 + t_rows % 8) * (N / 8) + (t_cols / 64) * 4 + (t_cols % 8) / 2.
-extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(
+template <int BK>  // k bytes per shared-memory stage: 128 (one Pearl chunk) or 64 (half a chunk)
+__device__ __forceinline__ void pearl_gemm_body(
     const int8_t* __restrict__ A, const int8_t* __restrict__ B, unsigned* __restrict__ out, int M, int N, int K,
-    Key8 a_seed, U256w bound, uint32_t* __restrict__ found, uint32_t max_found, unsigned* __restrict__ wave_ctr) {
+    const Key8& a_seed, const U256w& bound, uint32_t* __restrict__ found, uint32_t max_found,
+    unsigned* __restrict__ wave_ctr) {
+  static_assert(BK == 128 || BK == 64, "stage size");
+  constexpr int CS = 128 / BK;  // stages per Pearl chunk
+  constexpr int CH = BK / 16;   // 16-byte chunks per stage row
+  constexpr int KS = BK / 32;   // mma k32 steps per stage
+  constexpr int STAGE_A = BM * BK, STAGE_B = BN * BK, STAGE_BYTES = STAGE_A + STAGE_B;
+  constexpr int STAGES = SMEM_BYTES / STAGE_BYTES;  // 2 x 128 k or 4 x 64 k
   extern __shared__ __align__(128) int8_t smem[];
   __shared__ __align__(8) unsigned long long bars[2 * STAGES];  // full[0..STAGES), empty[0..STAGES)
   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
@@ -198,13 +210,15 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(
         const int s = g % STAGES;
         if (g >= STAGES) mbar_wait<XM_PEARL_PSLEEP>(bar0 + 8 * (STAGES + s), (g / STAGES - 1) & 1);
         const unsigned sa = sbase + s * STAGE_BYTES, sb = sa + STAGE_A;
-        const int8_t* ga = pa + (size_t)kt * SLAB;
-        const int8_t* gb = pb + (size_t)kt * SLAB;
+        // Stage kt: bytes (kt % CS) * BK.. of each 128-byte row of slab kt / CS.
+        const size_t koff = (size_t)(kt / CS) * SLAB + (kt % CS) * BK;
+        const int8_t* ga = pa + koff;
+        const int8_t* gb = pb + koff;
 #pragma unroll
-        for (int i = 0; i < BM / PR; ++i) cp_async16(sa + swz(prow + PR * i, pch), ga + (PR * i) * 128);
+        for (int i = 0; i < BM / PR; ++i) cp_async16(sa + swz<BK>(prow + PR * i, pch), ga + (PR * i) * 128);
 #pragma unroll
         for (int i = 0; i < BN / PR; ++i)
-          cp_async16(sb + swz(prow + PR * i, pch), gb + (size_t)((PR * i) >> 7) * RB_BYTES + ((PR * i) & 127) * 128);
+          cp_async16(sb + swz<BK>(prow + PR * i, pch), gb + (size_t)((PR * i) >> 7) * RB_BYTES + ((PR * i) & 127) * 128);
         mbar_arrive_cp_async(bar0 + 8 * s);
       }
     }
@@ -215,7 +229,7 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(
   const int a_row = wm * WM + (lane & 7) + ((lane >> 3) & 1) * 8;
   const int b_row = wn * WN + (lane & 7) + (lane >> 4) * 8;
   // swz(row, 2ks + c) = swz(row, c) ^ (ks << 5) for c in {0, 1}: one base register each instead of KS offsets.
-  const unsigned a_off0 = swz(a_row, lane >> 4), b_off0 = swz(b_row, (lane >> 3) & 1);
+  const unsigned a_off0 = swz<BK>(a_row, lane >> 4), b_off0 = swz<BK>(b_row, (lane >> 3) & 1);
   unsigned g = 0;  // stages consumed by this block so far
   for (int t = blockIdx.x; t < T; t += G) {
     int bx, by;
@@ -235,18 +249,22 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(
     unsigned R[16];
 #pragma unroll
     for (int w = 0; w < 16; ++w) R[w] = 0;
-    for (int kt = 0; kt < nk; ++kt, ++g) {  // one 128-k stage = one Pearl chunk
+    for (int kc = 0; kc < nk; kc += CS) {  // one Pearl chunk (128 k) = CS stages
+     unsigned x = 0;
+#pragma unroll
+     for (int cs = 0; cs < CS; ++cs, ++g) {
       const int st = g % STAGES;
       mbar_wait(bar0 + 8 * st, (g / STAGES) & 1);
       const unsigned sA = sbase + st * STAGE_BYTES, sB = sA + STAGE_A;
-      unsigned x = 0;
 #pragma unroll
-      for (int ks = 0; ks < KS; ++ks) {
+      for (int ks0 = 0; ks0 < KS; ++ks0) {
+        const int ks = cs * KS + ks0;  // k-step within the chunk (0..3); ks0 within this stage
+        constexpr int KC = 128 / 32;   // k-steps per chunk
         unsigned af[MT][4], bf[8][2];
-        const unsigned pa = sA + (a_off0 ^ (ks << 5));
+        const unsigned pa = sA + (a_off0 ^ (ks0 << 5));
 #pragma unroll
         for (int i = 0; i < MT; ++i) ldmatrix_x4(af[i][0], af[i][1], af[i][2], af[i][3], pa + i * 16 * BK);
-        const unsigned pb = sB + (b_off0 ^ (ks << 5));
+        const unsigned pb = sB + (b_off0 ^ (ks0 << 5));
 #pragma unroll
         for (int j = 0; j < 8; j += 2) ldmatrix_x4(bf[j][0], bf[j][1], bf[j + 1][0], bf[j + 1][1], pb + j * 8 * BK);
         if (ks == 0) {
@@ -254,7 +272,7 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(
           for (int i = 0; i < MT; ++i)
 #pragma unroll
             for (int j = 0; j < 8; ++j) mma_s8_oop(acc[i][j], snap[i][j], af[i], bf[j][0], bf[j][1]);
-        } else if (ks == KS - 1) {
+        } else if (ks == KC - 1) {
           // Last k-step: write the chunk's sums to snap and XOR each row once the next row has been issued, into
           // XCH independent chains (a single chain is 64 dependent LOP3s).
           constexpr int XCH = XM_PEARL_XCH;
@@ -284,8 +302,10 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(
         }
       }
       mbar_arrive_lane0(bar0 + 8 * (STAGES + st), lane);  // done with buffer st
-      const unsigned r = R[kt & 15];
-      R[kt & 15] = ((r << 13) | (r >> 19)) ^ x;
+     }
+      const int c = kc / CS;  // chunk index
+      const unsigned r = R[c & 15];
+      R[c & 15] = ((r << 13) | (r >> 19)) ^ x;
     }
 
     const uint32_t t_rows = (uint32_t)(by * BM + wm * WM + (lane >> 2));
@@ -312,6 +332,18 @@ extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(
       }
     }
   }
+}
+
+extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm(
+    const int8_t* __restrict__ A, const int8_t* __restrict__ B, unsigned* __restrict__ out, int M, int N, int K,
+    Key8 a_seed, U256w bound, uint32_t* __restrict__ found, uint32_t max_found, unsigned* __restrict__ wave_ctr) {
+  pearl_gemm_body<128>(A, B, out, M, N, K, a_seed, bound, found, max_found, wave_ctr);
+}
+
+extern "C" __global__ void __launch_bounds__(THREADS) xm_pearl_gemm_bk64(
+    const int8_t* __restrict__ A, const int8_t* __restrict__ B, unsigned* __restrict__ out, int M, int N, int K,
+    Key8 a_seed, U256w bound, uint32_t* __restrict__ found, uint32_t max_found, unsigned* __restrict__ wave_ctr) {
+  pearl_gemm_body<64>(A, B, out, M, N, K, a_seed, bound, found, max_found, wave_ctr);
 }
 
 #else  // XM_PEARL_USE_SIMT

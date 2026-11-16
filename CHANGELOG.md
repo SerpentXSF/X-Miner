@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0c (2026-11-15)
+
+- Pearl on NVIDIA RTX 30 / 40 with a locked memory clock (a common Pearl overclock, e.g. HiveOS "LMEM"): +16%. A
+  second GEMM reads 1.5 chunks ahead instead of one, which hides the longer memory latency; X-Miner times both at
+  start-up with the clocks as set and mines with the faster one. RTX 3060 at 100 W, memory locked at 5001 MHz:
+  31.1 -> 36.1 TH/s (at stock memory the existing kernel stays, 37.9 TH/s). `XM_PEARL_NV_BK=64` / `128` forces one.
+- README: on NVIDIA, `--gpu-mclock 810` for Quantus, Parano1d and BLAKE2b (+4-5% at a power limit, or up to 10% less
+  power; RTX 3060 numbers); the Watchdog section describes 0.3.0b's behaviour (a stalled GPU is dropped, the others
+  keep mining).
+
 ## 0.3.0b (2026-11-15)
 
 - Pearl +6% on the RX 9070 XT (121.4 -> 128.7 TH/s at stock, 105.9 -> 112.0 at a 70% power limit) and +5% on the
