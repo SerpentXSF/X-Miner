@@ -84,7 +84,7 @@ extern "C" __global__ __launch_bounds__(TPB) void xm_etchash_search(const uint4*
         const uint4* q = dag + (size_t)p * 8 + sub * (W / 4);
 #pragma unroll
         for (int v = 0; v < W / 4; ++v) {
-          const uint4 a = q[v];
+          const uint4 a = dag_ld(q + v);
           mix[4 * v] = fnv1(mix[4 * v], a.x);
           mix[4 * v + 1] = fnv1(mix[4 * v + 1], a.y);
           mix[4 * v + 2] = fnv1(mix[4 * v + 2], a.z);
@@ -158,7 +158,7 @@ bool Engine::init(std::string& err) {
   }
   std::vector<std::string> opts;
   if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
-  const std::string src = "#define ETH_LANES " + std::to_string(lanes_) + "\n" + kawpow::kernel_common(kDatasetParents, tpb_) + kSearch;
+  const std::string src = "#define ETH_LANES " + std::to_string(lanes_) + "\n" + kawpow::kernel_common(kDatasetParents, tpb_, kawpow::nt_amd(dev_.info())) + kSearch;
   if (!gpu::rtc_compile(dev_.info(), src, "etchash.cu", opts, module_)) {
     err = "Etchash kernel did not compile: " + module_.log.substr(0, 2000);
     return false;

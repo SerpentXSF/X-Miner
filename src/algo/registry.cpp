@@ -43,6 +43,7 @@ const std::vector<AlgorithmInfo>& algorithms() {
       {"nexapow", "nexa", "Nexa (NEXA)", "@rtc", true},
       {"cuckaroo29", "c29,tari,xtm,xtm-c29,cr29", "Tari (XTM, Cuckaroo29)", "@rtc", true},
       {"autolykos2", "ergo,erg,autolykos", "Ergo (ERG)", "@rtc", true},
+      {"beamhash3", "beam,beamhashiii,beamhash-iii,beamv3,beam-iii", "Beam (BEAM)", "@rtc", true},
   };
   return list;
 }

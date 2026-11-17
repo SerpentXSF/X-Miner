@@ -66,10 +66,12 @@ bool Engine::init(std::string& err) {
   if (dev_.info().vendor == gpu::Vendor::Amd) rgrid_ = uint32_t(std::max(dev_.info().compute_units, 0));
   if (const char* e = std::getenv("XM_C29_RGRID")) rgrid_ = uint32_t(std::atoi(e));
   if (const char* e = std::getenv("XM_C29_RSMALL")) small_edges_ = std::strtoull(e, nullptr, 0);  // developer
+  if (!direct_) direct_from_ = kMaxRounds;  // NVIDIA: never (RTX 3060 from round 1: 4.41 -> 3.53 g/s, from 4: 3.68)
+  if (const char* e = std::getenv("XM_C29_DFROM")) direct_from_ = std::atoi(e);  // developer
   if (const char* e = std::getenv("XM_C29_SPLIT_TPB")) split_tpb_ = uint32_t(std::atoi(e));    // developer
   const uint64_t per_bucket = kEdges >> kNbBits;
-  capb_ = uint32_t(per_bucket + per_bucket / 25 + 512) & ~1u;  // +4% (the spread is ~0.3% = 1 sd); even: the
-                                                                // kernels read buckets with 16-byte loads
+  capb_ = uint32_t(per_bucket + per_bucket / 25 + 512) & ~7u;  // +4% (the spread is ~0.3% = 1 sd); a multiple
+                                                                // of 8: the kernels read buckets with 16-byte loads
   const size_t edge_bytes = size_t(capb_) << kNbBits << 3;
   d_a_ = dev_.alloc(edge_bytes);
   d_b_ = dev_.alloc(edge_bytes);
@@ -101,7 +103,7 @@ bool Engine::init(std::string& err) {
                           "u\n#define TPB " + std::to_string(kTpb) + "\n#define GEN_SB " + std::to_string(kGenSb) +
                           "\n#define GEN_TPB " + std::to_string(gen_tpb_) + "\n#define RS_TPB " +
                           std::to_string(kRsTpb) + "\n#define SPLIT_TPB " + std::to_string(split_tpb_) + "\n" +
-                          (direct_ ? "#define GEN_DIRECT 1\n#define SPLIT_DIRECT 1\n#define ROUND_STAGE 0\n" : "") +
+                          (direct_ ? "#define GEN_DIRECT 1\n#define ROUND_STAGE 0\n" : "") +
                           (nibble_ ? "#define ROUND_NIBBLE 1\n" : "") + kernel;
   std::vector<std::string> opts;
   if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
@@ -159,6 +161,14 @@ bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err)
   int r = 0;
   for (; r < rounds_ && total >= flat_edges_; ++r) {
     uint32_t side = uint32_t(r & 1);
+    if (r >= direct_from_) {  // fine buckets straight into the other buffer's fine buckets (see direct_from_)
+      gpu::DevPtr fo = in == d_a_ ? d_b_ : d_a_, co = cin == d_cnt_a_ ? d_cnt_b_ : d_cnt_a_;
+      void* args[] = {&side, &in, &cin, &fo, &co};
+      if (!dev_.memset(co, 0, 4 * nb) || !dev_.launch("c29_round_d", nb, 1, 1, kRsTpb, 1, 1, 0, args)) return fail();
+      out = in;
+      in = fo;
+      cin = co;
+    } else {
     uint32_t stage = r < stage_rounds_ ? 1u : 0u;
     void* args[] = {&side, &d_a_, &d_cnt_a_, &d_b_, &d_cnt_b_, &stage};
     const bool segs = total >= seg_edges_;  // per-block segments while edges are many, else whole coarse buckets
@@ -170,6 +180,7 @@ bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err)
     if (r < 8) mark("  round kernel", r);  // (profile mode: the first rounds' kernel and split separately)
     if (!split(side ^ 1, total, segs ? nb : 1)) return fail();
     if (r < 8) mark("  split after round", r);
+    }
     // counts come back every 4th round (a host round trip each); in between `total` is an upper bound
     if ((r & 3) != 3 && r + 1 < rounds_) continue;
     if (!dev_.download(counts.data(), cin, 4 * nb)) return fail();
@@ -191,7 +202,8 @@ bool Engine::trim(const Keys& k, Edges& edges, SolveStats& st, std::string& err)
       o += counts[b];
     }
     const uint32_t n2[2] = {o, 0};
-    void* args[] = {&in, &cin, &d_off_, &out};
+    uint32_t side = uint32_t(r & 1);  // the side of the fine buckets
+    void* args[] = {&side, &in, &cin, &d_off_, &out};
     if (!dev_.upload(d_off_, off.data(), 4 * nb) || !dev_.upload(d_n_, n2, 8) ||
         !dev_.launch("c29_flatten", nb, 1, 1, kTpb, 1, 1, 0, args) || !dev_.memset(d_bm1_, 0, kEdges / 8) ||
         !dev_.memset(d_bm2_, 0, kEdges / 8))

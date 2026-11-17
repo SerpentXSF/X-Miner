@@ -58,10 +58,14 @@ Digest blake2b256(const uint8_t* data, size_t len) {
   return out;
 }
 
-Digest blake2b256_any(const uint8_t* data, size_t len) {
+Digest blake2b256_any(const uint8_t* data, size_t len) { return blake2b256_personal(data, len, nullptr); }
+
+Digest blake2b256_personal(const uint8_t* data, size_t len, const uint8_t personal[16]) {
   uint64_t h[8];
   std::memcpy(h, kIv, sizeof h);
   h[0] ^= 0x01010000ull ^ 32;
+  if (personal)  // parameter block bytes 48..63
+    for (int i = 0; i < 16; ++i) h[6 + i / 8] ^= uint64_t(personal[i]) << (8 * (i & 7));
   size_t off = 0;
   do {
     const size_t n = std::min<size_t>(128, len - off);

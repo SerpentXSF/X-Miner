@@ -106,6 +106,11 @@ class Engine {
   static constexpr uint32_t kRsTpb = 256;  // threads per block of the later bucket rounds (RS_TPB in the kernel)
   uint32_t rgrid_ = 0;  // blocks of the segmented rounds (0: one per bucket; set in init)
   uint64_t small_edges_ = 1ull << 24;  // smaller blocks below this many edges (developer: XM_C29_RSMALL)
+  // The first round that writes its survivors straight into the other side's fine buckets (c29_round_d: one global
+  // atomic per edge, no coarse buckets, no split kernel). AMD (the Infinity Cache merges the scattered stores): RX 9070
+  // XT from round 1 10.72 g/s, 2: 10.53, 3: 10.33, 4: 10.22, never 9.93; from round 0 (330M survivors) 9.24-9.49.
+  // NVIDIA: never (set in init). Developer: XM_C29_DFROM.
+  int direct_from_ = 1;
   uint64_t seg_edges_ = 1ull << 26;   // segmented rounds from this many edges up (developer: XM_C29_SEGS)
 };
 

@@ -1,7 +1,8 @@
 # X-Miner
 
 Open-source GPU miner by SerpentX Tech for AMD and NVIDIA GPUs. MIT licensed. 1% dev fee (time-sliced: about 60 s
-per 100 minutes of mining, shown in the console and API); none on BLAKE2b and FishHash (Iron Fish).
+per 100 minutes of mining, shown in the console and API); none on BLAKE2b, FishHash (Iron Fish) and
+BeamHash III (Beam).
 
 | Coin | `--algorithm` | Coin | `--algorithm` |
 |---|---|---|---|
@@ -16,10 +17,11 @@ per 100 minutes of mining, shown in the console and API); none on BLAKE2b and Fi
 | EthereumPoW (ETHW) | `ethash` | Quai (QUAI) | `quai` |
 | Nexa (NEXA) | `nexapow` | RETRO BOOMER (TAPE) | `tape` |
 | Evrmore (EVR) | `evrprogpow` | Meowcoin (MEWC) | `meowpow` |
+| Tari (XTM, Cuckaroo29) | `cuckaroo29` | Beam (BEAM) | `beamhash3` |
 
-Every algorithm is checked against its coin's published test vectors where they exist (ProgPowZ and Octopus have
-none: GPU against the CPU reference), by a GPU-against-CPU `--selftest`, and with shares accepted on a live pool from
-both an RX 9070 XT and an RTX 3060.
+Every algorithm is checked against its coin's published test vectors where they exist (ProgPowZ, Octopus and BeamHash III
+have none: GPU against the CPU reference), by a GPU-against-CPU `--selftest`, and with shares accepted on a live pool from
+both an RX 9070 XT and an RTX 3060. Exception: BeamHash III is new in 0.4.0 and not yet confirmed on a live pool.
 
 ## Quick start
 
@@ -39,6 +41,8 @@ both an RX 9070 XT and an RTX 3060.
    - `start-quai-kryptex.bat` / `.sh`: Quai on Kryptex (your Quai `0x...` address; Kryptex has no username login for Quai)
    - `start-ergo-kryptex.bat` / `.sh`: Ergo on Kryptex (your Kryptex `krx...` username)
    - `start-nexa-kryptex.bat` / `.sh`: Nexa on Kryptex (your Kryptex `krx...` username)
+   - `start-tari-kryptex.bat` / `.sh`: Tari (Cuckaroo29) on Kryptex (your Kryptex `krx...` username)
+   - `start-beam-2miners.bat` / `.sh`: Beam on 2Miners (your Beam address)
    - `start-octopus-kryptex.bat` / `.sh`: Conflux on Kryptex (your Kryptex `krx...` username)
    - `start-karlsen-woolypooly.bat` / `.sh`: Karlsen on WoolyPooly (your `karlsen:...` address)
    - `start-firo-woolypooly.bat` / `.sh`: Firo on WoolyPooly (your FIRO address)
@@ -77,6 +81,8 @@ x-miner --algorithm progpowz --pool us.zano.herominers.com:1110 --wallet ZANO_AD
 x-miner --algorithm xelishashv3 --pool xel-us.kryptex.network:7019 --wallet krxXXXXXXX --worker rig1
 x-miner --algorithm evrprogpow --pool evrprogpow.na.mine.zpool.ca:1330 --wallet BTC_ADDRESS --password c=BTC --worker rig1
 x-miner --algorithm meowpow --pool meowpow.na.mine.zpool.ca:1327 --wallet BTC_ADDRESS --password c=BTC --worker rig1
+x-miner --algorithm cuckaroo29 --pool xtm-c29-us.kryptex.network:7040 --wallet krxXXXXXXX --worker rig1
+x-miner --algorithm beamhash3 --pool stratum+ssl://beam.2miners.com:5252 --wallet BEAM_ADDRESS --worker rig1
 x-miner --algorithm qhash --pool qtc-us-east.lproute.com:8610 --wallet QTC_ADDRESS --worker rig1
 x-miner --algorithm blake2b --pool us1.alphapool.tech:5555 --wallet ADDRESS --worker rig1
 ```
@@ -183,19 +189,21 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 | Pearl | 112.0 TH/s (128.7 at stock power) | 46.6 TH/s (38.0 at 100 W) | 0.3.0b, 2026-11-15 |
 | Parano1d | 20.1 MH/s | 20.9 MH/s at 99 W | RTX 30-50: carry-less multiply (CLMAD) kernel, needs a driver for CUDA 13.3+; with an older driver 10.8 MH/s |
 | Quantus | 179.6 MH/s (195.8 at stock power) | 149.7 MH/s | |
-| KawPow (Ravencoin) | 34.0 MH/s | 20.6 MH/s | WildRig 34.1 / T-Rex 20.85 on the same cards |
+| KawPow (Ravencoin) | 38.5 MH/s | 20.6 MH/s | 0.4.0 (0.3.0: 34.0); WildRig 34.1 / T-Rex 20.85 on the same cards |
 | KawPow (Neurai) | 39.4 MH/s | 20.6 MH/s | smaller DAG (3.1 GB) than Ravencoin's |
-| FiroPow (Firo) | 33.1 MH/s | 20.5 MH/s | |
+| FiroPow (Firo) | 38.4 MH/s | 20.5 MH/s | 0.4.0 (0.3.0: 33.1) |
 | ProgPoW 0.9.2 (Epic Cash) | 39.9 MH/s | 20.6 MH/s | see "Epic Cash" below |
 | ProgPowZ (Zano) | 40.0 MH/s | 20.6 MH/s | WildRig: 41.1 MH/s on a 9070 XT at 314 W |
-| Etchash (Ethereum Classic) | 35.5 MH/s | 41.0 MH/s | |
-| Ethash (EthereumPoW) | 32.5 MH/s | 41.1 MH/s | 8.1 GB DAG |
-| Autolykos2 (Ergo) | 64.5 MH/s | 96.3 MH/s @ 137 W | |
-| Octopus (Conflux) | 58.5 MH/s (63.0 with `--gpu-mclock 2700`) | 31.4 MH/s | int8 matrix units (RDNA4 WMMA / NVIDIA sm_80+); other miners: ~79 / ~42 |
-| FishHash (Iron Fish) / KarlsenHashV2 | 23.5 MH/s (25.2 with `--gpu-mclock 2700`) | 27.5 MH/s @ 140 W | |
+| Etchash (Ethereum Classic) | 38.8 MH/s | 41.0 MH/s | 0.4.0 (0.3.0: 35.5) |
+| Ethash (EthereumPoW) | 38.8 MH/s | 41.1 MH/s | 8.1 GB DAG; 0.4.0 (0.3.0: 32.5) |
+| Autolykos2 (Ergo) | 75.5 MH/s | 99.2 MH/s @ 146 W | 0.4.0 (0.3.0: 64.5 / 96.3) |
+| Octopus (Conflux) | 67.9 MH/s | 32.6 MH/s | 0.4.0 (0.3.0: 58.5 / 31.4); int8 matrix units (RDNA4 WMMA / NVIDIA sm_80+); other miners: ~79 / ~42 |
+| FishHash (Iron Fish) / KarlsenHashV2 | 25.9 MH/s | 27.5 MH/s @ 140 W | 0.4.0 (0.3.0: 23.5) |
 | XelisHashV3 (Xelis) | 5.0 kH/s @ ~170 W | 4.49 kH/s @ 112 W | published: RTX 3060 5.5 kH/s, RTX 4090 15 kH/s |
 | QHash (Qubitcoin) | 2.51 GH/s | 0.96 GH/s @ 147 W | published: RTX 3060 0.70 GH/s, RTX 3070 1.14 GH/s |
 | NexaPow (Nexa) | 64.3 MH/s @ 339 W | 33.3 MH/s @ 168 W | lolMiner: ~95 / ~50; a 1.6 / 5.9 GB table is built on the GPU at start |
+| BeamHash III (Beam) | 38.1 Sol/s @ 274 W | 20.7 Sol/s @ 99 W | 0.4.0; needs ~6 GB of GPU memory |
+| Cuckaroo29 (Tari) | 10.75 g/s @ ~300 W | 4.41 g/s @ 99 W | 0.4.0; lolMiner: ~14 / ~4-5 |
 | BLAKE2b | 4.63 GH/s | 1.97 GH/s | |
 
 On other GPUs at stock clocks and power (HiveOS rigs; NVIDIA driver 550 / CUDA 12.4, so Parano1d uses its
@@ -271,6 +279,10 @@ Pool certificates are not verified, as with other miners (pools use self-signed 
   a native SegWit `bc1q...` address is the cheapest to spend from later.
 - NexaPow (Nexa): the Miningcore Nexa stratum (4-byte extranonce, 8-byte miner nonce), e.g. Kryptex
   (`nexa-us.kryptex.network:7026`, `nexa.kryptex.network:7026`; share difficulty 1 = 4.3 G hashes per share).
+- Cuckaroo29 (Tari): Kryptex's XMRig-style stratum (`xtm-c29-us.kryptex.network:7040`, `xtm-c29.kryptex.network:7040`).
+- BeamHash III (Beam): Beam's own stratum (`login` with the address as `api_key`, `job`, `solution`), usually over TLS,
+  e.g. 2Miners (`stratum+ssl://beam.2miners.com:5252`). Hashrate is in solutions per second (Sol/s); one run of the
+  solver holds about two solutions on average.
 - BLAKE2b (Bitcoin Knots RDTS chain): the DATUM gateway's Sia-style stratum, solo through your own DATUM gateway
   or on AlphaPool (`us1.alphapool.tech:5555`). Pool difficulties are sized for Sia-class ASICs, so GPU mining here
   is a lottery.

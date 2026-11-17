@@ -1,5 +1,6 @@
 #include "algo/selftest.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cctype>
@@ -17,6 +18,7 @@
 #include "algo/xelis/xelis_gpu.hpp"
 #include "algo/qhash/qhash_gpu.hpp"
 #include "algo/nexa/nexa_gpu.hpp"
+#include "algo/beam/beam_gpu.hpp"
 #include "algo/c29/c29_gpu.hpp"
 #include "algo/noid/noid_gpu.hpp"
 #include "algo/octopus/octopus_gpu.hpp"
@@ -514,6 +516,38 @@ bool c29_check(gpu::Device& dev, std::string& detail) {
   return known && !st.overflow && eng.cpu_rejects() == 0;
 }
 
+// BeamHash III: input 10 13 16 .. (0x10 + 3 i), nonce 01 00 .. 00 holds exactly these four solutions (found and
+// verified by our CPU solver, beam::solve_cpu, XM_BEAM_CPU_SOLVE=1 in xm_tests); the GPU has to find all of them.
+bool beam_check(gpu::Device& dev, std::string& detail) {
+  beam::Engine eng(dev, 1);
+  auto t0 = std::chrono::steady_clock::now();
+  if (!eng.init(detail)) return false;
+  const double setup = ms_since(t0);
+  uint8_t input[32], nonce[8] = {1, 0, 0, 0, 0, 0, 0, 0};
+  for (int i = 0; i < 32; ++i) input[i] = uint8_t(0x10 + 3 * i);
+  static const char* kKnown[] = {
+      "18b604d8ba0e132ca1a3e46f98f43941707aeb5886119dfdac6a074340e7fef951574b1faccbd0040851bdb050c44cba27d5aa560c0a7fac8b3e6eb96aa3b946eb67a753dcfacbce202dcf82775b0408e83ec336bbde07ca4fe405b0513d1b5e188e08d600000000",
+      "95840436f1a504301210667a2e2331e89b5bde93a34064b4c9d0cb37cc1711433c3c6ae19cfc361ea5d9165cd95ad04981aa3ddc37d2a87081a754538ccffefc88e8a8b237f60cbea90b8bd41c40a0bc84e8fc0e0aa6dc7e012f47514c35caeabdd22ec600000000",
+      "be6206ae57ca0a075492d262cd61226777d4ed317761deb5ced0aab55cac0cc64c053e60ca5eeab1ecf764bac6573415b49c546e0fba50729ba52c924d4e7511f10530a2e29e0d98067a59d715b2de5837c2e411e3732f68d9286efe6f3888ea3b51d88700000000",
+      "365314108b8b15fea40c6b59caf3c4f2f6e12d69a1548ffae7ce1418e48cf4c1a963c861216c0d3be4db132d82f5afe8fcbcf61d44d0f78e5c8584aa591ad86e742b8f34ae7cfb39e71ffd1fcd51d061b8851499ba475def9d900ba2291a6b7a686de6d600000000"};
+  std::vector<beam::Solution> sols;
+  beam::SolveStats st;
+  t0 = std::chrono::steady_clock::now();
+  if (!eng.solve(input, nonce, sols, st, detail)) return false;
+  const double solve_ms = ms_since(t0);
+  int known = 0;
+  for (const char* hx : kKnown) {
+    beam::Solution want{};
+    for (size_t i = 0; i < want.size(); ++i) want[i] = uint8_t(std::stoi(std::string(hx + 2 * i, 2), nullptr, 16));
+    known += std::find(sols.begin(), sols.end(), want) != sols.end();
+  }
+  char buf[200];
+  std::snprintf(buf, sizeof buf, "%zu solutions, %d of the 4 known, %u candidates, %u elements over bucket capacity (setup %.0f ms, %.0f ms)",
+                sols.size(), known, st.candidates, st.overflow, setup, solve_ms);
+  detail = buf;
+  return known == 4 && sols.size() == 4;
+}
+
 // The number of results that disagreed with the CPU in a check's detail line ("12 rejected", "3 wrong",
 // "5 mismatches"); 0 when the check failed for another reason (no kernel, out of memory, too few hits).
 long wrong_results(const std::string& detail) {
@@ -544,7 +578,7 @@ int run_selftest(const std::vector<gpu::DeviceInfo>& devices, const std::vector<
     const char* algo;
     bool (*fn)(gpu::Device&, std::string&);
   };
-  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"evrprogpow", evrmore_check}, {"meowpow", meowpow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}, {"nexapow", nexa_check}, {"cuckaroo29", c29_check}};
+  const Check checks[] = {{"pearlhash", pearl_check}, {"noid", noid_check}, {"blake2b", blake2b_check}, {"quantus", quantus_check}, {"kawpow", kawpow_check}, {"firopow", firopow_check}, {"evrprogpow", evrmore_check}, {"meowpow", meowpow_check}, {"progpow-epic", epic_check}, {"progpowz", zano_check}, {"etchash", etchash_check}, {"autolykos2", autolykos_check}, {"octopus", octopus_check}, {"fishhash", fishhash_check}, {"karlsenhashv2", karlsen_check}, {"xelishashv3", xelis_check}, {"qhash", qhash_check}, {"nexapow", nexa_check}, {"cuckaroo29", c29_check}, {"beamhash3", beam_check}};
   for (size_t i = 0; i < devices.size(); ++i) {
     const size_t id = i < ids.size() ? ids[i] : i;
     auto dev = gpu::open(devices[i]);

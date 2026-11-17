@@ -97,7 +97,7 @@ __device__ __forceinline__ void octopus_finish(const uint4* __restrict__ dag, u3
       const uint4* g = dag + (size_t)p * 16 + sub * (W / 4);
 #pragma unroll
       for (int v = 0; v < W / 4; ++v) {
-        const uint4 a = g[v];
+        const uint4 a = dag_ld(g + v);
         mix[4 * v] = fnv1(mix[4 * v], a.x);
         mix[4 * v + 1] = fnv1(mix[4 * v + 1], a.y);
         mix[4 * v + 2] = fnv1(mix[4 * v + 2], a.z);
@@ -273,6 +273,9 @@ extern "C" __global__ __launch_bounds__(256) void xm_octopus_coef(Hdr hdr, u64 s
 #ifndef TC_BM
 #define TC_BM 32   // groups per tile (16 per warp row)
 #endif
+#ifndef TC_SW
+#define TC_SW 1    // group tiles per band (NVIDIA matrix tile order)
+#endif
 #define TC_BN 64   // points per tile (32 per warp column)
 #define TC_LD 48   // shared-memory row stride in bytes (32 used; 48 keeps fragment loads conflict-free)
 #define TC_THREADS (TC_BM / 16 * TC_BN / 32 * 32)
@@ -303,7 +306,11 @@ extern "C" __global__ __launch_bounds__(TC_THREADS) void xm_octopus_eval(const u
   const u32 tiles = groups / TC_BM * (1024 / TC_BN);
 #pragma unroll 1
   for (u32 tile = blockIdx.x; tile < tiles; tile += gridDim.x) {
-    const u32 g0 = tile / (1024 / TC_BN) * TC_BM, n0 = tile % (1024 / TC_BN) * TC_BN;
+    // Tiles in bands of TC_SW group tiles, points-major inside a band, so the blocks in flight share a few
+    // Vandermonde and coefficient slices in L2 (points-fastest when the band does not divide the group tiles).
+    const u32 sw = (groups / TC_BM) % TC_SW == 0 ? TC_SW : 1u;
+    const u32 band = tile / (16u * sw), r = tile % (16u * sw);
+    const u32 g0 = (band * sw + r % sw) * TC_BM, n0 = r / sw * TC_BN;
     int acc[5][4][4];
 #pragma unroll
     for (int s = 0; s < 5; ++s)
@@ -528,8 +535,16 @@ bool Engine::init(std::string& err) {
   tc_ = (dev_.info().vendor == gpu::Vendor::Nvidia && arch.rfind("sm_", 0) == 0 && std::atoi(arch.c_str() + 3) >= 80) ||
         (dev_.info().vendor == gpu::Vendor::Amd && arch.rfind("gfx12", 0) == 0);  // RDNA4 WMMA
   if (const char* e = std::getenv("XM_OCTOPUS_TC")) tc_ = tc_ && std::atoi(e) != 0;
+  // NVIDIA matrix path: 256-thread mix blocks and matrix tiles in bands of 8 group tiles, so the blocks in flight
+  // share their Vandermonde slices in L2 beside the DAG traffic (RTX 3060: 31.4 -> 32.6 MH/s at 170 W, 28.2 -> 29.2 at
+  // 100 W; the card is at its power limit either way, the matrix products cost the rest).
+  if (tc_ && dev_.info().vendor == gpu::Vendor::Nvidia) {
+    if (!std::getenv("XM_OCTOPUS_TPB")) tpb_ = 256;
+    tc_sw_ = 8;
+  }
   // Developer tuning: groups per matrix tile (32: 4 warps, 64: 8 warps) and the matrix grid (blocks; 0 = one per tile).
   if (const char* e = std::getenv("XM_OCTOPUS_BM")) tc_bm_ = std::atoi(e) == 32 ? 32 : 64;
+  if (const char* e = std::getenv("XM_OCTOPUS_SW")) tc_sw_ = static_cast<uint32_t>(std::max(1, std::atoi(e)));
   if (const char* e = std::getenv("XM_OCTOPUS_EGRID")) tc_grid_ = static_cast<uint32_t>(std::atoi(e));
   // AMD: one fused launch (matrix blocks + mix blocks); XM_OCTOPUS_FUSE=<matrix blocks>, 0 = separate launches.
   if (tc_ && dev_.info().vendor == gpu::Vendor::Amd && tpb_ == 128) fused_ = 128;  // RX 9070 XT: 58.5 vs 51.5 separate
@@ -550,8 +565,8 @@ bool Engine::init(std::string& err) {
   if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
   const std::string src =
       "#define OCT_LANES " + std::to_string(lanes_) + "\n#define OCT_MUL24 " + (mul24_ ? "1" : "0") +
-      "\n#define OCT_TC " + (tc_ ? "1" : "0") + "\n#define TC_BM " + std::to_string(tc_bm_) + "\n" +
-      kawpow::kernel_common(kDatasetParents, tpb_) + kSearch;
+      "\n#define OCT_TC " + (tc_ ? "1" : "0") + "\n#define TC_BM " + std::to_string(tc_bm_) + "\n#define TC_SW " + std::to_string(tc_sw_) + "\n" +
+      kawpow::kernel_common(kDatasetParents, tpb_, kawpow::nt_amd(dev_.info())) + kSearch;
   if (!gpu::rtc_compile(dev_.info(), src, "octopus.cu", opts, module_)) {
     err = "Octopus kernel did not compile: " + module_.log.substr(0, 2000);
     return false;

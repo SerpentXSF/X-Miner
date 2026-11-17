@@ -16,4 +16,7 @@ prestate split from quantus-miner pow-core, and the multiply-pipe Goldilocks red
 cpp-kawpow (https://github.com/RavenCommunity/cpp-kawpow), based on ethash by Pawel Bylica
 (Copyright 2018-2019 Pawel Bylica): the KawPow / Ethash CPU reference and test vectors.
 
+Beam (https://github.com/BeamMW/beam, Copyright 2018-2020 The Beam Team): the BeamHash III verifier and solver
+logic (ported from 3rdparty/crypto/beamHashIII_impl.cpp), Beam's stratum messages and packed difficulty.
+
 It also includes code and data under ISC, MIT, CC0 and Apache-2.0 licences listed in THIRD_PARTY.md.

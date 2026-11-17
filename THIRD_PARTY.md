@@ -25,6 +25,7 @@
 | FishHash algorithm and fixed dataset seed (re-implemented) | src/algo/fishhash/ | MPL-2.0 reference | https://github.com/iron-fish/fish-hash rust/src/lib.rs |
 | KarlsenHashV2 algorithm (re-implemented) | src/algo/fishhash/ | ISC (Karlsen) | https://github.com/karlsen-network/rusty-karlsen crypto/hashes, consensus/pow |
 | XelisHash v3 algorithm and test vectors (re-implemented) | src/algo/xelis/, tests/test_xelis.cpp | MIT (Xelis) | https://github.com/xelis-project/xelis-hash src/v3.rs |
+| BeamHash III algorithm, stratum messages and packed difficulty (re-implemented) | src/algo/beam/, kernels/beam/, src/pool/beam_pool.cpp | Apache-2.0 (Beam) | https://github.com/BeamMW/beam @90a8be3 3rdparty/crypto/beamHashIII_impl.cpp, pow/beamHash.cpp, pow/stratum.h, core/difficulty.cpp |
 | QHash algorithm and consensus switch times (re-implemented; the circuit is evaluated by a different method) | src/algo/qhash/ | MIT (Qubitcoin) | https://github.com/super-quantum/qubitcoin src/crypto/qhash.cpp |
 | Qubitcoin main-chain block headers (test vectors) | tests/test_qhash.cpp | public chain data | https://explorer.superquantum.io |
 | NVRTC runtime compiler (nvrtc64_*.dll, libnvrtc.so.*; shipped unmodified in release packages) | release packages only | NVIDIA CUDA Toolkit EULA, Attachment A (redistributable) | CUDA Toolkit 12.5 |

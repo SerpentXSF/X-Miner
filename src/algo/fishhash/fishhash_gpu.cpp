@@ -115,9 +115,9 @@ extern "C" __global__ __launch_bounds__(TPB) void xm_fishhash_search(const uint4
       uint4 a[W / 4], b[W / 4], c[W / 4];
 #pragma unroll
       for (int v = 0; v < W / 4; ++v) {
-        a[v] = dag[(size_t)p0 * 8 + sub * (W / 4) + v];
-        b[v] = dag[(size_t)p1 * 8 + sub * (W / 4) + v];
-        c[v] = dag[(size_t)p2 * 8 + sub * (W / 4) + v];
+        a[v] = dag_ld(dag + (size_t)p0 * 8 + sub * (W / 4) + v);
+        b[v] = dag_ld(dag + (size_t)p1 * 8 + sub * (W / 4) + v);
+        c[v] = dag_ld(dag + (size_t)p2 * 8 + sub * (W / 4) + v);
       }
 #pragma unroll
       for (int v = 0; v < W / 4; ++v) {
@@ -206,7 +206,7 @@ bool Engine::init(std::string& err) {
   std::vector<std::string> opts;
   if (dev_.info().vendor == gpu::Vendor::Amd) opts.push_back("-O3");
   const std::string src = "#define FH_LANES " + std::to_string(lanes_) + "\n#define FH_KARLSEN " +
-                          (v_ == Variant::Karlsen ? "1" : "0") + "\n" + kawpow::kernel_common(kParents, tpb_) + kSearch;
+                          (v_ == Variant::Karlsen ? "1" : "0") + "\n" + kawpow::kernel_common(kParents, tpb_, kawpow::nt_amd(dev_.info())) + kSearch;
   if (!gpu::rtc_compile(dev_.info(), src, "fishhash.cu", opts, module_)) {
     err = "FishHash kernel did not compile: " + module_.log.substr(0, 2000);
     return false;

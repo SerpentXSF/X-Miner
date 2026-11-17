@@ -132,7 +132,16 @@ extern "C" __global__ __launch_bounds__(TPB) void xm_al_search(const u64* __rest
 #pragma unroll AL_UNROLL
   for (u32 k = 0; k < 32; ++k) {
     const u32 idx = ((byte_at(H, k) << 24) | (byte_at(H, k + 1) << 16) | (byte_at(H, k + 2) << 8) | byte_at(H, k + 3)) % n;
+#if AL_NT && (defined(__HIPCC_RTC__) || defined(__HIP__))
+    typedef unsigned long long nt2 __attribute__((ext_vector_type(2)));
+    const nt2 ya = __builtin_nontemporal_load((const nt2*)(t2 + (size_t)idx * 2));
+    const nt2 yb = __builtin_nontemporal_load((const nt2*)(t2 + (size_t)idx * 2 + 1));
+    const ulonglong2 xa = make_ulonglong2(ya.x, ya.y), xb = make_ulonglong2(yb.x, yb.y);
+#elif AL_NT
+    const ulonglong2 xa = __ldcs(t2 + (size_t)idx * 2), xb = __ldcs(t2 + (size_t)idx * 2 + 1);  // NVIDIA: evict-first
+#else
     const ulonglong2 xa = t2[(size_t)idx * 2], xb = t2[(size_t)idx * 2 + 1];
+#endif
     const u64 l0 = bswap64(xb.y), l1 = bswap64(xb.x), l2 = bswap64(xa.y), l3 = bswap64(xa.x);
     u64 t = s0 + l0;
     u64 c = t < s0;
@@ -183,9 +192,15 @@ bool Engine::init(std::string& err) {
   // How many of the 32 element reads the compiler may batch: NVIDIA does best with the fewest registers (occupancy
   // hides the latency: RTX 3060 1 = 96.3, 4 = 85.6, 8 = 64.6 MH/s), AMD with 8 (RX 9070 XT 64.5 vs 62.8).
   int unroll = dev_.info().vendor == gpu::Vendor::Nvidia ? 1 : 8;
+  // The 32 random element reads as non-temporal (AMD) / evict-first (NVIDIA) loads, so they do not displace the rest
+  // of the working set from the caches: RX 9070 XT 64.3 -> 75.3 MH/s, RTX 3060 at 100 W 96.5 -> 99.4. XM_DAG_NT=0/1
+  // overrides.
+  // AMD: measured on RDNA4 (gfx12) only; older AMD GPUs keep cached reads until tested.
+  int nt = dev_.info().vendor == gpu::Vendor::Nvidia || dev_.info().arch.rfind("gfx12", 0) == 0 ? 1 : 0;
+  if (const char* e = std::getenv("XM_DAG_NT")) nt = std::atoi(e);
   if (const char* e = std::getenv("XM_AL_UNROLL")) unroll = std::atoi(e);  // developer tuning
   const std::string src =
-      "#define TPB " + std::to_string(tpb_) + "\n#define AL_UNROLL " + std::to_string(unroll) + "\n" + kSource;
+      "#define AL_NT " + std::to_string(nt) + "\n#define TPB " + std::to_string(tpb_) + "\n#define AL_UNROLL " + std::to_string(unroll) + "\n" + kSource;
   if (!gpu::rtc_compile(dev_.info(), src, "autolykos.cu", opts, module_)) {
     err = "Autolykos kernels did not compile: " + module_.log.substr(0, 2000);
     return false;

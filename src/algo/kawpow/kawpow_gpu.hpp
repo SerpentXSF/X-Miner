@@ -45,9 +45,11 @@ inline uint32_t batch_nonces(int intensity) {
 // The light cache of an epoch, built once and shared by every GPU.
 std::shared_ptr<const Light> shared_light(const Variant& v, int epoch);
 // The CUDA / HIP source of one period's search kernel and the DAG generator.
-std::string kernel_source(const Variant& v, uint64_t period, uint32_t tpb);
+std::string kernel_source(const Variant& v, uint64_t period, uint32_t tpb, bool nt);  // nt: non-temporal DAG loads
 // The shared part of every generated module: types, Keccak, KISS99 and the xm_ethash_dag DAG generator.
-std::string kernel_common(int parents, uint32_t tpb);
+std::string kernel_common(int parents, uint32_t tpb, bool amd);  // amd: non-temporal DAG loads (dag_ld)
+// Non-temporal DAG reads are measured on RDNA4 (gfx12) only; older AMD GPUs keep cached reads until tested there.
+inline bool nt_amd(const gpu::DeviceInfo& d) { return d.vendor == gpu::Vendor::Amd && d.arch.rfind("gfx12", 0) == 0; }
 // Generates the epoch's DAG with xm_ethash_dag (a module containing it must be loaded); replaces d_dag.
 bool generate_dag(gpu::Device& dev, const Light& light, gpu::DevPtr& d_dag, std::string& err);
 
@@ -74,6 +76,7 @@ class Engine {
   gpu::DevPtr d_found_ = 0, d_dag_ = 0;
   int dag_epoch_ = -1;
   uint64_t period_ = ~0ull;
+  bool nt_ = false;  // programs use non-temporal DAG loads (AMD, DAGs of 3.5 GB and more)
   gpu::RtcOutput module_;
   std::future<gpu::RtcOutput> next_;  // the next period's program, compiling in the background
   uint64_t next_period_ = ~0ull;

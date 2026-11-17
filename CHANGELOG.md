@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0 (2026-11-16)
+
+- AMD RDNA4 (RX 9000): DAG reads bypass the caches (non-temporal loads), so the random DAG traffic no longer pushes the rest of the
+  working set out of the L2 / Infinity Cache. RX 9070 XT at -30% power: Octopus 58.5 -> 67.9 MH/s (+16%), Autolykos2
+  64.5 -> 75.5 (+17%), Ethash 32.5 -> 38.8, Etchash 35.5 -> 38.8, KawPow 34.0 -> 38.5, FiroPow 33.1 -> 38.4, MeowPow
+  and Evrmore ~+10-20%, FishHash / KarlsenHashV2 23.5 -> 25.9. ProgPoW coins with DAGs under 3.5 GB (Neurai, Epic
+  Cash, Zano) keep cached reads, which are ~3% faster for them. Kryptex accepted 5 of 5 Octopus shares in a 10-minute
+  test. On NVIDIA only Autolykos2 gains (evict-first reads, RTX 3060 96.3 -> 99.2 MH/s); the others measured
+  unchanged or slower there (Octopus 28.6 -> 25.0 at 100 W) and keep cached reads. Older AMD GPUs keep cached reads until
+  measured there. `XM_DAG_NT=0` / `1` forces either.
+- Octopus on NVIDIA: the matrix tiles run in bands that share their Vandermonde slices in L2, and the mix uses
+  256-thread blocks. RTX 3060 31.4 -> 32.6 MH/s at 170 W, 28.2 -> 29.3 at 100 W.
+- New algorithm: BeamHash III (Beam, BEAM), `--algorithm beamhash3` (aliases `beam`, `beamv3`). A GPU solver for
+  Beam's five-round collision search (2^25 elements, ~5.7 GB of GPU memory), with every solution checked by a CPU
+  verifier written from Beam's source; Beam's own stratum, with TLS (2Miners). RX 9070 XT 38.1 Sol/s at 274 W,
+  RTX 3060 20.7 Sol/s at 99 W (on NVIDIA each of 65,536 small buckets is processed in shared memory and whole
+  elements are written per warp store; both vendors store the last two rounds' elements smaller). New launchers `start-beam-2miners`. The dev fee is off on Beam for now.
+  Not yet confirmed on a live pool: please report accepted or rejected shares.
+- KawPow family: an implausible block height from a pool is rejected before any DAG work starts.
+- New launchers `start-tari-kryptex` for Tari (Cuckaroo29), which the README now lists with the other coins.
+- Cuckaroo29 (Tari): RX 9070 XT 8.8 -> 10.75 g/s (+22%), RTX 3060 at 100 W 4.16 -> 4.41 g/s (+6%). Bucketed edges
+  take 6 bytes instead of 8 (a round's degree count reads 4), and on AMD every round after the first writes straight
+  into the next round's buckets. Kryptex accepted 10 of 10 shares in a 10-minute test.
+
 ## 0.3.0c (2026-11-15)
 
 - Pearl on NVIDIA RTX 30 / 40 with a locked memory clock (a common Pearl overclock, e.g. HiveOS "LMEM"): +16%. A

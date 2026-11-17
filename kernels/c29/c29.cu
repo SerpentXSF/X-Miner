@@ -80,23 +80,49 @@ __device__ __forceinline__ void sipblock(const Keys& k, u32 b, u64 h[64]) {
   for (int i = 0; i < 63; ++i) h[i] ^= last;
 }
 
+// Fine buckets hold 6 bytes per edge in two arrays (words: 4 bytes, halves: 2 bytes, both CAPB per bucket; the
+// halves after all the words, FINE_B): the bucket side's node without its bucket bits (BSHIFT bits) and the other
+// node's low 32 - BSHIFT bits in the word, the other node's high bits in the half. A round's degree count reads only
+// the words. Coarse buckets and the flat list keep (u, v) pairs.
+typedef unsigned short u16;
+#define LMASK ((1u << BSHIFT) - 1u)
+#define FINE_B(a) ((u16*)((a) + (size_t)NB * CAPB))
+__device__ __forceinline__ uint2 fine_edge(u32 side, u32 bk, u32 a, u32 b) {
+  const u32 own = (bk << BSHIFT) | (a & LMASK), oth = (a >> BSHIFT) | (b << (32 - BSHIFT));
+  return side ? make_uint2(oth, own) : make_uint2(own, oth);
+}
+struct CoarseOut {
+  uint2* o;
+  __device__ __forceinline__ void put(size_t i, uint2 x) const { o[i] = x; }
+};
+struct FineOut {  // i: bucket * CAPB + position
+  u32* a;
+  u16* b;
+  u32 side;
+  __device__ __forceinline__ void put(size_t i, uint2 x) const {
+    const u32 own = side ? x.y : x.x, oth = side ? x.x : x.y;
+    a[i] = (own & LMASK) | (oth << BSHIFT);
+    b[i] = (u16)(oth >> (32 - BSHIFT));
+  }
+};
+
 // Staged scatter into 64 buckets: put() parks an edge in its bucket's row of shared memory (or, when the row is full,
 // writes it straight out); flush() writes every row out as one contiguous run at the bucket's next position
 // (cnt[c], shared: block-local or pre-reserved) and empties the rows. Destination of bucket c: out + c * stride,
 // positions below cap. One scattered 8-byte store per edge costs several times the bandwidth of the runs.
-template <int SLOTS>
-__device__ __forceinline__ void stage_put(uint2 (*stage)[SLOTS], u32* fill, u32* cnt, uint2* out, size_t stride,
+template <int SLOTS, class OUT>
+__device__ __forceinline__ void stage_put(uint2 (*stage)[SLOTS], u32* fill, u32* cnt, const OUT& out, size_t stride,
                                           u32 cap, u32 c, uint2 x) {
   const u32 slot = atomicAdd(&fill[c], 1u);
   if (slot < SLOTS) {
     stage[c][slot] = x;
   } else {
     const u32 pos = atomicAdd(&cnt[c], 1u);
-    if (pos < cap) out[c * stride + pos] = x;
+    if (pos < cap) out.put(c * stride + pos, x);
   }
 }
-template <int SLOTS, int TB>
-__device__ __forceinline__ void stage_flush(uint2 (*stage)[SLOTS], u32* fill, u32* cnt, uint2* out, size_t stride,
+template <int SLOTS, int TB, class OUT>
+__device__ __forceinline__ void stage_flush(uint2 (*stage)[SLOTS], u32* fill, u32* cnt, const OUT& out, size_t stride,
                                             u32 cap) {
   __syncthreads();
   const u32 warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
@@ -106,7 +132,7 @@ __device__ __forceinline__ void stage_flush(uint2 (*stage)[SLOTS], u32* fill, u3
     if (lane == 0) base = atomicAdd(&cnt[c], n);
     base = SHFL0(base);
     for (u32 j = lane; j < n; j += 32)
-      if (base + j < cap) out[c * stride + base + j] = stage[c][j];
+      if (base + j < cap) out.put(c * stride + base + j, stage[c][j]);
   }
   __syncthreads();
   for (u32 i = threadIdx.x; i < 64; i += TB) fill[i] = 0;
@@ -351,7 +377,8 @@ extern "C" __global__ __launch_bounds__(SPLIT_TPB) void c29_split(u32 side, cons
   __syncthreads();
   u32* gc = cnt;
 #endif
-  uint2* ob = out + (size_t)c * (NB / NC) * CAPB;  // this coarse bucket's fine buckets
+  const size_t fb0 = (size_t)c * (NB / NC) * CAPB;  // this coarse bucket's fine buckets
+  const FineOut ob{(u32*)out + fb0, FINE_B((u32*)out) + fb0, side};
 #if SPLIT_DIRECT
   // AMD: direct stores after the count pass (see GEN_DIRECT)
   for (u32 i = beg + threadIdx.x; i < n; i += SPLIT_TPB) {
@@ -359,7 +386,7 @@ extern "C" __global__ __launch_bounds__(SPLIT_TPB) void c29_split(u32 side, cons
     SPLIT_EDGE(i, x);
     const u32 f = ((side ? x.y : x.x) >> BSHIFT) & smask;
     const u32 pos = atomicAdd(&gc[f], 1u);
-    if (pos < CAPB) ob[(size_t)f * CAPB + pos] = x;
+    if (pos < CAPB) ob.put((size_t)f * CAPB + pos, x);
   }
 #else
   // Large segments (generation's ~8.5K edges): segment by segment, no per-edge search for the segment of a flat
@@ -430,6 +457,28 @@ extern "C" __global__ __launch_bounds__(SPLIT_TPB) void c29_split(u32 side, cons
     if (((n) & 1) && threadIdx.x == 0) { const uint2 x = (e)[(n) - 1]; BODY }         \
   }
 
+// Visits the n edges of a fine bucket (words a, halves b; 16-byte aligned) four at a time: BODY sees the word a_ and,
+// with HALVES, the half b_ (else 0). REV: last edges first.
+#define FOR_FINE(a, b, n, TB, REV, HALVES, BODY)                                       \
+  {                                                                                   \
+    const uint4* a4_ = reinterpret_cast<const uint4*>(a);                             \
+    const uint2* b4_ = reinterpret_cast<const uint2*>(b);                             \
+    const u32 n4_ = (n) >> 2;                                                         \
+    for (u32 j0_ = threadIdx.x; j0_ < n4_; j0_ += (TB)) {                             \
+      const u32 j_ = (REV) ? n4_ - 1 - j0_ : j0_;                                     \
+      const uint4 w_ = a4_[j_];                                                       \
+      const uint2 h_ = (HALVES) ? b4_[j_] : make_uint2(0, 0);                         \
+      { const u32 a_ = w_.x, b_ = h_.x & 0xffffu; BODY }                              \
+      { const u32 a_ = w_.y, b_ = h_.x >> 16; BODY }                                  \
+      { const u32 a_ = w_.z, b_ = h_.y & 0xffffu; BODY }                              \
+      { const u32 a_ = w_.w, b_ = h_.y >> 16; BODY }                                  \
+    }                                                                                 \
+    for (u32 i_ = (n4_ << 2) + threadIdx.x; i_ < (n); i_ += (TB)) {                   \
+      const u32 a_ = (a)[i_], b_ = (HALVES) ? (u32)(b)[i_] : 0u;                      \
+      BODY                                                                            \
+    }                                                                                 \
+  }
+
 // One trimming round on side `side` (0: u, 1: v), one block per fine bucket of that side; the survivors go to the
 // block's segments of the other side's coarse buckets (segs[c * NB + bucket]).
 // Degree counts of a bucket's 2^BSHIFT nodes. ROUND_NIBBLE (NVIDIA; 64 KB of dynamic shared memory): a 4-bit counter
@@ -468,35 +517,38 @@ extern "C" __global__ __launch_bounds__(TPB) void c29_round(u32 side, const uint
   for (u32 i = threadIdx.x; i < NC; i += TPB) cnt[i] = fill[i] = 0;
   __syncthreads();
   const u32 n = min(counts[bk], (u32)CAPB);
-  const uint2* e = in + (size_t)bk * CAPB;
-  const u32 lmask = (1u << BSHIFT) - 1u;
-  FOR_EDGES(e, n, {
-    const u32 l = (side ? x.y : x.x) & lmask;
+  const u32* ea = (const u32*)in + (size_t)bk * CAPB;
+  const u16* eb = FINE_B((const u32*)in) + (size_t)bk * CAPB;
+  FOR_FINE(ea, eb, n, TPB, 0, 0, {
+    const u32 l = a_ & LMASK;
     DEG_COUNT(l)
   })
   __syncthreads();
   uint2* o = out + (size_t)bk * ROUND_SEG;
 #if ROUND_STAGE
   if (stage_on) {
+    const CoarseOut co_out{o};
     for (u32 i0 = 0; i0 < n; i0 += TPB * ROUND_PER) {
 #pragma unroll
       for (u32 k = 0; k < ROUND_PER; ++k) {
         const u32 i = i0 + k * TPB + threadIdx.x;
         if (i < n) {
-          const uint2 x = e[REV_PASS ? n - 1 - i : i];
-          const u32 l = (side ? x.y : x.x) & lmask;
-          if (DEG_KEEP(l))
-            stage_put<RSLOTS>(stage, fill, cnt, o, CCAP, ROUND_SEG, (side ? x.x : x.y) >> CSHIFT, x);
+          const u32 j = REV_PASS ? n - 1 - i : i;
+          const u32 a_ = ea[j];
+          if (DEG_KEEP(a_ & LMASK)) {
+            const uint2 x = fine_edge(side, bk, a_, eb[j]);
+            stage_put<RSLOTS>(stage, fill, cnt, co_out, CCAP, ROUND_SEG, (side ? x.x : x.y) >> CSHIFT, x);
+          }
         }
       }
-      stage_flush<RSLOTS, TPB>(stage, fill, cnt, o, CCAP, ROUND_SEG);
+      stage_flush<RSLOTS, TPB>(stage, fill, cnt, co_out, CCAP, ROUND_SEG);
     }
   } else
 #endif
   {
-    FOR_EDGES_REV(e, n, TPB, {
-      const u32 l = (side ? x.y : x.x) & lmask;
-      if (DEG_KEEP(l)) {
+    FOR_FINE(ea, eb, n, TPB, REV_PASS, 1, {
+      if (DEG_KEEP(a_ & LMASK)) {
+        const uint2 x = fine_edge(side, bk, a_, b_);
         const u32 co = (side ? x.x : x.y) >> CSHIFT;
         const u32 pos = atomicAdd(&cnt[co], 1u);
         if (pos < ROUND_SEG) o[co * CCAP + pos] = x;
@@ -524,17 +576,17 @@ __device__ __forceinline__ void round_r(u32 side, const uint2* __restrict__ in,
   __syncthreads();
   const u32 bk = blockIdx.x;
   const u32 n = min(counts[bk], (u32)CAPB);
-  const uint2* e = in + (size_t)bk * CAPB;
-  const u32 lmask = (1u << BSHIFT) - 1u;
-  FOR_EDGES_TB(e, n, RTPB, {
-    const u32 l = (side ? x.y : x.x) & lmask;
+  const u32* ea = (const u32*)in + (size_t)bk * CAPB;
+  const u16* eb = FINE_B((const u32*)in) + (size_t)bk * CAPB;
+  FOR_FINE(ea, eb, n, RTPB, 0, 0, {
+    const u32 l = a_ & LMASK;
     const u32 m = 1u << (l & 31);
     if (atomicOr(&s1[l >> 5], m) & m) atomicOr(&s2[l >> 5], m);
   })
   __syncthreads();
-  FOR_EDGES_REV(e, n, RTPB, {
-    const u32 l = (side ? x.y : x.x) & lmask;
-    if (s2[l >> 5] >> (l & 31) & 1u) atomicAdd(&cnt[(side ? x.x : x.y) >> CSHIFT], 1u);
+  FOR_FINE(ea, eb, n, RTPB, REV_PASS, 1, {
+    const u32 l = a_ & LMASK;
+    if (s2[l >> 5] >> (l & 31) & 1u) atomicAdd(&cnt[((a_ >> BSHIFT) | (b_ << (32 - BSHIFT))) >> CSHIFT], 1u);
   })
   __syncthreads();
   for (u32 i = threadIdx.x; i < NC; i += RTPB) {
@@ -542,9 +594,10 @@ __device__ __forceinline__ void round_r(u32 side, const uint2* __restrict__ in,
     cnt[i] = c ? atomicAdd(&ccounts[i], c) : 0u;
   }
   __syncthreads();
-  FOR_EDGES_TB(e, n, RTPB, {
-    const u32 l = (side ? x.y : x.x) & lmask;
+  FOR_FINE(ea, eb, n, RTPB, 0, 1, {
+    const u32 l = a_ & LMASK;
     if (s2[l >> 5] >> (l & 31) & 1u) {
+      const uint2 x = fine_edge(side, bk, a_, b_);
       const u32 co = (side ? x.x : x.y) >> CSHIFT;
       const u32 pos = atomicAdd(&cnt[co], 1u);
       if (pos < CCAP) out[co * CCAP + pos] = x;
@@ -566,14 +619,52 @@ extern "C" __global__ __launch_bounds__(RS_TPB) void c29_round_rs(u32 side, cons
   round_r<RS_TPB>(side, in, counts, out, ccounts);
 }
 
-// Buckets -> one flat list at the given offsets (one block per bucket).
-extern "C" __global__ __launch_bounds__(TPB) void c29_flatten(const uint2* __restrict__ in,
+// Late rounds (few edges): the survivors go straight into the other side's fine buckets (`out`, counts in ocounts),
+// one global atomic per edge: no coarse buckets, no split kernel, one pass less over the input.
+template <int RTPB>
+__device__ __forceinline__ void round_d(u32 side, const uint2* __restrict__ in, const u32* __restrict__ counts,
+                                        uint2* __restrict__ out, u32* __restrict__ ocounts) {
+  __shared__ u32 s1[LOCAL_WORDS], s2[LOCAL_WORDS];
+  const FineOut fo{(u32*)out, FINE_B((u32*)out), side ^ 1u};
+  for (u32 bk = blockIdx.x; bk < NB; bk += gridDim.x) {
+  for (u32 i = threadIdx.x; i < LOCAL_WORDS; i += RTPB) { s1[i] = 0; s2[i] = 0; }
+  __syncthreads();
+  const u32 n = min(counts[bk], (u32)CAPB);
+  const u32* ea = (const u32*)in + (size_t)bk * CAPB;
+  const u16* eb = FINE_B((const u32*)in) + (size_t)bk * CAPB;
+  FOR_FINE(ea, eb, n, RTPB, 0, 0, {
+    const u32 l = a_ & LMASK;
+    const u32 m = 1u << (l & 31);
+    if (atomicOr(&s1[l >> 5], m) & m) atomicOr(&s2[l >> 5], m);
+  })
+  __syncthreads();
+  FOR_FINE(ea, eb, n, RTPB, REV_PASS, 1, {
+    const u32 l = a_ & LMASK;
+    if (s2[l >> 5] >> (l & 31) & 1u) {
+      const uint2 x = fine_edge(side, bk, a_, b_);
+      const u32 f = (side ? x.x : x.y) >> BSHIFT;
+      const u32 pos = atomicAdd(&ocounts[f], 1u);
+      if (pos < CAPB) fo.put((size_t)f * CAPB + pos, x);
+    }
+  })
+  __syncthreads();
+  }
+}
+extern "C" __global__ __launch_bounds__(RS_TPB) void c29_round_d(u32 side, const uint2* __restrict__ in,
+                                                                const u32* __restrict__ counts,
+                                                                uint2* __restrict__ out, u32* __restrict__ ocounts) {
+  round_d<RS_TPB>(side, in, counts, out, ocounts);
+}
+
+// Fine buckets of side `side` -> one flat list of pairs at the given offsets (one block per bucket).
+extern "C" __global__ __launch_bounds__(TPB) void c29_flatten(u32 side, const uint2* __restrict__ in,
                                                               const u32* __restrict__ counts,
                                                               const u32* __restrict__ offsets,
                                                               uint2* __restrict__ flat) {
   const u32 bk = blockIdx.x, n = min(counts[bk], (u32)CAPB), o = offsets[bk];
-  const uint2* e = in + (size_t)bk * CAPB;
-  for (u32 i = threadIdx.x; i < n; i += TPB) flat[o + i] = e[i];
+  const u32* ea = (const u32*)in + (size_t)bk * CAPB;
+  const u16* eb = FINE_B((const u32*)in) + (size_t)bk * CAPB;
+  for (u32 i = threadIdx.x; i < n; i += TPB) flat[o + i] = fine_edge(side, bk, ea[i], eb[i]);
 }
 
 // Late rounds on the flat list: count (global bitmaps), keep (warp-aggregated append), clear the bitmap words used.

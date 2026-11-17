@@ -481,6 +481,50 @@ Memory clock on the RX 9070 XT (-30% power; 60-120 s benchmarks, every share CPU
 1:1, power stays at ~234 W. Adrenalin's fast memory timing (Overdrive8 setting 14) changed nothing (62.90 vs 62.89 at
 2700). 2700 leaves a margin below this card's cliff; live on Kryptex 16 min at 62.3 MH/s, 3 accepted / 0 rejected.
 
+### 0.4.0 (2026-11-16): non-temporal DAG reads on AMD
+
+The mix alone (`XM_OCTOPUS_PROF=1 XM_OCTOPUS_FUSE=0`, RX 9070 XT, 2^21 nonces) took 33.0 ms at the 8.8 GB DAG, 31.2
+at 6.3 GB, 29.9 at 4 GB. With the DAG pages read by `__builtin_nontemporal_load` (no allocation in the L2 / Infinity
+Cache) it takes 27.7 ms: 620 GB/s, ~96% of the card's DRAM bandwidth. The fused launch (matrix products for the next
+batch beside the mix) then reaches 69.0 MH/s at stock power, 67.9 at -30% (was 57.8 / 58.5); 128 matrix blocks stay
+best (64: 64.5, 192: 63.2, 256: 63.6), as do 8 lanes per hash (16: 66.9). The DAG reads no longer evict the matrix
+operands, the polynomial values and the other blocks' data.
+
+The same loads (`dag_ld` in the shared kernel head) on the other DAG algorithms, RX 9070 XT at -30% power, 40 s each:
+
+| Algorithm | Cached reads | Non-temporal |
+|---|---|---|
+| Etchash / Ethash (8.1 GB) | 35.5 / 32.5 | 38.8 / 38.8 |
+| KawPow (Ravencoin, 5.9 GB) / FiroPow | 34.0 / 33.1 | 38.5 / 38.4 |
+| Evrmore (4.4 GB) / MeowPow (10.6 GB) | 35.2 / 31.7 | 38.6 / 38.4 |
+| Neurai (3.0 GB) / Epic (2.0 GB) / Zano (1.9 GB) | 39.4 / 39.9 / 40.0 | 38.7 / 38.8 / 38.8 |
+| Autolykos2 (32-byte elements) | 64.3 | 75.3 |
+| FishHash / KarlsenHashV2 | 23.5 / 23.5 | 25.9 / 25.8 |
+| NexaPow (comb table) | 64.0 | 62.2 (not used) |
+
+ProgPoW DAGs below ~3.5 GB still gain from the caches, so the ProgPoW family compiles its programs with non-temporal
+reads only from 3.5 GB (decided per epoch). `XM_DAG_NT=0/1` forces either. Only RDNA4 (gfx12) uses it by default; older AMD GPUs keep cached reads until
+measured.
+
+RTX 3060 at 100 W, cached / evict-first (`__ldcs`) / L1 no-allocate (`ld.global.nc.L1::no_allocate`): Octopus 28.6 /
+25.0 / 22.7, KawPow 16.35 / 16.33 / 16.37, FishHash 27.51 / 27.51 / 27.50, Etchash 40.84 / 40.84, Autolykos2 96.5 /
+99.4. The 3 MB L2 holds little beyond the DAG traffic, so only Autolykos2 uses evict-first reads on NVIDIA (99.2 at
+170 W, 146 W).
+
+### 0.4.0 (2026-11-16): RTX 3060, 31.4 -> 32.6 MH/s at 170 W (28.2 -> 29.3 at 100 W)
+
+The mix alone (a developer build without the matrix products, wrong hashes) runs 37.8 MH/s at 152 W,
+38.5 with 256-thread blocks, and still 38.2 at 100 W: ncu shows it at 94% of DRAM throughput. The matrix products
+beside it take the rest, and the card sits at its power limit in every variant. ncu, matrix kernel alone with the
+mining grid (56 persistent blocks): 51.5 ms per 2^21 nonces, L2 hit rate 79.5%, ~2.4 GB of DRAM traffic (14% on top
+of the mix's 17.2 GB), mostly Vandermonde slices: the 56 blocks in flight covered all 16 point tiles, i.e. the whole
+3 MB Vandermonde, the size of the L2. Tiles now go in bands of 8 group tiles, points-major inside a band (`TC_SW`,
+`XM_OCTOPUS_SW`): 170 W, bands 1 / 4 / 8 / 16 / 32 = 31.41 / 31.50 / 32.13 / 31.99 / 30.30; with 256-thread mix blocks
+32.55 (100 W: 28.15 -> 29.18). Not kept: lanes 4 (19.1) / 16 (30.8), 64-thread blocks (31.3), matrix grid 28 (17.7,
+the products become the critical path) / 84 (30.1), 64-group tiles (25.3), evict-first or L1-no-allocate DAG reads
+(25.0 / 22.7 at 100 W). The products are nine u8 x u8 terms per coefficient-point pair however the 20-bit values are
+split, so what remains is their energy at the power limit.
+
 ## FishHash (Iron Fish) and KarlsenHashV2 (Karlsen)
 
 | Card | X-Miner | Published (Kryptex) |
@@ -873,6 +917,71 @@ split 34 -> 54 ms (6.67 -> 6.30 g/s); the Infinity Cache already merges the scat
 only adds barriers. `XM_C29_DIRECT=0/1` overrides.
 
 Live on Kryptex: RX 9070 XT, 5 accepted / 0 rejected in 15 minutes at difficulty 20 (6.62 g/s shown).
+
+### 0.4.0 (2026-11-16): RX 9070 XT 8.8 -> 10.75 g/s, RTX 3060 at 100 W 4.16 -> 4.41 g/s
+
+- Fine buckets hold 6 bytes per edge instead of 8, in two arrays: a 4-byte word with the bucket side's node minus its
+  12 bucket bits (17 bits) and the other node's low 15 bits, and a 2-byte half with the other node's high 14 bits. A
+  round's degree count reads only the words (half the bytes); the filter pass and the splits' writes move 6 bytes
+  instead of 8. RX 9070 XT 8.8 -> 10.0 g/s; RTX 3060 4.16 -> 4.41. Round 0 kernel 13.8 -> 11.5 ms, generation's split
+  16.3 -> 13.8 ms (9070 XT).
+- AMD splits are now one pass (each staged run reserves its slots when written out), as on NVIDIA: +2% on the 9070 XT,
+  which had kept the two-pass direct split since 2026-11-03.
+- AMD: from round 1 on, a round writes its survivors straight into the other side's fine buckets, one global atomic
+  per edge, with no coarse buckets and no split kernel; the Infinity Cache merges the scattered stores. RX 9070 XT
+  from round 1: 10.72 g/s, from round 2: 10.53, 3: 10.33, 4: 10.22, never: 9.93. From round 0 (330M survivors) it is
+  slower (9.2-9.5). NVIDIA keeps the split: RTX 3060 from round 1 4.41 -> 3.53 g/s, from round 4 3.68.
+  `XM_C29_DFROM=<round>` overrides.
+- Profile now (RX 9070 XT, 60 rounds): generation 12.3 + split 13.8, round 0 11.4 + split 8.9, rounds 1-3 17.8,
+  rounds 4-7 7.8 ms, then ~0.25 ms per round; ~90 ms of GPU per graph at ~47 rounds. Generation is 7.5 ms of hashing
+  (its shared-memory atomics included) plus 4.7 ms the stores add.
+- Not kept (RX 9070 XT unless noted):
+  - Direct rounds with the slots reserved per block (survivors counted per destination bucket in shared memory, one
+    global atomic per destination): round 0 that way 5.5 g/s; rounds 1-3 unchanged.
+  - Direct rounds with a capped grid looping over the buckets (256 to 1024 blocks): 10.36-10.57 g/s; 1024 threads
+    with one block per WGP: 10.55.
+  - Round 0's survivors as 6-byte edges as well (the producing bucket is the segment, so only the low bits are
+    stored): round 0 kernel 11.4 -> 12.5 ms, its split 8.9 -> 8.0 ms; unchanged on both cards (10.70, RTX 3060 4.41).
+  - Generation straight into the fine buckets with a global atomic per edge: 8.4 g/s.
+  - Staged survivor writes in round 0 (as on NVIDIA): 10.14-10.35 g/s.
+  - Generation's stores sorted per wave in LDS (8 or 4 edges per lane, written as runs, no block barriers): generation
+    12.3 -> 13.0 ms.
+
+Live on Kryptex (2026-11-16): RX 9070 XT, 10 accepted / 0 rejected in 10 minutes at 10.8 g/s.
+
+## BeamHash III (Beam, beamhash3)
+
+One run = one nonce: generation of 2^25 elements, four collision rounds and the final round; ~2 solutions per run on
+average (the benchmark's own count varies with its nonces, so compare ms per run). `XM_BEAM_PROF=1` prints per-kernel
+times.
+
+### 0.4.0 (2026-11-16): RTX 3060 at 99 W 188.6 -> 104.3 ms per run (1.81x), RX 9070 XT 61.4 -> 50.8 ms (1.21x)
+
+First version: 4096 buckets of ~8192 elements by the low 12 bits of the collision key; one block per bucket links
+the elements in shared memory by the other 12 bits and reads each element and its partners from global memory.
+- RTX 3060 profile then: generation 27.3, rounds 27.2 / 36.5 / 41.2, round 4 + final 57.2 ms. Nsight Compute on
+  round 2: 4.7% issue busy, DRAM 45%, L2 hit rate 60%, 53% excess sectors, 1.5x the ideal DRAM bytes. The buckets in
+  flight (2 blocks per SM x 28 SMs x ~600 KB) are ~10x the 3060's 3 MB L2, so partner loads go to DRAM again. More
+  threads per block (384 to 1024) changed nothing.
+- **NVIDIA: 2^16 buckets of ~512 elements** (CAP 608; ~7 elements per run fall over capacity), each copied into
+  shared memory with coalesced 16-byte loads (odd word stride: thread-per-element reads are free of bank conflicts),
+  512 threads, 2 blocks per SM. 188.6 -> 147.6 ms. 8-byte shared-memory reads (stride = 2 mod 4 words) were slower.
+- **Whole elements per warp store (NVIDIA).** Each lane stored its own 64- or 80-byte element as 16-byte pieces, so
+  every warp store touched 32 lines and the stores queued in the memory pipeline (generation: 41% of stall cycles on
+  the L1 instruction queue; round 1 25 -> 7.8 ms with the stores removed). Generation stages elements through shared
+  memory and 4 lanes write each one: 27.6 -> 11.4 ms. The rounds first list the bucket's colliding pairs, then
+  combine them 32 at a time and move the outputs between lanes with shuffles (shared memory is full): 135 -> 121 ms.
+- **Fewer bytes (both vendors).** Round 5 keeps only what the final round and the host read (the mixed low word,
+  the first leaf index, the two parent positions): 32 instead of 80 bytes; 121 -> 111 ms. Round 3's four leaf indices
+  are packed at 25 bits, where the mix appends them: 64 instead of 80 bytes; -> 104.6 ms. Buffer A now only holds
+  64-byte slots: ~5.7 GB of GPU memory in all (NVIDIA), ~5.3 GB (AMD).
+- **AMD keeps the 4096 large buckets** read from global memory (the Infinity Cache serves the partner re-reads and
+  merges the scattered stores) with the byte savings: 61.4 -> 50.8 ms, 38.1 Sol/s at 274 W. With the NVIDIA layout
+  it was 63.3-64.2 ms (generation into 2^16 buckets 3.9 -> 7.5 ms; whole-element warp stores make no difference
+  there). `XM_BEAM_LDS`, `XM_BEAM_COOP`, `XM_BEAM_NBBITS`, `XM_BEAM_CAP` and `XM_BEAM_RTPB` override.
+- Profile now: RTX 3060 generation 11.5, rounds 19.6 / 20.0 / 25.0, round 4 + final 28.2 ms; RX 9070 XT 3.8, 10.9 /
+  10.8 / 11.3, 13.9 ms. The 3060's rounds are near its rate for scattered 64-80-byte writes (~190 GB/s) plus their
+  sequential reads; round 4's 80-byte input does not fit 64 bytes even packed (376 work bits + 8 x 25).
 
 ## Rig tests, 2026-11-14/15 (HiveOS)
 

@@ -23,6 +23,8 @@ constexpr size_t kExtranonceSize = 12;
 
 Digest blake2b256(const uint8_t* data, size_t len);  // unkeyed, 32-byte digest; len <= 128 (one block)
 Digest blake2b256_any(const uint8_t* data, size_t len);  // unkeyed, 32-byte digest, any length
+// The same with a 16-byte personalization in the parameter block (nullptr: none), e.g. Beam's "Beam-PoW".
+Digest blake2b256_personal(const uint8_t* data, size_t len, const uint8_t personal[16]);
 Digest work_root(const uint8_t coinb1[kCoinb1Size], const uint8_t extranonce[kExtranonceSize]);
 Header work_header(const uint8_t prevhash[32], uint64_t nonce, const uint8_t ntime[8], const Digest& root);
 

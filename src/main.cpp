@@ -61,6 +61,7 @@ int run_xelis(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_qhash(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_nexa(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 int run_c29(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+int run_beam(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::autolykos {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
@@ -76,6 +77,9 @@ namespace xm::nexa {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::c29 {
+int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
+}
+namespace xm::beam {
 int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs);
 }
 namespace xm::xelis {
@@ -464,6 +468,15 @@ int main(int argc, char** argv) {
     }
     print_section("MISSION START");
     return iron ? run_fishhash(cfg, devs) : run_karlsen(cfg, devs);
+  }
+  if (std::string(algo->name) == "beamhash3") {
+    set_hashrate_unit("Sol");  // solutions per second
+    if (cfg.benchmark) {
+      print_section("BENCHMARK");
+      return beam::benchmark(cfg, devs);
+    }
+    print_section("MISSION START");
+    return run_beam(cfg, devs);
   }
   if (std::string(algo->name) == "cuckaroo29") {
     set_hashrate_unit("g");  // graphs per second

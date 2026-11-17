@@ -12,6 +12,15 @@
 
 namespace xm::kawpow {
 
+// DAG reads as non-temporal loads on AMD (RX 9070 XT at -30% power: Etchash 35.5 -> 38.8 MH/s, KawPow 34.0 -> 38.5,
+// FishHash 23.5 -> 25.9, Octopus 58.5 -> 67.9): the random DAG reads no longer displace the rest of the working set
+// from the caches. ProgPoW DAGs below ~3.5 GB partly stay in the caches and lose ~3% instead (Neurai 3.0 GB 39.4 ->
+// 38.7, Epic 2.0 GB 39.9 -> 38.8), so the ProgPoW family decides by DAG size. XM_DAG_NT=0/1 overrides.
+static bool dag_nt(bool want) {
+  const char* e = std::getenv("XM_DAG_NT");
+  return e ? std::atoi(e) != 0 : want;
+}
+
 namespace {
 
 // Shared by every generated module: types, KISS99, Keccak-f800 / f1600, the Ethash DAG generator.
@@ -28,6 +37,18 @@ typedef unsigned long long u64;
 #define FNV_PRIME 0x01000193u
 #define FNV_OFFSET 0x811c9dc5u
 __device__ __forceinline__ u32 fnv1(u32 u, u32 v) { return (u * FNV_PRIME) ^ v; }
+// A DAG read. DAG_NT (AMD): a non-temporal load, so the random DAG reads do not displace other data in the caches.
+__device__ __forceinline__ uint4 dag_ld(const uint4* p) {
+#if defined(DAG_NT) && (defined(__HIPCC_RTC__) || defined(__HIP__))
+  typedef unsigned int nt4 __attribute__((ext_vector_type(4)));
+  const nt4 b = __builtin_nontemporal_load((const nt4*)p);
+  return make_uint4(b.x, b.y, b.z, b.w);
+#elif defined(DAG_NT)
+  return __ldcs(p);  // NVIDIA: evict-first (developer A/B: XM_DAG_NT=1)
+#else
+  return *p;
+#endif
+}
 __device__ __forceinline__ u32 fnv1a(u32 u, u32 v) { return (u ^ v) * FNV_PRIME; }
 __device__ __forceinline__ u32 rotl32(u32 x, u32 n) { n &= 31u; return (x << n) | (x >> ((32u - n) & 31u)); }
 __device__ __forceinline__ u32 rotr32(u32 x, u32 n) { n &= 31u; return (x >> n) | (x << ((32u - n) & 31u)); }
@@ -178,7 +199,7 @@ INIT_PAD
 #pragma unroll 1
     for (u32 r = 0; r < 64; ++r) {
       const u32 item = SHFL(mix[0], r & 15u) % items2048;
-      const uint4 d = dag[(size_t)item * 16 + ((lane ^ r) & 15u)];
+      const uint4 d = dag_ld(dag + (size_t)item * 16 + ((lane ^ r) & 15u));
       u32 data;
 PROGRAM
 DAG_MERGE
@@ -242,7 +263,7 @@ std::string reg(int i) { return "mix[" + std::to_string(i) + "]"; }
 
 }  // namespace
 
-std::string kernel_source(const Variant& v, uint64_t period, uint32_t tpb) {
+std::string kernel_source(const Variant& v, uint64_t period, uint32_t tpb, bool nt) {
   const Program p = make_program(period, v);
   std::ostringstream prog;
   for (const auto& op : p.ops) {
@@ -280,7 +301,7 @@ std::string kernel_source(const Variant& v, uint64_t period, uint32_t tpb) {
   src << "#define TPB " << tpb << "\n#define DAG_PARENTS " << v.parents << "u\n#define REGS " << v.regs << "\n"
       << "#define SEED_LO " << (v.v092 ? "bswap32(state2[1])" : "state2[0]") << "\n"
       << "#define SEED_HI " << (v.v092 ? "bswap32(state2[0])" : "state2[1]") << "\n"
-      << "// " << v.name << " period " << period << "\n" << kHead << body;
+      << (nt ? "#define DAG_NT 1\n" : "") << "// " << v.name << " period " << period << "\n" << kHead << body;
   return src.str();
 }
 
@@ -327,11 +348,11 @@ bool Engine::init(std::string& err) {
 
 namespace {
 
-gpu::RtcOutput compile_period(const gpu::DeviceInfo& dev, const Variant* v, uint64_t period, uint32_t tpb) {
+gpu::RtcOutput compile_period(const gpu::DeviceInfo& dev, const Variant* v, uint64_t period, uint32_t tpb, bool nt) {
   gpu::RtcOutput out;
   std::vector<std::string> opts;
   if (dev.vendor == gpu::Vendor::Amd) opts.push_back("-O3");
-  if (!gpu::rtc_compile(dev, kernel_source(*v, period, tpb), std::string(v->name) + "_" + std::to_string(period) + ".cu", opts, out))
+  if (!gpu::rtc_compile(dev, kernel_source(*v, period, tpb, nt), std::string(v->name) + "_" + std::to_string(period) + ".cu", opts, out))
     out.code.clear();
   return out;
 }
@@ -346,7 +367,7 @@ bool Engine::load_program(uint64_t period, std::string& err) {
     out = next_.get();
   } else {
     if (next_.valid()) next_.wait();
-    out = compile_period(dev_.info(), &v_, period, tpb_);
+    out = compile_period(dev_.info(), &v_, period, tpb_, nt_);
   }
   if (out.code.empty()) {
     err = "KawPow program " + std::to_string(period) + " did not compile: " + out.log.substr(0, 2000);
@@ -359,7 +380,7 @@ bool Engine::load_program(uint64_t period, std::string& err) {
   }
   period_ = period;
   next_period_ = period + 1;
-  next_ = std::async(std::launch::async, compile_period, dev_.info(), &v_, next_period_, tpb_);
+  next_ = std::async(std::launch::async, compile_period, dev_.info(), &v_, next_period_, tpb_, nt_);
   return true;
 }
 
@@ -395,8 +416,8 @@ bool generate_dag(gpu::Device& dev, const Light& light, gpu::DevPtr& d_dag, std:
   return true;
 }
 
-std::string kernel_common(int parents, uint32_t tpb) {
-  return "#define TPB " + std::to_string(tpb) + "\n#define DAG_PARENTS " + std::to_string(parents) + "u\n" + kHead;
+std::string kernel_common(int parents, uint32_t tpb, bool amd) {
+  return std::string(dag_nt(amd) ? "#define DAG_NT 1\n" : "") + "#define TPB " + std::to_string(tpb) + "\n#define DAG_PARENTS " + std::to_string(parents) + "u\n" + kHead;
 }
 
 bool Engine::build_dag(int epoch, std::string& err) {
@@ -413,7 +434,23 @@ bool Engine::build_dag(int epoch, std::string& err) {
 
 bool Engine::set_job(const Job& job, std::string& err) {
   const int epoch = epoch_for_height(v_, job.height);
+  if (epoch < 0 || epoch > 4096) {  // before shared_light: a bogus height must not size a light cache
+    err = "implausible block height (DAG epoch " + std::to_string(epoch) + ")";
+    return false;
+  }
   const uint64_t period = uint64_t(job.height / v_.period);
+  if (epoch != dag_epoch_) {
+    // The programs (which also generate the DAG) are compiled with or without DAG_NT, by this epoch's DAG size; the
+    // light cache is shared, so build_dag reuses it.
+    const uint64_t dag_bytes = uint64_t(shared_light(v_, epoch)->dataset_items) * 128;
+    const bool nt = dag_nt(nt_amd(dev_.info()) && dag_bytes >= (7ull << 29));
+    if (nt != nt_) {
+      nt_ = nt;
+      if (next_.valid()) next_.wait();
+      next_ = {};
+      period_ = next_period_ = ~0ull;
+    }
+  }
   if (period != period_ && !load_program(period, err)) return false;
   if (epoch != dag_epoch_ && !build_dag(epoch, err)) return false;
   if (job.header != job_.header || job.nonce_prefix != job_.nonce_prefix || !have_job_) {
