@@ -152,8 +152,9 @@ bool quantus_check(gpu::Device& dev, std::string& detail) {
 
 // ProgPoW family (KawPow, FiroPow, Epic ProgPoW 0.9.2, ProgPowZ): epoch 0 (a 1-1.5 GB DAG generated on the GPU), one period's program compiled at run time, 2^20 nonces against
 // a 2^-12 target (about 256 hits). Every GPU hit is re-hashed with the CPU reference (light cache).
-bool progpow_check(gpu::Device& dev, std::string& detail, const kawpow::Variant& v, int height) {
+bool progpow_check(gpu::Device& dev, std::string& detail, const kawpow::Variant& v, int height, int force_nt = -1) {
   kawpow::Engine eng(dev, 0x6a77e1f7, v);
+  eng.force_dag_nt(force_nt);
   kawpow::Job job;
   job.id = "selftest";
   job.height = height;
@@ -174,7 +175,16 @@ bool progpow_check(gpu::Device& dev, std::string& detail, const kawpow::Variant&
   detail = buf;
   return shares.size() >= 128 && shares.size() <= 256 && eng.cpu_rejects() == 0;
 }
-bool kawpow_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kKawpow, 1234); }
+// RDNA4 mines DAGs of 3.5 GB and more with non-temporal DAG loads, which the epoch-0 DAG never selects: KawPow also runs
+// once with them forced, so that program variant is checked too.
+bool kawpow_check(gpu::Device& dev, std::string& d) {
+  if (!progpow_check(dev, d, kawpow::kKawpow, 1234)) return false;
+  if (!kawpow::nt_amd(dev.info())) return true;
+  std::string d2;
+  const bool ok = progpow_check(dev, d2, kawpow::kKawpow, 1234, 1);
+  d += "; non-temporal DAG loads: " + d2;
+  return ok;
+}
 bool evrmore_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kEvrprogpow, 1234); }
 bool meowpow_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kMeowpow, 1234); }
 bool firopow_check(gpu::Device& dev, std::string& d) { return progpow_check(dev, d, kawpow::kFiropow, 1234); }

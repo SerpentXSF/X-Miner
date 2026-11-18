@@ -65,6 +65,7 @@ class Engine {
   Job job_;
   bool have_job_ = false;
   uint64_t counter_ = 0, cpu_rejects_ = 0;
+  unsigned unit_tag_ = 0;  // distinct per engine (mod 16): keeps GPUs apart in a short nonce space
 };
 
 }  // namespace xm::beam

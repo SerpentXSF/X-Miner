@@ -443,7 +443,7 @@ bool Engine::set_job(const Job& job, std::string& err) {
     // The programs (which also generate the DAG) are compiled with or without DAG_NT, by this epoch's DAG size; the
     // light cache is shared, so build_dag reuses it.
     const uint64_t dag_bytes = uint64_t(shared_light(v_, epoch)->dataset_items) * 128;
-    const bool nt = dag_nt(nt_amd(dev_.info()) && dag_bytes >= (7ull << 29));
+    const bool nt = force_nt_ >= 0 ? force_nt_ != 0 : dag_nt(nt_amd(dev_.info()) && dag_bytes >= (7ull << 29));
     if (nt != nt_) {
       nt_ = nt;
       if (next_.valid()) next_.wait();

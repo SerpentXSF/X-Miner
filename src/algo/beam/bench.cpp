@@ -77,10 +77,10 @@ int benchmark(const xm::Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
     char line[320];
     std::snprintf(line, sizeof line,
                   "%.2f Sol/s over %.0f s (%llu runs, %.2f solutions per run, %.2f candidates per run, %.1f ms per "
-                  "run, %llu elements over bucket capacity)%s",
+                  "run, %llu elements over bucket capacity, %llu CPU rejects)%s",
                   sols / secs, secs, static_cast<unsigned long long>(runs), double(sols) / double(runs),
                   double(candidates) / double(runs), gpu_ms / double(runs), static_cast<unsigned long long>(overflow),
-                  samples ? (", " + std::to_string(int(watts / samples)) + " W").c_str() : "");
+                  static_cast<unsigned long long>(eng.cpu_rejects()), samples ? (", " + std::to_string(int(watts / samples)) + " W").c_str() : "");
     log_line(Tone::Ok, "DONE", line);
   }
   return failures ? 1 : 0;

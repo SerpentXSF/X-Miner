@@ -1,6 +1,7 @@
 #include "algo/beam/beam_gpu.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -28,7 +29,10 @@ constexpr uint32_t kWk4 = 12, kRef5 = 3;
 
 }  // namespace
 
-Engine::Engine(gpu::Device& dev, uint64_t seed) : dev_(dev), rng_(seed * 0x9e3779b97f4a7c15ull + 1) {}
+Engine::Engine(gpu::Device& dev, uint64_t seed) : dev_(dev), rng_(seed * 0x9e3779b97f4a7c15ull + 1) {
+  static std::atomic<unsigned> engines{0};  // one engine per GPU: distinct tags for up to 16 GPUs
+  unit_tag_ = engines.fetch_add(1) & 15;
+}
 
 Engine::~Engine() {
   for (gpu::DevPtr p : {d_a_, d_b_, d_ca_, d_cb_, d_found_})
@@ -170,8 +174,15 @@ bool Engine::solve(const uint8_t input[32], const uint8_t nonce[8], std::vector<
     const auto packed = pack_indices(idx);
     std::copy(packed.begin(), packed.end(), s.begin());
     if (std::find(sols.begin(), sols.end(), s) != sols.end()) continue;
-    if (verify(input, nonce, s)) sols.push_back(s);
-    // A pair whose subtrees share indices also lands here (it cannot be a solution): not a GPU error.
+    if (verify(input, nonce, s)) {
+      sols.push_back(s);
+      continue;
+    }
+    // A pair whose subtrees share indices also lands here (it cannot be a solution): not a GPU error. 32 distinct
+    // indices that still fail the CPU verifier are one.
+    Indices sorted = idx;
+    std::sort(sorted.begin(), sorted.end());
+    if (std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end()) ++cpu_rejects_;
   }
   return true;
 }
@@ -195,7 +206,11 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   std::array<uint8_t, 8> nonce{};
   const size_t np = std::min<size_t>(job_.nonce_prefix.size(), 8);
   std::copy(job_.nonce_prefix.begin(), job_.nonce_prefix.begin() + np, nonce.begin());
-  const uint64_t c = counter_++;
+  uint64_t c = counter_++;
+  if (np >= 4 && np < 8) {  // 4 free bytes or fewer: the top 4 bits are this GPU's, so GPUs never try the same nonce
+    const unsigned bits = unsigned(8 * (8 - np));
+    c = (c & ((uint64_t(1) << (bits - 4)) - 1)) | (uint64_t(unit_tag_) << (bits - 4));
+  }
   for (size_t i = np; i < 8; ++i) nonce[i] = static_cast<uint8_t>(c >> (8 * (7 - i)));
   std::vector<Solution> sols;
   SolveStats st;

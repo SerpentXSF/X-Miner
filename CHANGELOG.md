@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.4.0b (unreleased)
+## 0.4.0c (2026-11-17)
+
+- Beam on rigs with several GPUs: when the pool leaves 4 bytes of the nonce or fewer, each GPU searches its own part
+  of it, so two GPUs never try the same nonce.
+- `--selftest` on RX 9000 (RDNA4) also checks KawPow with non-temporal DAG loads, the variant used for DAGs of 3.5 GB
+  and more (the self-test's small DAG never selects it).
+- Beam: a GPU result that fails the CPU verifier while its 32 indices are distinct (a real GPU error, not the normal
+  shared-index candidates) is now counted and reported like on the other algorithms ("check clocks and temperatures"),
+  and the benchmark shows the count.
+
+## 0.4.0b (2026-11-17)
 
 - Beam (BeamHash III) confirmed on a live pool: 2Miners accepted 26 of 26 shares in a 10-minute test from an RTX 3060
   (20.9 Sol/s at 99 W, pool-credited 21.0). The 1% dev fee now applies to Beam, like the other algorithms.
