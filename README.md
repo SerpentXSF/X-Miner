@@ -21,7 +21,7 @@ BeamHash III (Beam).
 
 Every algorithm is checked against its coin's published test vectors where they exist (ProgPowZ, Octopus and BeamHash III
 have none: GPU against the CPU reference), by a GPU-against-CPU `--selftest`, and with shares accepted on a live pool from
-both an RX 9070 XT and an RTX 3060. Exception: BeamHash III is new in 0.4.0 and not yet confirmed on a live pool.
+both an RX 9070 XT and an RTX 3060.
 
 ## Quick start
 

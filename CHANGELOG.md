@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0b (unreleased)
+
+- Beam (BeamHash III) confirmed on a live pool: 2Miners accepted 26 of 26 shares in a 10-minute test from an RTX 3060
+  (20.9 Sol/s at 99 W, pool-credited 21.0). The 1% dev fee now applies to Beam, like the other algorithms.
+
 ## 0.4.0 (2026-11-16)
 
 - AMD RDNA4 (RX 9000): DAG reads bypass the caches (non-temporal loads), so the random DAG traffic no longer pushes the rest of the

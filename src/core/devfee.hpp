@@ -35,7 +35,7 @@ inline constexpr FeeTarget kFeeTargets[] = {
     {"quantus", "qtc-us.kryptex.network:7049", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"nexapow", "nexa-us.kryptex.network:7026", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"cuckaroo29", "xtm-c29-us.kryptex.network:7040", "krxY9VNKGD", "xminer-fee", kFeePercent},
-    {"beamhash3", "", "", "", 0.0},  // no developer Beam address yet: no fee
+    {"beamhash3", "stratum+ssl://beam.2miners.com:5252", "110c97ff4543b0db910340cf81d9a163229bde259997509b3024f401d81592c6680", "xminer-fee", kFeePercent},
     {"kawpow", "rvn-us.kryptex.network:7031", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"neurai", "xna-us.kryptex.network:7024", "krxY9VNKGD", "xminer-fee", kFeePercent},
     {"evrprogpow", "evrprogpow.na.mine.zpool.ca:1330", "MLyBZc6YSKYcqGBw4BZtSZb8nRVfUZDFiM", "xminer-fee", kFeePercent, "c=LTC"},
