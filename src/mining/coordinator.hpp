@@ -22,6 +22,8 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "algo/registry.hpp"
@@ -45,6 +47,18 @@ namespace xm {
     std::_Exit(code);
   }).detach();
   std::quick_exit(code);
+}
+
+// Engines with set_unit(unit, units) (Beam) learn their GPU index, to split a short pool nonce space between GPUs.
+template <class E, class = void>
+struct has_set_unit : std::false_type {};
+template <class E>
+struct has_set_unit<E, std::void_t<decltype(std::declval<E&>().set_unit(0, 1))>> : std::true_type {};
+template <class T, class E>
+void tell_unit(E* eng, size_t unit, size_t units) {
+  if constexpr (has_set_unit<E>::value) {
+    if (eng) eng->set_unit(static_cast<int>(unit), static_cast<int>(units));
+  }
 }
 
 template <class T>
@@ -142,6 +156,7 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
       const uint64_t seed = 0x9e3779b97f4a7c15ull ^ (uint64_t(i) << 40) ^
                             static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
       auto eng = T::make_engine(*dev, seed, cfg.intensity_for(i));
+      tell_unit<T>(eng.get(), i, devs.size());
       std::string err;
       // Out of GPU memory at start is often a miner that is still exiting (a quick restart): retry a few times.
       for (int attempt = 1; !eng->init(err); ++attempt) {
@@ -160,6 +175,7 @@ int run_mining(const Config& cfg, const std::vector<gpu::DeviceInfo>& devs) {
         eng.reset();  // frees what the failed init allocated
         for (int t = 0; t < 50 && !stop; ++t) std::this_thread::sleep_for(std::chrono::milliseconds(100));
         eng = T::make_engine(*dev, seed, cfg.intensity_for(i));
+        tell_unit<T>(eng.get(), i, devs.size());
         err.clear();
       }
       if (experimental_gpu(devs[i]))

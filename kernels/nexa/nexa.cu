@@ -484,6 +484,31 @@ __device__ __forceinline__ void madd(u32 X[9], u32 Y[9], u32 Z[9], const u32 x2[
   fe_sub(Y, t1, t3);
 }
 
+#ifdef NEXA_XYZZ
+// (X, Y, ZZ, ZZZ) += (x2, y2) affine in XYZZ coordinates (x = X / ZZ, y = Y / ZZZ; madd-2008-s, 8M + 2S against
+// madd-2007-bl's 8M + 3S); all m1 in and out. Same unhandled equal / opposite cases as madd.
+__device__ __forceinline__ void madd_xyzz(u32 X[9], u32 Y[9], u32 ZZ[9], u32 ZZZ[9], const u32 x2[9], const u32 y2[9]) {
+  u32 t0[9], t1[9], t2[9], t3[9], t4[9];
+  fe_mul(t0, x2, ZZ);
+  fe_sub(t0, t0, X);     // P = x2 ZZ - X
+  fe_mul(t1, y2, ZZZ);
+  fe_sub(t1, t1, Y);     // R = y2 ZZZ - Y
+  fe_sqr(t2, t0);        // PP
+  fe_mul(t3, t0, t2);    // PPP
+  fe_mul(t4, X, t2);     // Q = X PP
+  fe_mul(ZZ, ZZ, t2);    // ZZ3 = ZZ PP
+  fe_mul(ZZZ, ZZZ, t3);  // ZZZ3 = ZZZ PPP
+  fe_sqr(t0, t1);
+  fe_sub(t0, t0, t3);
+  fe_sub(t0, t0, t4);
+  fe_sub(X, t0, t4);     // X3 = R^2 - PPP - 2 Q
+  fe_sub(t4, t4, X);
+  fe_mul(t4, t1, t4);    // R (Q - X3)
+  fe_mul(t3, Y, t3);     // Y PPP
+  fe_sub(Y, t4, t3);     // Y3
+}
+#endif
+
 // (X, Y, Z) = 2 (X, Y, Z) (dbl-2009-l, a = 0); X, Y m1, Z m2 in and out.
 __device__ __forceinline__ void jdouble(u32 X[9], u32 Y[9], u32 Z[9]) {
   u32 A[9], B[9], C[9], D[9], E[9], t[9];
@@ -512,6 +537,9 @@ __device__ __forceinline__ void jdouble(u32 X[9], u32 Y[9], u32 Z[9]) {
   fe_sub(Y, t, C);      // Y3
 }
 
+// NEXA_XYZZ: the additions run in XYZZ coordinates and the result is returned as (X ZZZ, Y ZZ, ZZ ZZZ), so that
+// x = X' / Z' and y = Y' / Z' (one multiply each by the shared inverse in stage 2; R.y's Legendre symbol is still that
+// of Y' Z'). Without it, Jacobian: x = X / Z^2, y = Y / Z^3.
 // k G with the signed W-bit comb: digit i (window i plus the carry from below) in [-2^(W-1) + 1, 2^(W-1)] picks
 // table entry |d| of window i (8 x 32-bit affine x, y), negated for d < 0. NW windows cover 256 bits plus the last
 // carry.
@@ -521,6 +549,11 @@ __device__ __forceinline__ void comb_mul(u32 X[9], u32 Y[9], u32 Z[9], const u32
   u32 ks[8];  // the scalar, shifted down by W bits per window (no dynamically indexed arrays)
 #pragma unroll
   for (int m = 0; m < 9; ++m) { X[m] = 0u; Y[m] = 0u; Z[m] = m ? 0u : 1u; }
+#ifdef NEXA_XYZZ
+  u32 ZZZ[9];  // Z holds ZZ
+#pragma unroll
+  for (int m = 0; m < 9; ++m) ZZZ[m] = m ? 0u : 1u;
+#endif
 #pragma unroll
   for (int m = 0; m < 8; ++m) ks[m] = k[m];
 #pragma unroll 1
@@ -560,10 +593,23 @@ __device__ __forceinline__ void comb_mul(u32 X[9], u32 Y[9], u32 Z[9], const u32
         fe_copy(Y, y2);
         first = false;
       } else {
+#ifdef NEXA_XYZZ
+        madd_xyzz(X, Y, Z, ZZZ, x2, y2);
+#else
         madd(X, Y, Z, x2, y2);
+#endif
       }
     }
   }
+#ifdef NEXA_XYZZ
+  {
+    u32 t[9];
+    fe_mul(t, X, ZZZ);
+    fe_mul(Y, Y, Z);
+    fe_mul(Z, Z, ZZZ);
+    fe_copy(X, t);
+  }
+#endif
 }
 
 // Legendre symbol (a / p) = 1 for a canonical, nonzero a, by Bernstein-Yang "posdivsteps" with Jacobi tracking
@@ -1057,7 +1103,15 @@ __device__ __forceinline__ void nexa_stage2_sig(const Params& p, u32 tid, u32 x[
                                                 u32* __restrict__ found,
                                                 u32 maxf, u32* __restrict__ dbg) {
   // ---- affine P.x, parity of P.y, R.x ----
-  u32 zi2[9], t[9], px9[9], rx9[9];
+  u32 t[9], px9[9], rx9[9];
+#ifdef NEXA_XYZZ
+  fe_mul(px9, PX, izp);
+  fe_mul(t, PY, izp);
+  fe_canon(t);
+  const u32 pyodd = t[0] & 1u;
+  fe_mul(rx9, RX, izr);
+#else
+  u32 zi2[9];
   fe_sqr(zi2, izp);
   fe_mul(px9, PX, zi2);
   fe_mul(t, zi2, izp);
@@ -1066,6 +1120,7 @@ __device__ __forceinline__ void nexa_stage2_sig(const Params& p, u32 tid, u32 x[
   const u32 pyodd = t[0] & 1u;
   fe_sqr(zi2, izr);
   fe_mul(rx9, RX, zi2);
+#endif
 
   // ---- k -> n - k unless R.y is a quadratic residue ----
   if (!qr) sc_neg(kk, kk);

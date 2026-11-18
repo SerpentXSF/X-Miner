@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -65,8 +66,10 @@ class BeamPool {
     std::string job_id;
     int tag;
     double work;
+    std::chrono::steady_clock::time_point sent;
   };
   std::deque<Pending> pending_;
+  void expire_pending();  // mu_ held: shares with no reply after 60 s count as stale
   std::vector<std::string> outbox_;
 };
 

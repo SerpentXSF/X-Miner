@@ -63,7 +63,7 @@ bool beam_parse_job(const std::string& json_line, beam::Job& out) {
   if (out.id.empty() || !hex_vec(j["input"].get<std::string>(), in) || in.size() != 32) return false;
   std::copy(in.begin(), in.end(), out.input.begin());
   const uint64_t d = j["difficulty"].get<uint64_t>();
-  if (d > 0xffffffffull || (d >> 24) > 232) return false;
+  if (d > (232ull << 24)) return false;  // order 232 with a zero mantissa is the largest finite target
   out.difficulty = static_cast<uint32_t>(d);
   out.height = j.contains("height") && j["height"].is_number_unsigned() ? j["height"].get<uint64_t>() : 0;
   return true;
@@ -108,16 +108,27 @@ void BeamPool::submit(const beam::Share& s, int tag) {
                   {"nonce", to_hex(s.nonce.data(), s.nonce.size())},
                   {"output", to_hex(s.solution.data(), s.solution.size())},
                   {"jsonrpc", "2.0"}};
-  pending_.push_back({s.job_id, tag, s.work});
+  expire_pending();
+  pending_.push_back({s.job_id, tag, s.work, std::chrono::steady_clock::now()});
   if (std::getenv("XM_BEAM_WIRE")) info("WIRE", "-> " + m.dump());  // developer
   outbox_.push_back(m.dump());
+}
+
+void BeamPool::expire_pending() {
+  const auto now = std::chrono::steady_clock::now();
+  while (!pending_.empty()) {
+    const Pending& p = pending_.front();
+    if (now - p.sent < std::chrono::seconds(60)) break;
+    on_result_(false, "no reply from the pool (stale)", p.job_id, p.tag, p.work);
+    pending_.pop_front();
+  }
 }
 
 void BeamPool::handle(const std::string& line) {
   if (std::getenv("XM_BEAM_WIRE")) info("WIRE", "<- " + line.substr(0, 600));  // developer
   json m = json::parse(line, nullptr, false);
   if (m.is_discarded() || !m.is_object()) return;
-  const std::string method = m.value("method", "");
+  const std::string method = m.contains("method") && m["method"].is_string() ? m["method"].get<std::string>() : "";
   const std::string id = id_string(m);
   if (method == "job") {
     beam::Job j;
@@ -151,7 +162,8 @@ void BeamPool::handle(const std::string& line) {
   }
   if (method != "result") return;
   const int code = m.contains("code") && m["code"].is_number_integer() ? m["code"].get<int>() : 0;
-  const std::string desc = m.value("description", "");
+  const std::string desc =
+      m.contains("description") && m["description"].is_string() ? m["description"].get<std::string>() : "";
   if (id == "login") {
     if (code < 0) {
       error("POOL", "login failed: " + (desc.empty() ? line : desc));
@@ -180,6 +192,7 @@ void BeamPool::handle(const std::string& line) {
     if (it == pending_.end()) return;
     pd = *it;
     pending_.erase(it);
+    expire_pending();
   }
   const bool ok = code == 1;
   on_result_(ok, ok ? std::string() : code == 3 ? "job expired" : (desc.empty() ? line : desc), pd.job_id, pd.tag, pd.work);

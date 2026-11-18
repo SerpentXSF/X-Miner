@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0 (2026-11-18)
+
+- Nexa on AMD: the comb's point additions use XYZZ coordinates (8 multiplies + 2 squarings instead of 8 + 3), and the
+  points leave kernel b in a form whose affine x and y are one multiply each. RX 9070 XT at -30% power (237 W) 57.1 -> 59.2
+  MH/s (+3.7%), at stock 64.3 -> 64.7; Kryptex accepted the shares in a live test. NVIDIA keeps its generated kernel. `XM_NEXA_XYZZ=0` turns it off.
+- Beam: the nonce split between GPUs (0.4.0c) now uses each GPU's index and only as many nonce bits as the GPU count
+  needs (none on a single GPU), so it holds for any number of GPUs and after out-of-memory start-up retries, and a
+  single GPU keeps the full nonce range of a pool with a 6-byte prefix.
+- Beam pool: a share with no reply after 60 s is counted as stale instead of waiting forever; a pool message whose
+  `method` or `description` is not a string no longer drops the reply; jobs with an impossible difficulty (order 232
+  with a non-zero mantissa) are refused.
+- Beam now also confirmed live from an RX 9070 XT: 2Miners accepted 58 of 58 shares in 10 minutes.
+
 ## 0.4.0c (2026-11-17)
 
 - Beam on rigs with several GPUs: when the pool leaves 4 bytes of the nonce or fewer, each GPU searches its own part

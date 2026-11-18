@@ -1,7 +1,6 @@
 #include "algo/beam/beam_gpu.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -29,9 +28,12 @@ constexpr uint32_t kWk4 = 12, kRef5 = 3;
 
 }  // namespace
 
-Engine::Engine(gpu::Device& dev, uint64_t seed) : dev_(dev), rng_(seed * 0x9e3779b97f4a7c15ull + 1) {
-  static std::atomic<unsigned> engines{0};  // one engine per GPU: distinct tags for up to 16 GPUs
-  unit_tag_ = engines.fetch_add(1) & 15;
+Engine::Engine(gpu::Device& dev, uint64_t seed) : dev_(dev), rng_(seed * 0x9e3779b97f4a7c15ull + 1) {}
+
+void Engine::set_unit(int unit, int units) {
+  unit_tag_ = unit < 0 ? 0u : unsigned(unit);
+  tag_bits_ = 0;
+  while (tag_bits_ < 16 && (1 << tag_bits_) < units) ++tag_bits_;
 }
 
 Engine::~Engine() {
@@ -207,9 +209,12 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   const size_t np = std::min<size_t>(job_.nonce_prefix.size(), 8);
   std::copy(job_.nonce_prefix.begin(), job_.nonce_prefix.begin() + np, nonce.begin());
   uint64_t c = counter_++;
-  if (np >= 4 && np < 8) {  // 4 free bytes or fewer: the top 4 bits are this GPU's, so GPUs never try the same nonce
-    const unsigned bits = unsigned(8 * (8 - np));
-    c = (c & ((uint64_t(1) << (bits - 4)) - 1)) | (uint64_t(unit_tag_) << (bits - 4));
+  if (np >= 4 && np < 8 && tag_bits_ > 0) {
+    // 4 free bytes or fewer: the top bits carry this GPU's index (as many bits as the GPU count needs, at most all but
+    // 8 of the free bits), so the GPUs search disjoint nonce ranges.
+    const unsigned bits = unsigned(8 * (8 - np)), tb = std::min(tag_bits_, bits - 8);
+    const uint64_t tag = uint64_t(unit_tag_) & ((uint64_t(1) << tb) - 1);
+    c = (c & ((uint64_t(1) << (bits - tb)) - 1)) | (tag << (bits - tb));
   }
   for (size_t i = np; i < 8; ++i) nonce[i] = static_cast<uint8_t>(c >> (8 * (7 - i)));
   std::vector<Solution> sols;

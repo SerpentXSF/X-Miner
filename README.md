@@ -201,7 +201,7 @@ RX 9070 XT at a -30% power limit (~237 W), RTX 3060 at its stock 170 W, X-Miner'
 | FishHash (Iron Fish) / KarlsenHashV2 | 25.9 MH/s | 27.5 MH/s @ 140 W | 0.4.0 (0.3.0: 23.5) |
 | XelisHashV3 (Xelis) | 5.0 kH/s @ ~170 W | 4.49 kH/s @ 112 W | published: RTX 3060 5.5 kH/s, RTX 4090 15 kH/s |
 | QHash (Qubitcoin) | 2.51 GH/s | 0.96 GH/s @ 147 W | published: RTX 3060 0.70 GH/s, RTX 3070 1.14 GH/s |
-| NexaPow (Nexa) | 64.3 MH/s @ 339 W | 33.3 MH/s @ 168 W | lolMiner: ~95 / ~50; a 1.6 / 5.9 GB table is built on the GPU at start |
+| NexaPow (Nexa) | 64.7 MH/s @ 340 W | 33.3 MH/s @ 168 W | lolMiner: ~95 / ~50; a 1.6 / 5.9 GB table is built on the GPU at start |
 | BeamHash III (Beam) | 38.1 Sol/s @ 274 W | 20.7 Sol/s @ 99 W | 0.4.0; needs ~6 GB of GPU memory |
 | Cuckaroo29 (Tari) | 10.75 g/s @ ~300 W | 4.41 g/s @ 99 W | 0.4.0; lolMiner: ~14 / ~4-5 |
 | BLAKE2b | 4.63 GH/s | 1.97 GH/s | |

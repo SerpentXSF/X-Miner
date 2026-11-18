@@ -48,6 +48,8 @@ class Engine {
   // One run of the current job. Returns the verified solutions found (the miner's Sol/s), 0 on error.
   double iterate(std::vector<Share>& shares, std::string& err);
   uint64_t cpu_rejects() const { return cpu_rejects_; }
+  // This engine's GPU index among `units` GPUs: with a short pool nonce space each GPU gets its own range.
+  void set_unit(int unit, int units);
 
   static constexpr uint32_t kTpb = 256;   // beam_gen
   static constexpr uint32_t kMaxFound = 64;
@@ -65,7 +67,7 @@ class Engine {
   Job job_;
   bool have_job_ = false;
   uint64_t counter_ = 0, cpu_rejects_ = 0;
-  unsigned unit_tag_ = 0;  // distinct per engine (mod 16): keeps GPUs apart in a short nonce space
+  unsigned unit_tag_ = 0, tag_bits_ = 0;  // this GPU's index and how many nonce bits carry it (set_unit)
 };
 
 }  // namespace xm::beam

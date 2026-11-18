@@ -164,7 +164,12 @@ bool Engine::init(std::string& err) {
     // XM_NEXA_SCAN=0.
     scan_ = split_;
     if (const char* e = std::getenv("XM_NEXA_SCAN")) scan_ = split_ && std::string(e) != "0";
-    std::string src = "#define TPB " + std::to_string(tpb_) + "\n#define W " + std::to_string(w_) + "\n#define NW " +
+    // XYZZ point additions (8M + 2S instead of 8M + 3S) on AMD; never with the generated kernel b, which writes
+    // Jacobian points. Developer: XM_NEXA_XYZZ=0/1.
+    bool xyzz = dev_.info().vendor == gpu::Vendor::Amd;
+    if (const char* e = std::getenv("XM_NEXA_XYZZ")) xyzz = std::string(e) != "0";
+    xyzz = xyzz && !want_gen;
+    std::string src = std::string(xyzz ? "#define NEXA_XYZZ\n" : "") + "#define TPB " + std::to_string(tpb_) + "\n#define W " + std::to_string(w_) + "\n#define NW " +
                       std::to_string(nw) + "\n#define MINB " + std::to_string(minb) + "\n#define MINB_C " +
                       std::to_string(minb_c) + "\n" + (split_ ? "#define XM_NEXA_SPLIT\n" : "") +
                       (scan_ ? "#define NEXA_SCAN\n" : "") + (want_gen ? "" : "#define NEXA_WM\n") + kernel;
