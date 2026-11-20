@@ -140,6 +140,40 @@ extern "C" __global__ void xm_noise_perm(Key8 key, uint32_t side_b, uint32_t k, 
   }
 }
 
+// One launch for everything A's noise needs before xm_apply_noise (batched mining: every kernel boundary costs ~10 us,
+// more than this work): blocks [0, nb_uni) fill the uniform matrix, [nb_uni, nb_uni + nb_perm) the index pairs, and the
+// last block copies the staged 1 KB nonce chunk into A. Block size 256.
+extern "C" __global__ void xm_noise_prep(Key8 key, uint32_t nhash, int8_t* __restrict__ uni, uint32_t k, uint32_t rank,
+                                         uint32_t* __restrict__ pairs, const uint4* __restrict__ chunk_src,
+                                         uint4* __restrict__ chunk_dst, uint32_t nb_uni, uint32_t nb_perm) {
+  const uint32_t b = blockIdx.x;
+  if (b < nb_uni) {
+    const uint32_t h = b * 256 + threadIdx.x;
+    if (h >= nhash) return;
+    uint32_t d[8];
+    noise_hash(key, h, 0, 0, d);
+#pragma unroll
+    for (int i = 0; i < 8; ++i)
+#pragma unroll
+      for (int j = 0; j < 4; ++j) uni[(size_t)h * 32 + i * 4 + j] = (int8_t)((int)((d[i] >> (8 * j)) & 63) - 32);
+  } else if (b < nb_uni + nb_perm) {
+    const uint32_t h = (b - nb_uni) * 256 + threadIdx.x;
+    if (h * 8 >= k) return;
+    uint32_t d[8];
+    noise_hash(key, h, 1, 0, d);
+#pragma unroll
+    for (int j = 0; j < 8; ++j) {
+      const uint32_t l = h * 8 + j;
+      if (l >= k) break;
+      const uint32_t u = d[j], first = u & (rank - 1), mulhi = (uint32_t)(((uint64_t)(rank - 1) * u) >> 32);
+      pairs[2 * l] = first;
+      pairs[2 * l + 1] = first ^ (1 + mulhi);
+    }
+  } else if (threadIdx.x < 64) {
+    chunk_dst[threadIdx.x] = chunk_src[threadIdx.x];
+  }
+}
+
 // Packed fragment-major layout used by the GEMM (see pearl.hip): for 16-row block rb and 32-k pair kp, 512
 // contiguous bytes; lane l holds row (rb*16 + l%16), k in [kp*32 + 8*(l/16), +8) then [kp*32 + 16 + 8*(l/16), +8).
 XM_DEV size_t packed_offset(uint32_t row, uint32_t k, uint32_t K) {
@@ -152,23 +186,22 @@ XM_DEV size_t packed_offset(uint32_t row, uint32_t k, uint32_t K) {
 // k-bytes. A GEMM stage (128 k) then reads whole slabs instead of 128-384 rows 4 KB apart: fewer pages and DRAM
 // rows per stage. Must match the GEMM in pearl.cu.
 XM_DEV size_t tiled_offset(uint32_t row, uint32_t k, uint32_t K) {
+#ifdef XM_PEARL_PRESWZ  // 16-byte chunk c of row r stored at chunk c ^ (r & 7): the GEMM's shared-memory order
+  return ((size_t)(row >> 7) * (K >> 7) + (k >> 7)) * 16384 + (row & 127) * 128 + ((((k & 127) >> 4) ^ (row & 7)) << 4) + (k & 15);
+#else
   return ((size_t)(row >> 7) * (K >> 7) + (k >> 7)) * 16384 + (row & 127) * 128 + (k & 127);
+#endif
 }
 
 // X' = X + U[row][p0[l]] - U[row][p1[l]], written in the packed layout. One thread per (row, 8 consecutive k).
-extern "C" __global__ void xm_apply_noise(const int8_t* __restrict__ sig, const int8_t* __restrict__ uni,
-                                          const uint32_t* __restrict__ pairs, int8_t* __restrict__ packed,
-                                          uint32_t rows, uint32_t K, uint32_t rank) {
-  // 32-bit indexing (rows * K / 8 < 2^32 for any Pearl shape we use): a 64-bit division per thread is slow on GPUs.
-  const uint32_t t = blockIdx.x * blockDim.x + threadIdx.x, groups = K / 8;
-  if (t >= rows * groups) return;
-  const uint32_t row = t / groups, k0 = (t - row * groups) * 8;
-  const uint2 sv = *reinterpret_cast<const uint2*>(sig + (size_t)row * K + k0);  // 8 signal bytes at once
-  const uint4* pp = reinterpret_cast<const uint4*>(pairs + 2 * k0);              // their 8 (p0, p1) pairs
+// Eight noised bytes: X'[l] = X[l] + u[p0[l]] - u[p1[l]] for 8 consecutive l. sig8: the 8 signal bytes, pp: their
+// 8 (p0, p1) index pairs, u: the row's uniform line.
+XM_DEV uint2 apply_noise_8(const int8_t* __restrict__ sig8, const uint32_t* __restrict__ pairs8, const int8_t* __restrict__ u) {
+  const uint2 sv = *reinterpret_cast<const uint2*>(sig8);
+  const uint4* pp = reinterpret_cast<const uint4*>(pairs8);
   const uint4 q0 = pp[0], q1 = pp[1], q2 = pp[2], q3 = pp[3];
   const uint32_t idx[16] = {q0.x, q0.y, q0.z, q0.w, q1.x, q1.y, q1.z, q1.w,
                             q2.x, q2.y, q2.z, q2.w, q3.x, q3.y, q3.z, q3.w};
-  const int8_t* u = uni + (size_t)row * rank;
   uint32_t out[2] = {0, 0};
 #pragma unroll
   for (int i = 0; i < 8; ++i) {
@@ -177,13 +210,38 @@ extern "C" __global__ void xm_apply_noise(const int8_t* __restrict__ sig, const 
     const uint32_t v = (uint32_t)(uint8_t)(int8_t)(s + u[idx[2 * i]] - u[idx[2 * i + 1]]);
     out[i >> 2] |= v << (8 * (i & 3));
   }
+  return make_uint2(out[0], out[1]);
+}
+
+// X' = X + U[row][p0[l]] - U[row][p1[l]] for task t = (row, 8 consecutive k), written in the GEMM layout.
+XM_DEV void apply_noise_task(const int8_t* __restrict__ sig, const int8_t* __restrict__ uni,
+                             const uint32_t* __restrict__ pairs, int8_t* __restrict__ packed, uint32_t t, uint32_t K,
+                             uint32_t rank) {
+  const uint32_t groups = K / 8, row = t / groups, k0 = (t - row * groups) * 8;
+  const uint2 v = apply_noise_8(sig + (size_t)row * K + k0, pairs + 2 * k0, uni + (size_t)row * rank);
 #ifdef XM_PEARL_ROWMAJOR
   int8_t* dst = packed + tiled_offset(row, k0, K);  // NVIDIA: tiled K-major slabs (k0..k0+7 in one slab row)
 #else
   // k0..k0+7 stay inside one 8-byte-aligned run of the packed layout.
   int8_t* dst = packed + packed_offset(row, k0, K);
 #endif
-  *reinterpret_cast<uint2*>(dst) = make_uint2(out[0], out[1]);
+  *reinterpret_cast<uint2*>(dst) = v;
+}
+
+// One thread per (row, 8 consecutive k).
+extern "C" __global__ void xm_apply_noise(const int8_t* __restrict__ sig, const int8_t* __restrict__ uni,
+                                          const uint32_t* __restrict__ pairs, int8_t* __restrict__ packed,
+                                          uint32_t rows, uint32_t K, uint32_t rank) {
+  // 32-bit indexing (rows * K / 8 < 2^32 for any Pearl shape we use): a 64-bit division per thread is slow on GPUs.
+  const uint32_t t = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t >= rows * (K / 8)) return;
+  apply_noise_task(sig, uni, pairs, packed, t, K, rank);
+}
+
+// Copies one 1 KB nonce chunk (staged by the host) into A: 64 threads x 16 bytes. Lets the host queue several passes
+// without a synchronous upload between them.
+extern "C" __global__ void xm_copy_chunk(const uint4* __restrict__ src, uint4* __restrict__ dst) {
+  if (threadIdx.x < 64) dst[threadIdx.x] = src[threadIdx.x];
 }
 
 XM_DEV bool u256_le(const uint32_t a[8], const U256w& b) {

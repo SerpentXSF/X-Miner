@@ -32,6 +32,11 @@ Key8 key8(const Hash& h) {
   return k;
 }
 
+uint32_t diag_repeat() {
+  static const uint32_t r = std::getenv("XM_PEARL_DIAG_REPEAT") ? std::max(1, std::atoi(std::getenv("XM_PEARL_DIAG_REPEAT"))) : 1;
+  return r;
+}
+
 unsigned blocks(size_t threads, unsigned bs) { return static_cast<unsigned>((threads + bs - 1) / bs); }
 
 }  // namespace
@@ -70,7 +75,7 @@ Engine::Engine(gpu::Device& dev, uint32_t m, uint32_t n, uint64_t seed) : dev_(d
 }
 
 Engine::~Engine() {
-  for (gpu::DevPtr p : {d_a_, d_bt_, d_ap_, d_bp_, d_uni_, d_pairs_, d_cvs_, d_out_, d_found_, d_wave_}) dev_.free(p);
+  for (gpu::DevPtr p : {d_a_, d_bt_, d_ap_, d_bp_, d_uni_, d_pairs_, d_cvs_, d_out_, d_found_, d_wave_, d_stage_, d_scratch_, d_passes_}) dev_.free(p);
 }
 
 void Engine::fill_random(int8_t* p, size_t n) {
@@ -92,7 +97,9 @@ bool Engine::init(std::string& err) {
     err = "matrix rows must be a multiple of 128 and columns of 256";
     return false;
   }
-  if (cfg_.k < 2048 || cfg_.k % 2048) {  // the kernels' chunk and transcript loops (XM_PEARL_K is a developer setting)
+  // The NVIDIA Ampere+ kernels fold any multiple of 128 k; XM_PEARL_K=1024 (consensus minimum) is a developer setting.
+  const bool nv_mma = dev_.info().vendor == gpu::Vendor::Nvidia && !nv_simt();
+  if (nv_mma ? (cfg_.k < 1024 || cfg_.k % 1024) : (cfg_.k < 2048 || cfg_.k % 2048)) {  // the kernels' chunk and transcript loops (XM_PEARL_K is a developer setting)
     err = "Pearl k must be a multiple of 2048";
     return false;
   }
@@ -112,9 +119,16 @@ bool Engine::init(std::string& err) {
   d_pairs_ = dev_.alloc(size_t(k) * 2 * 4);
   d_cvs_ = dev_.alloc(std::max(sa, sb) / 1024 * 32);
   d_out_ = dev_.alloc(256);  // unused by the fused path; kept non-null for allocation checks
-  d_found_ = dev_.alloc((1 + kMaxFound * kRecWords) * 4);
-  d_wave_ = dev_.alloc(4);  // NVIDIA: wave start counter of the persistent GEMM
-  if (!d_a_ || !d_bt_ || !d_ap_ || !d_bp_ || !d_uni_ || !d_pairs_ || !d_cvs_ || !d_out_ || !d_found_ || !d_wave_) {
+  if (const char* e = std::getenv("XM_PEARL_BATCH")) batch_ = static_cast<uint32_t>(std::max(1, std::atoi(e)));
+  if (dev_.info().vendor != gpu::Vendor::Nvidia || nv_simt()) batch_ = 1;
+  d_found_ = dev_.alloc(std::max<size_t>((1 + kMaxFound * kRecWords) * 4, size_t(batch_) * (1 + kBatchFound * kRecWords) * 4));
+  d_wave_ = dev_.alloc(8 * size_t(batch_) * diag_repeat());
+  if (const char* e = std::getenv("XM_PEARL_NV_KERNEL")) nv_kernel_env_ = e;
+  fused_ = std::getenv("XM_PEARL_FUSED") != nullptr && batch_ > 1;  // one launch per batch (needs the w8 kernel build)
+  d_passes_ = dev_.alloc(64 * size_t(batch_));  // developer: force the mining GEMM entry point
+  d_stage_ = dev_.alloc(1024 * size_t(batch_));
+  d_scratch_ = dev_.alloc(size_t(2) << 20);  // NVIDIA GEMM: transcript hand-off buffers of the hash warp (unused otherwise)  // NVIDIA: wave start counter of the persistent GEMM
+  if (!d_a_ || !d_bt_ || !d_ap_ || !d_bp_ || !d_uni_ || !d_pairs_ || !d_cvs_ || !d_out_ || !d_found_ || !d_wave_ || !d_stage_ || !d_scratch_ || !d_passes_) {
     err = "out of GPU memory (" + dev_.last_error() + ")";
     return false;
   }
@@ -122,7 +136,9 @@ bool Engine::init(std::string& err) {
     err = dev_.last_error();
     return false;
   }
-  return check_gemm(err);
+  if (!check_gemm(err)) return false;
+  if (!nv_kernel_env_.empty()) nv_gemm_ = nv_kernel_env_.c_str();
+  return true;
 }
 
 // Launches `kernel` with the GEMM's geometry for this GPU (AMD: workgroups of 2x4 waves; NVIDIA before Ampere: one
@@ -134,13 +150,14 @@ bool Engine::launch_gemm(const char* kernel, void** args, int M, int N) {
 }
 
 // NVIDIA Ampere and newer: the persistent GEMM, one block per SM (8 math warps + 1 copy warp), 96 KB of shared memory.
-bool Engine::launch_nv(const char* kernel, void** args, int M, int N, unsigned max_grid) {
+bool Engine::launch_nv(const char* kernel, void** args, int M, int N, unsigned max_grid, bool reset_wave) {
   const unsigned tiles = (unsigned(M) / kNvBm) * (unsigned(N) / kNvBn), sms = static_cast<unsigned>(dev_.info().compute_units);
   unsigned grid = std::min(tiles, sms > 0 ? sms : 1u);
   if (max_grid) grid = std::min(grid, max_grid);
-  const unsigned threads = (kNvBm / kNvWm) * (kNvBn / 64) * 32 + 32;
+  // xm_pearl_gemm_w8 has no copy warp (256 threads); the others add one (288).
+  const unsigned threads = (kNvBm / kNvWm) * (kNvBn / 64) * 32 + (std::string(kernel) == "xm_pearl_gemm_w8" ? 0 : 32);
   const unsigned shared = kNvStages * (kNvBm + kNvBn) * kNvBk;
-  return dev_.memset(d_wave_, 0, 4) && dev_.launch(kernel, grid, 1, 1, threads, 1, 1, shared, args);
+  return (!reset_wave || dev_.memset(d_wave_, 0, 4)) && dev_.launch(kernel, grid, 1, 1, threads, 1, 1, shared, args);
 }
 
 // NVIDIA Ampere and newer have two GEMMs (kernels/pearl/pearl.cu): 2 stages of 128 k, or 4 of 64 k that read further
@@ -173,8 +190,8 @@ bool Engine::choose_nv_stages(std::string& err) {
   Key8 seed{};
   U256w bw{};
   uint32_t maxf = 0;
-  void* g1[] = {&da, &db, &o1, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_};
-  void* g2[] = {&da, &db, &o2, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_};
+  void* g1[] = {&da, &db, &o1, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_, &d_scratch_};
+  void* g2[] = {&da, &db, &o2, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_, &d_scratch_};
   if (!launch_nv("xm_pearl_gemm", g1, M, N, 2) || !dev_.sync()) {
     err = "Pearl kernel check: " + dev_.last_error();
     release();
@@ -213,7 +230,7 @@ bool Engine::choose_nv_stages(std::string& err) {
   int Mt = static_cast<int>(std::min<uint32_t>(m_, 4096)), Nt = static_cast<int>(std::min<uint32_t>(n_, 16384)),
       Kt = static_cast<int>(cfg_.k);
   gpu::DevPtr no_out = 0;
-  void* t[] = {&d_a_, &d_bt_, &no_out, &Mt, &Nt, &Kt, &seed, &bw, &d_found_, &maxf, &d_wave_};
+  void* t[] = {&d_a_, &d_bt_, &no_out, &Mt, &Nt, &Kt, &seed, &bw, &d_found_, &maxf, &d_wave_, &d_scratch_};
   auto run_ms = [&](const char* kernel, int reps) {
     const auto t0 = std::chrono::steady_clock::now();
     for (int r = 0; r < reps; ++r)
@@ -285,8 +302,8 @@ bool Engine::check_gemm(std::string& err) {
   Key8 seed{};
   U256w bw{};
   uint32_t maxf = 0;
-  void* g1[] = {&da, &db, &o1, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_};
-  void* g2[] = {&da, &db, &o2, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_};
+  void* g1[] = {&da, &db, &o1, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_, &d_scratch_};
+  void* g2[] = {&da, &db, &o2, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_, &d_scratch_};
   if (!launch_gemm(gemm_, g1, M, N) || !dev_.sync()) {
     err = "Pearl kernel check: " + dev_.last_error();
     release();
@@ -317,7 +334,7 @@ bool Engine::check_gemm(std::string& err) {
   int Mt = static_cast<int>(std::min<uint32_t>(m_, 4096)), Nt = static_cast<int>(std::min<uint32_t>(n_, 8192)),
       Kt = static_cast<int>(cfg_.k);
   gpu::DevPtr no_out = 0;
-  void* t1[] = {&d_ap_, &d_bp_, &no_out, &Mt, &Nt, &Kt, &seed, &bw, &d_found_, &maxf, &d_wave_};
+  void* t1[] = {&d_ap_, &d_bp_, &no_out, &Mt, &Nt, &Kt, &seed, &bw, &d_found_, &maxf, &d_wave_, &d_scratch_};
   auto best_ms = [&](const char* kernel) {
     double best = 1e30;
     for (int r = 0; r < 3; ++r) {
@@ -403,6 +420,7 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
     err = "no job";
     return 0;
   }
+  if (batch_ > 1) return iterate_batch(shares, err);
   const uint32_t k = cfg_.k;
   // New nonce chunk: changes A's commitment and therefore both noise seeds' A side.
   nonce_chunk_ = (nonce_chunk_ + 1) % tree_a_.leaves();
@@ -434,7 +452,7 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   U256w bw;
   for (int i = 0; i < 8; ++i) bw.w[i] = bound.w[i];
   gpu::DevPtr no_out = 0;  // fused jackpot check in the GEMM epilogue
-  void* g[] = {&d_ap_, &d_bp_, &no_out, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_};
+  void* g[] = {&d_ap_, &d_bp_, &no_out, &M, &N, &K, &seed, &bw, &d_found_, &maxf, &d_wave_, &d_scratch_};
   std::vector<uint32_t> found(1 + kMaxFound * kRecWords);
   // AMD: 128x256 blocks of 8 waves. NVIDIA: persistent, one block per SM (8 math warps + 1 copy warp) walking
   // 128x256 tiles, 96 KB of dynamic shared memory.
@@ -457,7 +475,15 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
   }
   tp("gemm+check", t_prof);
   if (prof) std::fputc('\n', stderr);
-  uint32_t hits = std::min(found[0], kMaxFound);
+  collect_hits(found.data(), kMaxFound, bound, shares);
+  return double(m_) * double(n_) * double(k);
+}
+
+// Re-verifies the GPU hits of one pass on the CPU reference and turns them into shares. Uses the host state (a_,
+// tree_a_, seeds_) of that pass.
+void Engine::collect_hits(const uint32_t* found, uint32_t max_found, const U256& bound, std::vector<Share>& shares) {
+  const uint32_t k = cfg_.k;
+  uint32_t hits = std::min(found[0], max_found);
   if (hits) {
     U256 block_bound = difficulty_bound(header_nbits(job_.header), cfg_);
     auto perm_a = permutation(Side::A, seeds_.a_noise_seed, k, cfg_.rank);
@@ -517,7 +543,124 @@ double Engine::iterate(std::vector<Share>& shares, std::string& err) {
       shares.push_back(std::move(s));
     }
   }
-  return double(m_) * double(n_) * double(k);
+}
+
+// L2-resident mining (NVIDIA Ampere+): with matrices small enough to stay in the L2 cache a pass takes well under a
+// millisecond, so the host round trip per pass (upload, memset, wait, download) would dominate. A batch queues
+// batch_ passes on the stream with no host synchronisation in between: the nonce chunks are uploaded to a staging
+// buffer first and a tiny kernel copies chunk i into A right before pass i; every pass has its own found[] slot and
+// wave counter. Hits are rare, so the host only rewinds its copy of A and the Merkle tree when a pass reports one.
+double Engine::iterate_batch(std::vector<Share>& shares, std::string& err) {
+  const uint32_t k = cfg_.k, B = batch_;
+  const size_t slot = (1 + kBatchFound * kRecWords) * 4;
+  upd_.resize(B);
+  stage_.resize(size_t(B) * 1024);
+  for (uint32_t i = 0; i < B; ++i) {
+    Update& u = upd_[i];
+    nonce_chunk_ = (nonce_chunk_ + 1) % tree_a_.leaves();
+    u.chunk = nonce_chunk_;
+    int8_t* chunk = a_.data() + u.chunk * 1024;
+    std::memcpy(u.old_data.data(), chunk, 1024);
+    fill_random(chunk, 1024);
+    std::memcpy(u.new_data.data(), chunk, 1024);
+    std::memcpy(stage_.data() + size_t(i) * 1024, chunk, 1024);
+    tree_update_chunk(tree_a_, u.chunk, reinterpret_cast<const uint8_t*>(chunk));
+    u.seeds = commitment_seeds(job_key_, tree_a_.root(), tree_b_.root(), m_, n_, job_.salted);
+  }
+  if (!dev_.upload(d_stage_, stage_.data(), stage_.size()) || !dev_.memset(d_found_, 0, slot * B) ||
+      !dev_.memset(d_wave_, 0, 4 * size_t(B) * diag_repeat())) {
+    err = dev_.last_error();
+    return 0;
+  }
+  int M = static_cast<int>(m_), N = static_cast<int>(n_), K = static_cast<int>(k);
+  uint32_t maxf = kBatchFound;
+  U256 bound = difficulty_bound(job_.share_nbits, cfg_);
+  U256w bw;
+  for (int i = 0; i < 8; ++i) bw.w[i] = bound.w[i];
+  gpu::DevPtr no_out = 0;
+  if (fused_) {
+    // The whole batch in one launch (xm_pearl_mine_w8): noise and GEMM of every pass, no kernel boundaries.
+    std::vector<uint32_t> pw(size_t(B) * 16, 0);
+    for (uint32_t i = 0; i < B; ++i) {
+      const Key8 sk = key8(upd_[i].seeds.a_noise_seed);
+      for (int w = 0; w < 8; ++w) pw[size_t(i) * 16 + w] = sk.w[w];
+      pw[size_t(i) * 16 + 8] = static_cast<uint32_t>(upd_[i].chunk);
+    }
+    uint32_t rank = cfg_.rank, npass = B, slot_words = static_cast<uint32_t>(slot / 4);
+    const unsigned tiles = (unsigned(M) / kNvBm) * (unsigned(N) / kNvBn), sms = static_cast<unsigned>(dev_.info().compute_units);
+    const unsigned grid = std::min(tiles, sms > 0 ? sms : 1u);
+    void* a[] = {&d_a_, &d_ap_, &d_bp_, &d_uni_, &d_pairs_, &M, &N, &K, &rank, &d_passes_, &npass, &d_stage_, &bw, &d_found_, &maxf, &slot_words, &d_wave_, &d_scratch_};
+    if (!dev_.upload(d_passes_, pw.data(), pw.size() * 4) || !dev_.memset(d_wave_, 0, 8 * size_t(B)) ||
+        !dev_.launch("xm_pearl_mine_w8", grid, 1, 1, 256, 1, 1, kNvStages * (kNvBm + kNvBn) * kNvBk, a)) {
+      err = dev_.last_error();
+      return 0;
+    }
+  } else
+  // Developer diagnostic: XM_PEARL_DIAG_REPEAT=R runs every pass's GEMM R times (counted as R passes; only the first is
+  // valid work), which amortises the noise kernels and shows the GEMM's steady rate.
+  {
+  const uint32_t diag_rep = diag_repeat();
+  for (uint32_t i = 0; i < B; ++i) {
+    const Update& u = upd_[i];
+    gpu::DevPtr src = d_stage_ + size_t(i) * 1024, dst = d_a_ + u.chunk * 1024;
+    Key8 seed = key8(u.seeds.a_noise_seed);
+    {
+      // Nonce chunk + A's noise in two launches: prep (uniform matrix, index pairs, chunk copy), then apply.
+      uint32_t r = cfg_.rank, nhash = m_ * r / 32, nb_uni = blocks(nhash, 256), nb_perm = blocks(k / 8, 256), rows = m_, kk = k;
+      void* p1[] = {&seed, &nhash, &d_uni_, &kk, &r, &d_pairs_, &src, &dst, &nb_uni, &nb_perm};
+      void* p2[] = {&d_a_, &d_uni_, &d_pairs_, &d_ap_, &rows, &kk, &r};
+      if (!dev_.launch("xm_noise_prep", nb_uni + nb_perm + 1, 1, 1, 256, 1, 1, 0, p1) ||
+          !dev_.launch("xm_apply_noise", blocks(size_t(rows) * (k / 8), 256), 1, 1, 256, 1, 1, 0, p2)) {
+        err = dev_.last_error();
+        return 0;
+      }
+    }
+    gpu::DevPtr found_i = d_found_ + slot * i, wave_i = d_wave_ + 4 * size_t(i) * diag_rep;
+    void* g[] = {&d_ap_, &d_bp_, &no_out, &M, &N, &K, &seed, &bw, &found_i, &maxf, &wave_i, &d_scratch_};
+    for (uint32_t r = 0; r < diag_rep; ++r, wave_i += 4)
+      if (!launch_nv(nv_gemm_, g, M, N, 0, false)) {
+        err = dev_.last_error();
+        return 0;
+      }
+  }
+  }
+  if (fused_ && std::getenv("XM_DIAG_PHASE")) {  // developer: SM clock cycles per phase (kernel built with XM_DIAG_PHASE)
+    static int n = 0;
+    if (++n == 20) {
+      uint32_t ph[5];
+      dev_.wait();
+      dev_.download(ph, d_scratch_ + 410000 * 4, sizeof ph);
+      const double tot = double(ph[0]) + ph[1] + ph[2] + ph[3] + ph[4];
+      std::fprintf(stderr, "phase cycles per pass: prep %.0f, sync %.0f, apply %.0f, sync %.0f, gemm %.0f (gemm %.1f%%)\n", ph[0] / double(B), ph[1] / double(B), ph[2] / double(B), ph[3] / double(B), ph[4] / double(B), 100.0 * ph[4] / tot);
+    }
+    dev_.memset(d_scratch_ + 410000 * 4, 0, 20);
+  }
+  found_.resize(slot / 4 * B);
+  if (!dev_.wait() || !dev_.download(found_.data(), d_found_, slot * B)) {
+    err = dev_.last_error();
+    return 0;
+  }
+  bool any = false;
+  for (uint32_t i = 0; i < B; ++i) any = any || found_[slot / 4 * i] != 0;
+  if (any) {
+    // Walk the passes backwards, rewinding the host's A and tree to each pass's state, then replay the updates.
+    for (uint32_t i = B; i-- > 0;) {
+      if (found_[slot / 4 * i]) {
+        seeds_ = upd_[i].seeds;
+        collect_hits(&found_[slot / 4 * i], kBatchFound, bound, shares);
+      }
+      if (i > 0) {
+        std::memcpy(a_.data() + upd_[i].chunk * 1024, upd_[i].old_data.data(), 1024);
+        tree_update_chunk(tree_a_, upd_[i].chunk, reinterpret_cast<const uint8_t*>(upd_[i].old_data.data()));
+      }
+    }
+    for (uint32_t i = 1; i < B; ++i) {
+      std::memcpy(a_.data() + upd_[i].chunk * 1024, upd_[i].new_data.data(), 1024);
+      tree_update_chunk(tree_a_, upd_[i].chunk, reinterpret_cast<const uint8_t*>(upd_[i].new_data.data()));
+    }
+  }
+  seeds_ = upd_[B - 1].seeds;
+  return double(m_) * double(n_) * double(k) * B * (fused_ ? 1 : diag_repeat());
 }
 
 }  // namespace xm::pearl

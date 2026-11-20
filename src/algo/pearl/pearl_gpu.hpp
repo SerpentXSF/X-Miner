@@ -60,7 +60,9 @@ class Engine {
   bool launch_gemm(const char* kernel, void** args, int M, int N);  // AMD, or NVIDIA before Ampere
   const char* gemm_ = "xm_pearl_gemm";  // GEMM entry point (AMD, NVIDIA before Ampere)
   const char* nv_gemm_ = "xm_pearl_gemm";  // NVIDIA Ampere+: 128-k stages, or xm_pearl_gemm_bk64 (choose_nv_stages)
-  bool launch_nv(const char* kernel, void** args, int M, int N, unsigned max_grid = 0);  // max_grid 0: one per SM
+  bool launch_nv(const char* kernel, void** args, int M, int N, unsigned max_grid = 0, bool reset_wave = true);
+  double iterate_batch(std::vector<Share>& shares, std::string& err);  // batch_ passes per host round trip
+  void collect_hits(const uint32_t* found, uint32_t max_found, const U256& bound, std::vector<Share>& shares);  // max_grid 0: one per SM
   bool choose_nv_stages(std::string& err);
   unsigned amd_wmw_ = 2, amd_wnw_ = 4;  // AMD waves per workgroup along M and N; must match kernels/pearl/pearl.hip
   bool launch_noise(bool side_b, const Hash& seed, gpu::DevPtr sig, gpu::DevPtr packed, uint32_t rows, std::string& err);
@@ -73,7 +75,7 @@ class Engine {
   std::mt19937_64 rng_;
   std::vector<int8_t> a_, bt_;  // host copies of the signal matrices
   gpu::DevPtr d_a_ = 0, d_bt_ = 0, d_ap_ = 0, d_bp_ = 0, d_uni_ = 0, d_pairs_ = 0, d_cvs_ = 0, d_out_ = 0,
-              d_found_ = 0, d_wave_ = 0;
+              d_found_ = 0, d_wave_ = 0, d_stage_ = 0, d_scratch_ = 0, d_passes_ = 0;
   Job job_;
   bool have_job_ = false;
   Hash job_key_{};
@@ -81,6 +83,18 @@ class Engine {
   Seeds seeds_{};
   uint64_t nonce_chunk_ = 0;
   uint64_t cpu_rejects_ = 0;
+  struct Update {  // one pass of a batch: the nonce chunk it replaced and the seeds that followed
+    uint64_t chunk = 0;
+    std::array<int8_t, 1024> old_data{}, new_data{};
+    Seeds seeds{};
+  };
+  std::vector<Update> upd_;
+  std::vector<int8_t> stage_;
+  std::vector<uint32_t> found_;
+  std::string nv_kernel_env_;
+  bool fused_ = false;  // XM_PEARL_FUSED: a batch is one launch of xm_pearl_mine_w8
+  uint32_t batch_ = 1;  // passes per host round trip (XM_PEARL_BATCH; NVIDIA Ampere+ only)
+  static constexpr uint32_t kBatchFound = 8;  // found[] records per pass in a batch
   static constexpr uint32_t kMaxFound = 64;
   static constexpr uint32_t kRecWords = 18;  // t_rows, t_cols, 16 transcript words (see kernels/pearl)
 };
